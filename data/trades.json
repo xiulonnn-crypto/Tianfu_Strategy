@@ -364,8 +364,8 @@
     "symbol": "BOXX",
     "action": "买入",
     "price": 115.99,
-    "shares": 44,
+    "shares": 44.0,
     "commission": 0.22,
-    "type": "定投"
+    "type": "投机"
   }
 ]
