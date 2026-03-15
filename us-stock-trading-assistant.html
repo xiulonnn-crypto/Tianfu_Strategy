@@ -11,84 +11,93 @@
   <!-- Font Awesome CDN -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <style>
-    /* 金融风格：深色顶栏、浅灰背景、卡片阴影 */
-    body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
-    .card-highlight { box-shadow: 0 0 0 2px #2563eb; }
-    .tab-active { border-bottom: 2px solid #2563eb; color: #2563eb; }
-    .priority-high { border-left: 4px solid #dc2626; }
-    .priority-mid { border-left: 4px solid #ca8a04; }
-    .priority-low { border-left: 4px solid #16a34a; }
-    table tbody tr:hover { background-color: #f1f5f9; }
+    /* 海外轻奢紫金版：Vanguard / Morningstar 风格 */
+    :root {
+      --deep-purple: #4A3D7C;
+      --light-purple-bg: #F5F3FB;
+      --champagne-gold: #BFA960;
+      --benchmark-gray: #8A9199;
+      --down-red: #D64545;
+    }
+    body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; background: var(--light-purple-bg); color: #2d2a3e; }
+    .card-highlight { background: var(--light-purple-bg) !important; border: 2px solid var(--deep-purple) !important; }
+    .tab-active { border-bottom: 2px solid var(--champagne-gold); color: var(--deep-purple); }
+    .priority-high { border-left: 4px solid var(--down-red); }
+    .priority-mid { border-left: 4px solid var(--champagne-gold); }
+    .priority-low { border-left: 4px solid #2d8a5e; }
+    table tbody tr:hover { background-color: rgba(245, 243, 251, 0.8); }
     @media (min-width: 1024px) { .container-main { max-width: 1280px; margin: 0 auto; } }
+    /* 收益卡片：大圆角、浅白底、柔和阴影 */
+    .returns-card { background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(74, 61, 124, 0.08); border: 2px solid transparent; }
+    .returns-card.card-highlight > div:nth-child(1),
+    .returns-card.card-highlight > div:nth-child(2) { color: var(--deep-purple) !important; }
+    thead th { color: var(--deep-purple); font-weight: 600; }
   </style>
 </head>
-<body class="bg-slate-100 text-slate-800 min-h-screen">
-  <header class="bg-slate-800 text-white py-4 px-6 shadow">
+<body class="min-h-screen">
+  <header class="py-5 px-6 shadow-sm" style="background: var(--deep-purple); color: #fff;">
     <div class="container-main flex items-center justify-between">
-      <h1 class="text-xl font-semibold"><i class="fas fa-chart-line mr-2"></i>天府计划助手 <span id="jsOkTag" style="font-size:12px;color:#22c55e;margin-left:8px">(等待JS)</span></h1>
-      <nav class="flex gap-4" id="mainNav">
-        <button type="button" class="nav-btn px-4 py-2 rounded hover:bg-slate-700 transition bg-slate-600" data-section="returns" onclick="if(window.__navClick)window.__navClick('returns')">收益概览</button>
-        <button type="button" class="nav-btn px-4 py-2 rounded hover:bg-slate-700 transition" data-section="allocation" onclick="if(window.__navClick)window.__navClick('allocation')">资产配置</button>
-        <button type="button" class="nav-btn px-4 py-2 rounded hover:bg-slate-700 transition" data-section="history" onclick="if(window.__navClick)window.__navClick('history')">交易历史</button>
-        <button type="button" class="nav-btn px-4 py-2 rounded hover:bg-slate-700 transition" data-section="signals" onclick="if(window.__navClick)window.__navClick('signals')">模型信号</button>
+      <h1 class="text-xl font-semibold"><i class="fas fa-chart-line mr-2" style="color: var(--champagne-gold);"></i>天府计划助手</h1>
+      <nav class="flex gap-1" id="mainNav">
+        <button type="button" class="nav-btn px-4 py-2 rounded transition" style="color: rgba(255,255,255,0.9); background: rgba(255,255,255,0.2);" data-section="returns" onclick="if(window.__navClick)window.__navClick('returns')">收益概览</button>
+        <button type="button" class="nav-btn px-4 py-2 rounded transition hover:bg-white/10" style="color: rgba(255,255,255,0.85);" data-section="allocation" onclick="if(window.__navClick)window.__navClick('allocation')">资产配置</button>
+        <button type="button" class="nav-btn px-4 py-2 rounded transition hover:bg-white/10" style="color: rgba(255,255,255,0.85);" data-section="history" onclick="if(window.__navClick)window.__navClick('history')">交易历史</button>
+        <button type="button" class="nav-btn px-4 py-2 rounded transition hover:bg-white/10" style="color: rgba(255,255,255,0.85);" data-section="signals" onclick="if(window.__navClick)window.__navClick('signals')">模型信号</button>
       </nav>
     </div>
   </header>
 
-  <main class="container-main px-4 py-6">
-    <!-- ========== 1. 收益概览 ========== -->
+  <main class="container-main px-4 py-8">
+    <!-- ========== 1. 收益概览（Vanguard 布局：卡片 → 时间筛选 → 走势图）========== -->
     <section id="section-returns" class="section-content">
-      <h2 class="text-lg font-semibold text-slate-700 mb-4">收益概览 <span id="returnsDataAsOf" class="text-sm font-normal text-slate-500"></span></h2>
-      <!-- 5 个收益指标卡片 -->
-      <div class="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6" id="returnsCards">
-        <div class="returns-card bg-white rounded-lg shadow p-4 cursor-pointer border-2 border-transparent hover:border-slate-300 transition" data-period="1d" onclick="if(window.__setPeriod)window.__setPeriod('1d')">
-          <div class="text-sm text-slate-500">日涨跌</div>
-          <div class="text-xl font-bold text-slate-800 mt-1" data-value="1d-pct">暂无数据</div>
+      <h2 class="text-lg font-semibold mb-6" style="color: var(--deep-purple);">收益概览 <span id="returnsDataAsOf" class="text-sm font-normal" style="color: var(--benchmark-gray);"></span></h2>
+      <!-- 5 张收益卡片：英文+中文，大圆角、浅白底、柔和阴影；默认 YTD 高亮 -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-8" id="returnsCards">
+        <div class="returns-card p-5 cursor-pointer transition hover:shadow-lg" data-period="1d" onclick="if(window.__setPeriod)window.__setPeriod('1d')">
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">1D</div>
+          <div class="text-sm mt-0.5" style="color: var(--benchmark-gray);">日涨跌</div>
+          <div class="text-xl font-bold mt-2" data-value="1d-pct" style="color: #2d2a3e;">暂无数据</div>
         </div>
-        <div class="returns-card bg-white rounded-lg shadow p-4 cursor-pointer border-2 border-transparent hover:border-slate-300 transition" data-period="1m" onclick="if(window.__setPeriod)window.__setPeriod('1m')">
-          <div class="text-sm text-slate-500">本月涨跌</div>
-          <div class="text-xl font-bold text-slate-800 mt-1" data-value="1m-pct">暂无数据</div>
+        <div class="returns-card p-5 cursor-pointer transition hover:shadow-lg" data-period="1m" onclick="if(window.__setPeriod)window.__setPeriod('1m')">
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">MTD</div>
+          <div class="text-sm mt-0.5" style="color: var(--benchmark-gray);">本月涨跌</div>
+          <div class="text-xl font-bold mt-2" data-value="1m-pct" style="color: #2d2a3e;">暂无数据</div>
         </div>
-        <div class="returns-card bg-white rounded-lg shadow p-4 cursor-pointer border-2 border-transparent card-highlight" data-period="1y" onclick="if(window.__setPeriod)window.__setPeriod('1y')">
-          <div class="text-sm text-slate-500">本年涨跌</div>
-          <div class="text-xl font-bold text-slate-800 mt-1" data-value="1y-pct">暂无数据</div>
+        <div class="returns-card p-5 cursor-pointer transition hover:shadow-lg card-highlight" data-period="1y" onclick="if(window.__setPeriod)window.__setPeriod('1y')">
+          <div class="text-xs uppercase tracking-wide" style="color: var(--deep-purple);">YTD</div>
+          <div class="text-sm mt-0.5" style="color: var(--deep-purple);">本年涨跌</div>
+          <div class="text-xl font-bold mt-2" data-value="1y-pct" style="color: #2d2a3e;">暂无数据</div>
         </div>
-        <div class="returns-card bg-white rounded-lg shadow p-4 cursor-pointer border-2 border-transparent hover:border-slate-300 transition" data-period="1y-roll" onclick="if(window.__setPeriod)window.__setPeriod('1y-roll')">
-          <div class="text-sm text-slate-500">近1年涨跌</div>
-          <div class="text-xl font-bold text-slate-800 mt-1" data-value="1y-roll-pct">暂无数据</div>
+        <div class="returns-card p-5 cursor-pointer transition hover:shadow-lg" data-period="1y-roll" onclick="if(window.__setPeriod)window.__setPeriod('1y-roll')">
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">1Y</div>
+          <div class="text-sm mt-0.5" style="color: var(--benchmark-gray);">近1年涨跌</div>
+          <div class="text-xl font-bold mt-2" data-value="1y-roll-pct" style="color: #2d2a3e;">暂无数据</div>
         </div>
-        <div class="returns-card bg-white rounded-lg shadow p-4 cursor-pointer border-2 border-transparent hover:border-slate-300 transition" data-period="since" onclick="if(window.__setPeriod)window.__setPeriod('since')">
-          <div class="text-sm text-slate-500">发布以来涨跌</div>
-          <div class="text-xl font-bold text-slate-800 mt-1" data-value="since-pct">暂无数据</div>
+        <div class="returns-card p-5 cursor-pointer transition hover:shadow-lg" data-period="since" onclick="if(window.__setPeriod)window.__setPeriod('since')">
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">Since Inception</div>
+          <div class="text-sm mt-0.5" style="color: var(--benchmark-gray);">发布以来</div>
+          <div class="text-xl font-bold mt-2" data-value="since-pct" style="color: #2d2a3e;">暂无数据</div>
         </div>
       </div>
-      <!-- 时间维度切换（与卡片联动，仅作视觉提示；图表按选中卡片更新） -->
-      <div class="flex flex-wrap gap-2 mb-4">
-        <span class="text-sm text-slate-600">走势图时间维度：</span>
-        <button type="button" class="period-btn px-3 py-1.5 rounded bg-slate-200 hover:bg-slate-300 text-sm" data-period="1d" onclick="if(window.__setPeriod)window.__setPeriod('1d')">日</button>
-        <button type="button" class="period-btn px-3 py-1.5 rounded bg-slate-200 hover:bg-slate-300 text-sm" data-period="1m" onclick="if(window.__setPeriod)window.__setPeriod('1m')">本月</button>
-        <button type="button" class="period-btn px-3 py-1.5 rounded bg-blue-600 text-white text-sm" data-period="1y" onclick="if(window.__setPeriod)window.__setPeriod('1y')">本年</button>
-        <button type="button" class="period-btn px-3 py-1.5 rounded bg-slate-200 hover:bg-slate-300 text-sm" data-period="1y-roll" onclick="if(window.__setPeriod)window.__setPeriod('1y-roll')">近1年</button>
-        <button type="button" class="period-btn px-3 py-1.5 rounded bg-slate-200 hover:bg-slate-300 text-sm" data-period="since" onclick="if(window.__setPeriod)window.__setPeriod('since')">发布以来</button>
-      </div>
-      <div class="bg-white rounded-lg shadow p-4">
+      <!-- 走势图：Morningstar 样式，双线 Portfolio / Nasdaq (Benchmark)，时间维度由上方 5 张卡片切换 -->
+      <div class="rounded-xl p-6 shadow-sm" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
         <div class="h-80 relative">
           <canvas id="chartReturns"></canvas>
-          <div id="chartReturnsPlaceholder" class="absolute inset-0 flex items-center justify-center text-slate-500 text-sm">暂无数据</div>
+          <div id="chartReturnsPlaceholder" class="absolute inset-0 flex items-center justify-center text-sm" style="color: var(--benchmark-gray);">暂无数据</div>
         </div>
       </div>
     </section>
 
     <!-- ========== 2. 资产配置 ========== -->
     <section id="section-allocation" class="section-content hidden">
-      <h2 class="text-lg font-semibold text-slate-700 mb-4">资产配置 <span id="allocationDataAsOf" class="text-sm font-normal text-slate-500"></span></h2>
+      <h2 class="text-lg font-semibold mb-6" style="color: var(--deep-purple);">资产配置 <span id="allocationDataAsOf" class="text-sm font-normal" style="color: var(--benchmark-gray);"></span></h2>
       <div class="flex flex-wrap gap-2 mb-4">
-        <button type="button" id="toggleSensitive" class="px-4 py-2 rounded bg-slate-200 hover:bg-slate-300 text-sm" onclick="if(window.__toggleSensitive)window.__toggleSensitive()">一键隐藏</button>
+        <button type="button" id="toggleSensitive" class="px-4 py-2 rounded text-sm transition" style="background: #fff; color: var(--deep-purple); border: 1px solid var(--deep-purple);" onclick="if(window.__toggleSensitive)window.__toggleSensitive()">一键隐藏</button>
       </div>
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div class="lg:col-span-2 bg-white rounded-lg shadow overflow-x-auto">
+        <div class="lg:col-span-2 overflow-x-auto rounded-xl shadow-sm" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
           <table class="w-full text-sm">
-            <thead class="bg-slate-100">
+            <thead style="background: var(--light-purple-bg);">
               <tr>
                 <th class="text-left p-3">标的代码</th>
                 <th class="text-right p-3 col-shares">持仓股数</th>
@@ -99,10 +108,10 @@
                 <th class="text-right p-3">比例(%)</th>
               </tr>
             </thead>
-            <tbody id="allocationTableBody"><tr><td colspan="7" class="p-3 text-center text-slate-500">暂无持仓</td></tr></tbody>
+            <tbody id="allocationTableBody"><tr><td colspan="7" class="p-3 text-center" style="color: var(--benchmark-gray);">暂无持仓</td></tr></tbody>
           </table>
         </div>
-        <div class="bg-white rounded-lg shadow p-4 flex items-center justify-center">
+        <div class="rounded-xl shadow-sm p-4 flex items-center justify-center" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
           <div class="w-64 h-64">
             <canvas id="chartAllocation"></canvas>
           </div>
@@ -112,22 +121,22 @@
 
     <!-- ========== 3. 交易历史 ========== -->
     <section id="section-history" class="section-content hidden">
-      <div id="bannerRestartBackend" class="hidden mb-4 p-3 bg-amber-100 border border-amber-400 rounded text-sm text-amber-900">
-        <strong>编辑/删除需要新版后端。</strong>请在本项目目录打开终端，先按 <kbd class="px-1 bg-amber-200 rounded">Ctrl+C</kbd> 停止当前服务，再执行：<code class="bg-amber-200 px-1 rounded">python3 run.py</code>，然后刷新本页。
+      <div id="bannerRestartBackend" class="hidden mb-4 p-3 rounded text-sm" style="background: #fff8e6; border: 1px solid var(--champagne-gold); color: #5c4a00;">
+        <strong>编辑/删除需要新版后端。</strong>请在本项目目录打开终端，先按 <kbd class="px-1 rounded" style="background: rgba(191,169,96,0.3);">Ctrl+C</kbd> 停止当前服务，再执行：<code class="px-1 rounded" style="background: rgba(191,169,96,0.3);">python3 run.py</code>，然后刷新本页。
       </div>
-      <h2 class="text-lg font-semibold text-slate-700 mb-4">交易历史</h2>
-      <div class="flex gap-2 mb-4 border-b border-slate-200">
-        <button type="button" class="history-tab tab-active px-4 py-2 text-sm font-medium" data-tab="fund" onclick="if(window.__historyTab)window.__historyTab('fund')">出入金记录</button>
-        <button type="button" class="history-tab px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800" data-tab="trades" onclick="if(window.__historyTab)window.__historyTab('trades')">交易明细</button>
+      <h2 class="text-lg font-semibold mb-6" style="color: var(--deep-purple);">交易历史</h2>
+      <div class="flex gap-2 mb-4 border-b" style="border-color: rgba(74,61,124,0.15);">
+        <button type="button" class="history-tab tab-active px-4 py-2 text-sm font-medium" data-tab="fund" style="color: var(--deep-purple);" onclick="if(window.__historyTab)window.__historyTab('fund')">出入金记录</button>
+        <button type="button" class="history-tab px-4 py-2 text-sm font-medium" data-tab="trades" style="color: var(--benchmark-gray);" onclick="if(window.__historyTab)window.__historyTab('trades')">交易明细</button>
       </div>
       <!-- 出入金记录 -->
       <div id="panel-fund" class="history-panel">
         <div class="mb-4">
-          <button type="button" id="btnAddFund" class="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 text-sm" onclick="if(window.__openModal)window.__openModal('modalFund')"><i class="fas fa-plus mr-1"></i>批量添加</button>
+          <button type="button" id="btnAddFund" class="px-4 py-2 rounded text-sm transition" style="background: var(--deep-purple); color: #fff;" onclick="if(window.__openModal)window.__openModal('modalFund')"><i class="fas fa-plus mr-1"></i>批量添加</button>
         </div>
-        <div class="bg-white rounded-lg shadow overflow-x-auto">
+        <div class="overflow-x-auto rounded-xl shadow-sm" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
           <table class="w-full text-sm">
-            <thead class="bg-slate-100">
+            <thead style="background: var(--light-purple-bg);">
               <tr>
                 <th class="text-left p-3 cursor-pointer" data-sort="date">日期 <i class="fas fa-sort text-slate-400"></i></th>
                 <th class="text-right p-3">金额(USD)</th>
@@ -142,11 +151,11 @@
       <!-- 交易明细 -->
       <div id="panel-trades" class="history-panel hidden">
         <div class="mb-4">
-          <button type="button" id="btnAddTrade" class="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 text-sm" onclick="if(window.__openModal)window.__openModal('modalTrade')"><i class="fas fa-plus mr-1"></i>添加交易</button>
+          <button type="button" id="btnAddTrade" class="px-4 py-2 rounded text-sm transition" style="background: var(--deep-purple); color: #fff;" onclick="if(window.__openModal)window.__openModal('modalTrade')"><i class="fas fa-plus mr-1"></i>添加交易</button>
         </div>
-        <div class="bg-white rounded-lg shadow overflow-x-auto">
+        <div class="overflow-x-auto rounded-xl shadow-sm" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
           <table class="w-full text-sm">
-            <thead class="bg-slate-100">
+            <thead style="background: var(--light-purple-bg);">
               <tr>
                 <th class="text-left p-3 cursor-pointer" data-sort="date">日期 <i class="fas fa-sort text-slate-400"></i></th>
                 <th class="text-left p-3">标的</th>
@@ -166,41 +175,41 @@
 
     <!-- ========== 4. 模型信号（仅展示下次定投与投弹预估，不展示策略详情）========== -->
     <section id="section-signals" class="section-content hidden">
-      <h2 class="text-lg font-semibold text-slate-700 mb-4">模型信号</h2>
-      <div class="bg-white rounded-lg shadow p-4 mb-6" id="signalsModelInfo">
+      <h2 class="text-lg font-semibold mb-6" style="color: var(--deep-purple);">模型信号</h2>
+      <div class="rounded-xl shadow-sm p-5 mb-6" id="signalsModelInfo" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
-          <div><span class="text-slate-500">模型名称</span><div class="font-medium" id="sigModelName">-</div></div>
-          <div><span class="text-slate-500">版本</span><div class="font-medium" id="sigVersion">-</div></div>
-          <div><span class="text-slate-500">更新时间</span><div class="font-medium" id="sigUpdated">-</div></div>
+          <div><span style="color: var(--benchmark-gray);">模型名称</span><div class="font-medium" id="sigModelName" style="color: #2d2a3e;">-</div></div>
+          <div><span style="color: var(--benchmark-gray);">版本</span><div class="font-medium" id="sigVersion" style="color: #2d2a3e;">-</div></div>
+          <div><span style="color: var(--benchmark-gray);">更新时间</span><div class="font-medium" id="sigUpdated" style="color: #2d2a3e;">-</div></div>
         </div>
       </div>
-      <h3 class="text-md font-medium text-slate-600 mb-3">下次定投</h3>
-      <div class="bg-white rounded-lg shadow p-4 mb-6" id="nextDingtouBlock"></div>
-      <h3 class="text-md font-medium text-slate-600 mb-3">投弹预估</h3>
+      <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">下次定投</h3>
+      <div class="rounded-xl shadow-sm p-5 mb-6" id="nextDingtouBlock" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);"></div>
+      <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">投弹预估</h3>
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="toundanList"></div>
     </section>
   </main>
 
   <!-- 弹窗：批量添加入出金 / 编辑出入金 -->
   <div id="modalFund" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50" aria-hidden="true">
-    <div class="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 p-6">
-      <h3 class="text-lg font-semibold mb-4" id="modalFundTitle">批量添加入出金</h3>
+    <div class="w-full max-w-md mx-4 p-6 rounded-xl shadow-xl" style="background: #fff; box-shadow: 0 8px 32px rgba(74,61,124,0.15);">
+      <h3 class="text-lg font-semibold mb-4" id="modalFundTitle" style="color: var(--deep-purple);">批量添加入出金</h3>
       <form id="formFund">
         <div class="mb-4">
-          <label class="block text-sm font-medium text-slate-700 mb-1">日期</label>
-          <input type="date" name="date" required class="w-full border border-slate-300 rounded px-3 py-2" />
+          <label class="block text-sm font-medium mb-1" style="color: var(--deep-purple);">日期</label>
+          <input type="date" name="date" required class="w-full rounded px-3 py-2" style="border: 1px solid rgba(74,61,124,0.25);" />
         </div>
         <div class="mb-4">
-          <label class="block text-sm font-medium text-slate-700 mb-1">金额 (USD)</label>
-          <input type="number" name="amount" step="0.01" required class="w-full border border-slate-300 rounded px-3 py-2" placeholder="正数为入金，负数为出金" />
+          <label class="block text-sm font-medium mb-1" style="color: var(--deep-purple);">金额 (USD)</label>
+          <input type="number" name="amount" step="0.01" required class="w-full rounded px-3 py-2" style="border: 1px solid rgba(74,61,124,0.25);" placeholder="正数为入金，负数为出金" />
         </div>
         <div class="mb-4">
-          <label class="block text-sm font-medium text-slate-700 mb-1">备注</label>
-          <input type="text" name="note" class="w-full border border-slate-300 rounded px-3 py-2" placeholder="选填" />
+          <label class="block text-sm font-medium mb-1" style="color: var(--deep-purple);">备注</label>
+          <input type="text" name="note" class="w-full rounded px-3 py-2" style="border: 1px solid rgba(74,61,124,0.25);" placeholder="选填" />
         </div>
         <div class="flex justify-end gap-2">
-          <button type="button" id="cancelFund" class="px-4 py-2 rounded bg-slate-200 hover:bg-slate-300" onclick="if(window.__closeModal)window.__closeModal('modalFund')">取消</button>
-          <button type="submit" class="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700">提交</button>
+          <button type="button" id="cancelFund" class="px-4 py-2 rounded transition" style="background: var(--light-purple-bg); color: var(--deep-purple);" onclick="if(window.__closeModal)window.__closeModal('modalFund')">取消</button>
+          <button type="submit" class="px-4 py-2 rounded text-white transition" style="background: var(--deep-purple);">提交</button>
         </div>
       </form>
     </div>
@@ -208,82 +217,69 @@
 
   <!-- 弹窗：添加交易 / 编辑交易 -->
   <div id="modalTrade" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50" aria-hidden="true">
-    <div class="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 p-6 max-h-[90vh] overflow-y-auto">
-      <h3 class="text-lg font-semibold mb-4" id="modalTradeTitle">添加交易</h3>
+    <div class="w-full max-w-md mx-4 p-6 max-h-[90vh] overflow-y-auto rounded-xl shadow-xl" style="background: #fff; box-shadow: 0 8px 32px rgba(74,61,124,0.15);">
+      <h3 class="text-lg font-semibold mb-4" id="modalTradeTitle" style="color: var(--deep-purple);">添加交易</h3>
       <form id="formTrade">
         <div class="mb-4">
-          <label class="block text-sm font-medium text-slate-700 mb-1">日期</label>
-          <input type="date" name="date" required class="w-full border border-slate-300 rounded px-3 py-2" />
+          <label class="block text-sm font-medium mb-1" style="color: var(--deep-purple);">日期</label>
+          <input type="date" name="date" required class="w-full rounded px-3 py-2" style="border: 1px solid rgba(74,61,124,0.25);" />
         </div>
         <div class="mb-4">
-          <label class="block text-sm font-medium text-slate-700 mb-1">标的</label>
-          <input type="text" name="symbol" required class="w-full border border-slate-300 rounded px-3 py-2" placeholder="如 QQQM, BRK.B" />
+          <label class="block text-sm font-medium mb-1" style="color: var(--deep-purple);">标的</label>
+          <input type="text" name="symbol" required class="w-full rounded px-3 py-2" style="border: 1px solid rgba(74,61,124,0.25);" placeholder="如 QQQM, BRK.B" />
         </div>
         <div class="mb-4">
-          <label class="block text-sm font-medium text-slate-700 mb-1">操作</label>
-          <select name="tradeAction" class="w-full border border-slate-300 rounded px-3 py-2">
+          <label class="block text-sm font-medium mb-1" style="color: var(--deep-purple);">操作</label>
+          <select name="tradeAction" class="w-full rounded px-3 py-2" style="border: 1px solid rgba(74,61,124,0.25);">
             <option value="买入">买入</option>
             <option value="卖出">卖出</option>
           </select>
         </div>
         <div class="mb-4">
-          <label class="block text-sm font-medium text-slate-700 mb-1">价格 (USD)</label>
-          <input type="number" name="price" step="0.01" required class="w-full border border-slate-300 rounded px-3 py-2" />
+          <label class="block text-sm font-medium mb-1" style="color: var(--deep-purple);">价格 (USD)</label>
+          <input type="number" name="price" step="0.01" required class="w-full rounded px-3 py-2" style="border: 1px solid rgba(74,61,124,0.25);" />
         </div>
         <div class="mb-4">
-          <label class="block text-sm font-medium text-slate-700 mb-1">股数</label>
-          <input type="number" name="shares" step="0.0001" required class="w-full border border-slate-300 rounded px-3 py-2" />
+          <label class="block text-sm font-medium mb-1" style="color: var(--deep-purple);">股数</label>
+          <input type="number" name="shares" step="0.0001" required class="w-full rounded px-3 py-2" style="border: 1px solid rgba(74,61,124,0.25);" />
         </div>
         <div class="mb-4">
-          <label class="block text-sm font-medium text-slate-700 mb-1">佣金 (USD)</label>
-          <input type="number" name="commission" step="0.01" value="0" class="w-full border border-slate-300 rounded px-3 py-2" />
+          <label class="block text-sm font-medium mb-1" style="color: var(--deep-purple);">佣金 (USD)</label>
+          <input type="number" name="commission" step="0.01" value="0" class="w-full rounded px-3 py-2" style="border: 1px solid rgba(74,61,124,0.25);" />
         </div>
         <div class="mb-4">
-          <label class="block text-sm font-medium text-slate-700 mb-1">类型</label>
-          <select name="type" class="w-full border border-slate-300 rounded px-3 py-2">
+          <label class="block text-sm font-medium mb-1" style="color: var(--deep-purple);">类型</label>
+          <select name="type" class="w-full rounded px-3 py-2" style="border: 1px solid rgba(74,61,124,0.25);">
             <option value="定投">定投</option>
             <option value="投弹">投弹</option>
             <option value="投机">投机</option>
           </select>
         </div>
         <div class="flex justify-end gap-2">
-          <button type="button" id="cancelTrade" class="px-4 py-2 rounded bg-slate-200 hover:bg-slate-300" onclick="if(window.__closeModal)window.__closeModal('modalTrade')">取消</button>
-          <button type="submit" class="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700">提交</button>
+          <button type="button" id="cancelTrade" class="px-4 py-2 rounded transition" style="background: var(--light-purple-bg); color: var(--deep-purple);" onclick="if(window.__closeModal)window.__closeModal('modalTrade')">取消</button>
+          <button type="submit" class="px-4 py-2 rounded text-white transition" style="background: var(--deep-purple);">提交</button>
         </div>
       </form>
     </div>
   </div>
 
-  <footer class="container-main px-4 py-4 text-center text-sm text-slate-500 border-t border-slate-200 mt-8">
+  <footer class="container-main px-4 py-6 text-center text-sm mt-10 border-t" style="color: var(--benchmark-gray); border-color: rgba(74,61,124,0.12);">
     天府计划助手 · 数据来自交易历史与 Yahoo Finance · 仅供参考
   </footer>
 
-  <!-- Debug 面板：始终显示便于排查；?debug=1 时记录点击 -->
-  <div id="debugPanel" class="fixed bottom-4 right-4 w-80 max-h-56 overflow-auto bg-slate-800 text-green-400 text-xs p-3 rounded-lg shadow-xl font-mono" style="z-index:99999">
-    <div class="flex justify-between items-center mb-2">
-      <span class="font-semibold">DEBUG（无反应请强制刷新 Ctrl+F5）</span>
-      <button type="button" id="debugClose" class="text-slate-400 hover:text-white">×</button>
-    </div>
-    <pre id="debugLog" class="whitespace-pre-wrap break-all" style="color:#4ade80;margin:0">等待 JS 执行...</pre>
-  </div>
-
   <script>
     (function(){
-      var d = document.getElementById('debugLog');
-      if (d) d.textContent = '[1/2] script started';
-      var tag = document.getElementById('jsOkTag');
-      if (tag) tag.textContent = 'JS已执行';
       function addClass(el, c) { if (el && el.classList) el.classList.add(c); }
       function removeClass(el, c) { if (el && el.classList) el.classList.remove(c); }
       window.__navClick = function(id) {
         var all = document.querySelectorAll('.section-content');
         for (var i = 0; i < (all && all.length); i++) addClass(all[i], 'hidden');
         var btnAll = document.querySelectorAll('.nav-btn');
-        for (var j = 0; j < (btnAll && btnAll.length); j++) removeClass(btnAll[j], 'bg-slate-600');
+        for (var j = 0; j < (btnAll && btnAll.length); j++) { removeClass(btnAll[j], 'bg-white/20'); btnAll[j].style.background = ''; }
         var s = document.getElementById('section-' + id);
         var btn = document.querySelector('.nav-btn[data-section="' + id + '"]');
         if (s) removeClass(s, 'hidden');
-        if (btn) addClass(btn, 'bg-slate-600');
+        if (btn) { addClass(btn, 'bg-white/20'); btn.style.background = 'rgba(255,255,255,0.2)'; }
       };
       window.__setPeriod = function(p) {
         var cards = document.querySelectorAll('.returns-card');
@@ -293,9 +289,8 @@
         }
         var btns = document.querySelectorAll('.period-btn');
         for (var j = 0; j < (btns && btns.length); j++) {
-          removeClass(btns[j], 'bg-blue-600'); removeClass(btns[j], 'text-white');
-          addClass(btns[j], 'bg-slate-200');
-          if (btns[j].getAttribute('data-period') === p) { removeClass(btns[j], 'bg-slate-200'); addClass(btns[j], 'bg-blue-600'); addClass(btns[j], 'text-white'); }
+          removeClass(btns[j], 'active');
+          if (btns[j].getAttribute('data-period') === p) addClass(btns[j], 'active');
         }
         if (window.__setPeriodChart) window.__setPeriodChart(p);
       };
@@ -324,7 +319,6 @@
         var m = document.getElementById(id);
         if (m) { m.classList.add('hidden'); m.classList.remove('flex'); }
       };
-      if (d) d.textContent = (d.textContent || '') + '\n[1/2] 全局已挂载，按钮可用';
       var tbFund = document.getElementById('fundTableBody');
       var tbTrades = document.getElementById('tradesTableBody');
       if (tbFund) tbFund.innerHTML = '<tr><td colspan="4" class="p-3 text-center text-slate-500">加载中…</td></tr>';
@@ -332,29 +326,9 @@
     })();
   </script>
   <script>
-    (function(){ var d=document.getElementById('debugLog'); if(d) d.textContent=(d.textContent||'')+'\n[2/2] 主脚本开始'; })();
     // ========== API 基地址 ==========
     const API_BASE = (window.location.protocol === 'file:' || window.location.port === '') ? 'http://localhost:5001' : '';
-    // ========== Debug 模式（URL ?debug=1 开启点击日志）==========
-    const DEBUG = /[?&]debug=1/.test(location.search);
-    const debugLogLines = [];
-    const DEBUG_MAX = 30;
-    function debugLog(msg, isError) {
-      const line = (isError ? '[ERR] ' : '') + (typeof msg === 'string' ? msg : JSON.stringify(msg));
-      debugLogLines.push(line);
-      if (debugLogLines.length > DEBUG_MAX) debugLogLines.shift();
-      const el = document.getElementById('debugLog');
-      if (el) el.textContent = debugLogLines.join('\n');
-      var panel = document.getElementById('debugPanel');
-      if (panel) { panel.classList.remove('hidden'); panel.classList.add('block'); }
-      if (DEBUG && typeof console !== 'undefined') (isError ? console.error : console.log).call(console, line);
-    }
-    window.onerror = function (msg, url, line, col, err) {
-      debugLog(msg + ' @' + line + ':' + col, true);
-      const panel = document.getElementById('debugPanel');
-      if (panel) { panel.classList.remove('hidden'); panel.classList.add('block'); }
-      return false;
-    };
+    function debugLog() {}  // 已移除 debug 面板，保留空函数避免报错
 
     // ========== 状态 ==========
     let currentPeriod = '1y';
@@ -417,7 +391,10 @@
         const c = cards[k];
         const prefix = dataValuePrefix[k];
         const pctEl = document.querySelector('[data-value="' + prefix + '-pct"]');
-        if (pctEl) pctEl.textContent = formatPct(c && c.pct);
+        if (pctEl) {
+          pctEl.textContent = formatPct(c && c.pct);
+          pctEl.style.color = (c && c.pct != null && c.pct < 0) ? '#D64545' : '#2d2a3e';
+        }
       });
     }
     function buildReturnsChart(period) {
@@ -436,8 +413,8 @@
         data: {
           labels: data.labels || [],
           datasets: [
-            { label: '我的组合', data: data.my || [], borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,0.1)', fill: true, tension: 0.3 },
-            { label: '纳指(基准)', data: data.bench || [], borderColor: '#64748b', backgroundColor: 'rgba(100,116,139,0.05)', fill: true, tension: 0.3 }
+            { label: 'Portfolio', data: data.my || [], borderColor: '#4A3D7C', backgroundColor: 'rgba(74,61,124,0.06)', fill: true, tension: 0.3, borderWidth: 2 },
+            { label: 'Nasdaq (Benchmark)', data: data.bench || [], borderColor: '#8A9199', backgroundColor: 'rgba(138,145,153,0.04)', fill: true, tension: 0.3, borderWidth: 1.5 }
           ]
         },
         options: {
@@ -445,7 +422,7 @@
           maintainAspectRatio: false,
           interaction: { intersect: false, mode: 'index' },
           plugins: {
-            legend: { position: 'top' },
+            legend: { position: 'top', labels: { color: '#2d2a3e', usePointStyle: true } },
             tooltip: {
               callbacks: {
                 label: function (ctx) { return ctx.dataset.label + ': ' + ctx.parsed.y + '%'; }
@@ -453,8 +430,8 @@
             }
           },
           scales: {
-            x: { title: { display: true, text: '时间' } },
-            y: { title: { display: true, text: '收益率(%)' }, beginAtZero: true }
+            x: { grid: { display: false }, ticks: { color: '#8A9199', maxTicksLimit: 8 } },
+            y: { grid: { color: 'rgba(138,145,153,0.15)' }, ticks: { color: '#8A9199' }, beginAtZero: true }
           }
         }
       });
@@ -489,12 +466,8 @@
         if (el.dataset.period === p) el.classList.add('card-highlight');
       });
       document.querySelectorAll('.period-btn').forEach(function (el) {
-        el.classList.remove('bg-blue-600', 'text-white');
-        el.classList.add('bg-slate-200');
-        if (el.dataset.period === p) {
-          el.classList.remove('bg-slate-200');
-          el.classList.add('bg-blue-600', 'text-white');
-        }
+        el.classList.remove('active');
+        if (el.dataset.period === p) el.classList.add('active');
       });
       buildReturnsChart(p);
     }
@@ -516,7 +489,8 @@
         const priceStr = row.price != null ? '$' + Number(row.price).toFixed(2) : '--';
         const avgStr = row.avg_cost != null && row.avg_cost > 0 ? '$' + Number(row.avg_cost).toFixed(2) : '--';
         const gainPct = row.gain_pct != null ? row.gain_pct : 0;
-        const gainColor = gainPct > 0 ? 'text-green-600' : gainPct < 0 ? 'text-red-600' : 'text-slate-500';
+        const gainColor = gainPct > 0 ? '' : gainPct < 0 ? '' : '';
+        const gainStyle = gainPct > 0 ? 'color:#2d8a5e' : gainPct < 0 ? 'color:#D64545' : 'color:#8A9199';
         const gainStr = gainPct > 0 ? '+' + gainPct.toFixed(2) + '%' : gainPct.toFixed(2) + '%';
         const hide = window.__allocationHideSensitive;
         return '<tr>'
@@ -525,7 +499,7 @@
           + '<td class="p-3 text-right col-avg text-slate-500">' + (hide ? '***' : avgStr) + '</td>'
           + '<td class="p-3 text-right">' + priceStr + '</td>'
           + '<td class="p-3 text-right col-amount">' + (hide ? '***' : (row.amount != null ? '$' + Number(row.amount).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : '')) + '</td>'
-          + '<td class="p-3 text-right ' + gainColor + '">' + gainStr + '</td>'
+          + '<td class="p-3 text-right" style="' + gainStyle + '">' + gainStr + '</td>'
           + '<td class="p-3 text-right">' + pct + '%</td>'
           + '</tr>';
       }).join('');
@@ -539,7 +513,7 @@
           type: 'doughnut',
           data: {
             labels: labels,
-            datasets: [{ data: values, backgroundColor: ['#2563eb', '#16a34a', '#ca8a04', '#dc2626', '#7c3aed'], borderWidth: 0 }]
+            datasets: [{ data: values, backgroundColor: ['#4A3D7C', '#BFA960', '#8A9199', '#6B5B95', '#9B8BB5'], borderWidth: 0 }]
           },
           options: {
             responsive: true,
@@ -582,7 +556,7 @@
       }
       tbody.innerHTML = sorted.map(function (r) {
         const amt = Number(r.amount);
-        return '<tr data-index="' + r._i + '"><td class="p-3">' + r.date + '</td><td class="p-3 text-right">' + (amt >= 0 ? '+' : '') + '$' + amt.toLocaleString() + '</td><td class="p-3">' + (r.note || '-') + '</td><td class="p-3"><button type="button" class="btn-fund-edit px-2 py-1 rounded bg-slate-200 hover:bg-slate-300 text-sm mr-1" data-index="' + r._i + '">编辑</button><button type="button" class="btn-fund-delete px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-sm" data-index="' + r._i + '">删除</button></td></tr>';
+        return '<tr data-index="' + r._i + '"><td class="p-3">' + r.date + '</td><td class="p-3 text-right">' + (amt >= 0 ? '+' : '') + '$' + amt.toLocaleString() + '</td><td class="p-3">' + (r.note || '-') + '</td><td class="p-3"><div class="flex justify-between items-center gap-2 whitespace-nowrap"><button type="button" class="btn-fund-edit px-2 py-1 rounded bg-slate-200 hover:bg-slate-300 text-sm whitespace-nowrap" data-index="' + r._i + '">编辑</button><button type="button" class="btn-fund-delete px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-sm whitespace-nowrap" data-index="' + r._i + '">删除</button></div></td></tr>';
       }).join('');
     }
 
@@ -596,7 +570,7 @@
         return;
       }
       tbody.innerHTML = sorted.map(function (r) {
-        return '<tr data-index="' + r._i + '"><td class="p-3">' + r.date + '</td><td class="p-3">' + r.symbol + '</td><td class="p-3">' + r.action + '</td><td class="p-3 text-right">$' + Number(r.price).toFixed(2) + '</td><td class="p-3 text-right">' + r.shares + '</td><td class="p-3 text-right">$' + Number(r.commission || 0).toFixed(2) + '</td><td class="p-3">' + (r.type || '') + '</td><td class="p-3"><button type="button" class="btn-trade-edit px-2 py-1 rounded bg-slate-200 hover:bg-slate-300 text-sm mr-1" data-index="' + r._i + '">编辑</button><button type="button" class="btn-trade-delete px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-sm" data-index="' + r._i + '">删除</button></td></tr>';
+        return '<tr data-index="' + r._i + '"><td class="p-3">' + r.date + '</td><td class="p-3">' + r.symbol + '</td><td class="p-3">' + r.action + '</td><td class="p-3 text-right">$' + Number(r.price).toFixed(2) + '</td><td class="p-3 text-right">' + r.shares + '</td><td class="p-3 text-right">$' + Number(r.commission || 0).toFixed(2) + '</td><td class="p-3">' + (r.type || '') + '</td><td class="p-3"><div class="flex justify-between items-center gap-2 whitespace-nowrap"><button type="button" class="btn-trade-edit px-2 py-1 rounded bg-slate-200 hover:bg-slate-300 text-sm whitespace-nowrap" data-index="' + r._i + '">编辑</button><button type="button" class="btn-trade-delete px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-sm whitespace-nowrap" data-index="' + r._i + '">删除</button></div></td></tr>';
       }).join('');
     }
     async function loadFundRecords() {
@@ -613,21 +587,21 @@
     // ========== 主导航切换（供内联 onclick 与委托共用）==========
     function showSection(sectionId) {
       document.querySelectorAll('.section-content').forEach(el => el.classList.add('hidden'));
-      document.querySelectorAll('.nav-btn').forEach(el => { el.classList.remove('bg-slate-600'); });
+      document.querySelectorAll('.nav-btn').forEach(el => { el.classList.remove('bg-white/20'); el.style.background = ''; });
       const section = document.getElementById('section-' + sectionId);
       const btn = document.querySelector('.nav-btn[data-section="' + sectionId + '"]');
       if (section) section.classList.remove('hidden');
-      if (btn) btn.classList.add('bg-slate-600');
+      if (btn) { btn.classList.add('bg-white/20'); btn.style.background = 'rgba(255,255,255,0.2)'; }
     }
 
     // ========== 交易历史子标签 ==========
     function showHistoryTab(tab) {
       document.querySelectorAll('.history-tab').forEach(el => {
         el.classList.remove('tab-active');
-        el.classList.add('text-slate-600');
+        el.style.color = 'var(--benchmark-gray)';
       });
       const active = document.querySelector('.history-tab[data-tab="' + tab + '"]');
-      if (active) { active.classList.add('tab-active'); active.classList.remove('text-slate-600'); }
+      if (active) { active.classList.add('tab-active'); active.style.color = 'var(--deep-purple)'; }
       document.getElementById('panel-fund').classList.toggle('hidden', tab !== 'fund');
       document.getElementById('panel-trades').classList.toggle('hidden', tab !== 'trades');
     }
@@ -655,21 +629,21 @@
       const dingBlock = document.getElementById('nextDingtouBlock');
       if (dingBlock) {
         if (!data || !data.next_dingtou) {
-          dingBlock.innerHTML = '<p class="text-slate-500 text-sm">暂无</p>';
+          dingBlock.innerHTML = '<p class="text-sm" style="color:var(--benchmark-gray);">暂无</p>';
         } else {
           const d = data.next_dingtou;
           const alloc = (d.allocation || []).map(function (a) { return a.symbol + ' ' + a.pct + '% $' + (a.amount != null ? Number(a.amount).toLocaleString() : ''); }).join('；');
-          dingBlock.innerHTML = '<p class="text-sm text-slate-700"><span class="font-medium">' + (d.date || '') + '</span> ' + (d.description || '') + ' 合计 $' + (d.total_usd != null ? Number(d.total_usd).toLocaleString() : '') + '</p><p class="text-sm text-slate-600 mt-1">分配：' + alloc + '</p>';
+          dingBlock.innerHTML = '<p class="text-sm" style="color:#2d2a3e;"><span class="font-medium">' + (d.date || '') + '</span> ' + (d.description || '') + ' 合计 $' + (d.total_usd != null ? Number(d.total_usd).toLocaleString() : '') + '</p><p class="text-sm mt-1" style="color:var(--benchmark-gray);">分配：' + alloc + '</p>';
         }
       }
 
       const toundanEl = document.getElementById('toundanList');
       if (toundanEl) {
         if (!data || !data.toundan_estimate || !data.toundan_estimate.length) {
-          toundanEl.innerHTML = '<p class="text-slate-500 text-sm col-span-full">暂无</p>';
+          toundanEl.innerHTML = '<p class="text-sm col-span-full" style="color:var(--benchmark-gray);">暂无</p>';
         } else {
           toundanEl.innerHTML = data.toundan_estimate.map(function (t) {
-            return '<div class="bg-white rounded-lg shadow p-4 priority-mid"><div class="font-medium">' + (t.symbol || '') + '</div><div class="text-sm text-slate-600 mt-1">' + (t.condition || '') + '</div><div class="text-sm text-slate-500 mt-1">K=' + (t.k != null ? t.k : '') + '，预估额度上限 $' + (t.max_usd != null ? Number(t.max_usd).toLocaleString() : '') + '</div></div>';
+            return '<div class="rounded-xl shadow-sm p-4 priority-mid" style="background:#fff;box-shadow:0 2px 16px rgba(74,61,124,0.06);"><div class="font-medium" style="color:var(--deep-purple);">' + (t.symbol || '') + '</div><div class="text-sm mt-1" style="color:#2d2a3e;">' + (t.condition || '') + '</div><div class="text-sm mt-1" style="color:var(--benchmark-gray);">K=' + (t.k != null ? t.k : '') + '，预估额度上限 $' + (t.max_usd != null ? Number(t.max_usd).toLocaleString() : '') + '</div></div>';
           }).join('');
         }
       }
@@ -685,7 +659,6 @@
       }
       document.addEventListener('click', function (e) {
         try {
-          if (DEBUG) debugLog('click: ' + (e.target.id || (e.target.className && String(e.target.className).slice(0, 30)) || e.target.tagName));
           var btn = e.target.closest && e.target.closest('.nav-btn[data-section]');
           if (btn) { e.preventDefault(); e.stopPropagation(); showSection(btn.dataset.section); return; }
           var card = e.target.closest && e.target.closest('.returns-card[data-period]');
@@ -782,8 +755,7 @@
           }
           if (e.target.id === 'modalFund') { e.preventDefault(); closeModal('modalFund'); return; }
           if (e.target.id === 'modalTrade') { e.preventDefault(); closeModal('modalTrade'); return; }
-          if (e.target.id === 'debugClose') { e.preventDefault(); e.stopPropagation(); var dp = document.getElementById('debugPanel'); if (dp) dp.classList.add('hidden'); return; }
-        } catch (err) { debugLog('click err: ' + (err && err.message), true); }
+        } catch (err) {}
       }, true);
 
       document.addEventListener('submit', async function (e) {
@@ -852,9 +824,6 @@
       window.__historyTab = showHistoryTab;
       window.__openModal = openModal;
       window.__closeModal = closeModal;
-      var dl = document.getElementById('debugLog');
-      if (dl) dl.textContent = (dl.textContent || '') + '\n[2/2] events bound';
-      if (DEBUG) debugLog('?debug=1 已开启，点击会记录');
       checkBackendVersion();
       loadReturnsOverview();
       loadAllocation();
