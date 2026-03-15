@@ -28,7 +28,7 @@ BENCHMARK_SYMBOL = "^IXIC"
 
 # 价格缓存：文件持久化，同一天内所有请求使用同一份数据，避免刷新时数据变化
 PRICE_CACHE_FILE = DATA_DIR / "price_cache.json"
-_CACHE_VERSION = 4  # 升级时递增，使旧缓存失效（4：Ticker 逐标的拉取，避免价格串扰）
+_CACHE_VERSION = 5  # 升级时递增，使旧缓存失效（5：收益概览拉取区间含 1y_roll 缓冲，近1年有数据）
 
 
 def load_json(path, default):
@@ -662,8 +662,10 @@ def api_returns_overview():
     since_date = min(t["date"][:10] for t in trades_list)
     month_start = dt.replace(day=1).strftime("%Y-%m-%d")
     year_start = dt.replace(month=1, day=1).strftime("%Y-%m-%d")
+    # 近1年(1y_roll)按「最后交易日」往前推 365 天，故拉取起点需多留缓冲，避免周末/节假日导致无数据
     one_year_ago = (dt - timedelta(days=365)).strftime("%Y-%m-%d")
-    start_fetch = min(since_date, one_year_ago, year_start)
+    one_year_ago_with_buffer = (dt - timedelta(days=395)).strftime("%Y-%m-%d")  # 多约 30 天，覆盖 1y_roll 起点
+    start_fetch = min(since_date, one_year_ago_with_buffer, year_start)
     end_fetch = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
 
     # 拉取历史行情（统一文件缓存，同一天内收益与资产配置数据完全一致）
@@ -686,12 +688,13 @@ def api_returns_overview():
         prices_at(list(current_pos.keys()), history_cache, effective_end_date),
     )
 
-    # 各时段起始日定义
+    # 各时段起始日定义；YTD / 1Y 取「自然起始日」与「组合第一次交易日期」的较晚值，避免起始早于组合成立
+    one_year_ago_str = (effective_end_dt - timedelta(days=365)).strftime("%Y-%m-%d")
     periods = {
         "1d":      prev_trading_date,
         "1m":      month_start,
-        "1y":      year_start,
-        "1y_roll": (effective_end_dt - timedelta(days=365)).strftime("%Y-%m-%d"),
+        "1y":      max(year_start, since_date),
+        "1y_roll": max(one_year_ago_str, since_date),
         "since":   since_date,
     }
 
