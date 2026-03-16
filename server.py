@@ -25,6 +25,8 @@ TRADES_FILE = DATA_DIR / "trades.json"
 
 # 纳指基准代码（Yahoo）
 BENCHMARK_SYMBOL = "^IXIC"
+# 无风险利率：美国3个月期国债年化收益率（用于夏普、Alpha），单位小数
+RISK_FREE_RATE = 0.021
 
 # 价格缓存：文件持久化，同一天内所有请求使用同一份数据，避免刷新时数据变化
 PRICE_CACHE_FILE = DATA_DIR / "price_cache.json"
@@ -89,6 +91,44 @@ def get_all_symbols(trades):
 def yf_symbol(symbol):
     """Yahoo 中 BRK.B 需写成 BRK-B 等，yfinance 一般接受点号。"""
     return symbol.replace(".", "-") if symbol else symbol
+
+
+def fetch_realtime_quote(symbol):
+    """
+    拉取单标的实时（或最近可用）行情。使用 yfinance 最近 5 日数据取最新收盘与涨跌。
+    返回 {"symbol": str, "name": str, "price": float, "prev_close": float, "change": float, "change_pct": float}，
+    失败时返回 None。
+    """
+    if not symbol or not isinstance(symbol, str):
+        return None
+    sy = yf_symbol(symbol.strip())
+    # 展示用名称（指数保留 ^ 前缀）
+    display_symbol = symbol.strip().upper()
+    names = {"QQQ": "纳斯达克100", "^VIX": "恐慌指数", "GLD": "黄金ETF"}
+    name = names.get(display_symbol, display_symbol)
+    try:
+        ticker = yf.Ticker(sy)
+        hist = ticker.history(period="5d", auto_adjust=False)
+        if hist is None or hist.empty or "Close" not in hist.columns:
+            return None
+        # 取最近两日：最新价与前一收盘
+        closes = hist["Close"].dropna()
+        if len(closes) < 1:
+            return None
+        price = float(closes.iloc[-1])
+        prev_close = float(closes.iloc[-2]) if len(closes) >= 2 else price
+        change = round(price - prev_close, 4)
+        change_pct = round((change / prev_close * 100), 2) if prev_close and prev_close != 0 else 0.0
+        return {
+            "symbol": display_symbol,
+            "name": name,
+            "price": round(price, 2),
+            "prev_close": round(prev_close, 2),
+            "change": round(change, 2),
+            "change_pct": change_pct,
+        }
+    except Exception:
+        return None
 
 
 def get_price_on_date(symbol, date_str, history_cache):
@@ -386,6 +426,99 @@ def parse_date(s):
         return None
 
 
+def _npv_mwr(r, v0, v_end, cf_list, t_list):
+    """
+    资金加权收益率 NPV：-V0 + sum(CF_i/(1+r)^t_i) + V_end/(1+r)。
+    cf_list 为期间内出入金列表（入金为正、出金为负），t_list 为对应时间占比 [0,1]。
+    """
+    if r <= -1.0:
+        return float("inf")
+    val = -v0 + v_end / (1.0 + r)
+    for cf, t in zip(cf_list, t_list):
+        val += cf / ((1.0 + r) ** t)
+    return val
+
+
+def compute_mwr(trades_list, fund_records, history_cache, period_start, period_end, all_trading_dates):
+    """
+    资金加权收益率（MWR / IRR）计算。
+
+    考虑期初市值 V0、期间出入金、期末市值 V_end，求折现率 r 使
+    NPV = -V0 + sum(CF_i/(1+r)^t_i) + V_end/(1+r) = 0。
+    入金为正、出金为负；t_i 为现金流发生日占区间长度的比例。
+    返回 MWR 百分比（float），如 3.25 表示 +3.25%。
+    """
+    p_start_dt = parse_date(period_start)
+    p_end_dt = parse_date(period_end)
+    if not p_start_dt or not p_end_dt:
+        return 0.0
+    T_days = (p_end_dt - p_start_dt).days
+    if T_days <= 0:
+        return 0.0
+
+    pos_start = positions_at_date(trades_list, period_start)
+    syms_start = list(pos_start.keys()) if pos_start else []
+    v0 = portfolio_value_with_prices(
+        pos_start,
+        prices_at(syms_start, history_cache, period_start),
+    ) if pos_start else 0.0
+
+    pos_end = positions_at_date(trades_list, period_end)
+    syms_end = list(pos_end.keys()) if pos_end else []
+    v_end = portfolio_value_with_prices(
+        pos_end,
+        prices_at(syms_end, history_cache, period_end),
+    ) if pos_end else 0.0
+
+    # 期间内出入金：date 在 (period_start, period_end] 内
+    cf_list = []
+    t_list = []
+    for rec in fund_records:
+        d = (rec.get("date") or "")[:10]
+        if not d or d <= period_start or d > period_end:
+            continue
+        try:
+            amount = float(rec.get("amount") or 0)
+        except (TypeError, ValueError):
+            continue
+        rec_dt = parse_date(d)
+        if not rec_dt:
+            continue
+        d_days = (rec_dt - p_start_dt).days
+        t_i = d_days / T_days if T_days else 0
+        t_i = max(0.0, min(1.0, t_i))
+        cf_list.append(amount)
+        t_list.append(t_i)
+
+    # NPV(r) = -V0 + sum(CF/(1+r)^t) + V_end/(1+r)；求 r 使 NPV=0
+    def f(r):
+        return _npv_mwr(r, v0, v_end, cf_list, t_list)
+
+    # 无现金流时：V0*(1+r)=V_end => r=(V_end/V0)-1
+    if not cf_list and v0 > 1e-6 and v_end >= 0:
+        r = (v_end / v0) - 1.0
+        return round(r * 100, 2)
+    if not cf_list and v0 < 1e-6:
+        return 0.0
+
+    try:
+        from scipy.optimize import brentq
+        # r 在 (-0.99, 10) 内找根；若 f(-0.99) 与 f(10) 同号则无解
+        r_lo, r_hi = -0.99, 10.0
+        f_lo, f_hi = f(r_lo), f(r_hi)
+        if f_lo * f_hi > 0:
+            # 退化为简单收益
+            if v0 > 1e-6:
+                return round((v_end / v0 - 1.0) * 100, 2)
+            return 0.0
+        r = brentq(f, r_lo, r_hi)
+        return round(r * 100, 2)
+    except Exception:
+        if v0 > 1e-6:
+            return round((v_end / v0 - 1.0) * 100, 2)
+        return 0.0
+
+
 def compute_twr(trades_list, history_cache, period_start, period_end, all_trading_dates):
     """
     时间加权收益率（TWR）计算。
@@ -466,6 +599,144 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
             labels.append(curr_d[5:])  # MM-DD 格式
             my_series.append(round((cumulative_factor - 1) * 100, 2))
             bench_series.append(round((b_curr / b_base - 1) * 100, 2) if b_base > 0 else 0.0)
+
+    return {"labels": labels, "my": my_series, "bench": bench_series}
+
+
+def _twr_daily_returns(trades_list, history_cache, bench_cache, dates_in_range):
+    """返回 (r_port_list, r_bench_list) 日 TWR 收益，仅含前一日有持仓的区间。"""
+    r_port = []
+    r_bench = []
+    for i in range(1, len(dates_in_range)):
+        prev_d, curr_d = dates_in_range[i - 1], dates_in_range[i]
+        pos = positions_at_date(trades_list, prev_d)
+        if not pos:
+            continue
+        syms = list(pos.keys())
+        v_prev = portfolio_value_with_prices(pos, prices_at(syms, history_cache, prev_d))
+        v_curr = portfolio_value_with_prices(pos, prices_at(syms, history_cache, curr_d))
+        if not v_prev or v_prev <= 1e-6:
+            continue
+        r_port.append((v_curr / v_prev) - 1.0)
+        b_prev = get_price_on_date(BENCHMARK_SYMBOL, prev_d, bench_cache) or 0.0
+        b_curr = get_price_on_date(BENCHMARK_SYMBOL, curr_d, bench_cache) or 0.0
+        r_bench.append((b_curr / b_prev) - 1.0 if b_prev and b_prev > 1e-6 else 0.0)
+    return r_port, r_bench
+
+
+def compute_risk_metrics(trades_list, history_cache, bench_cache,
+                         period_start, effective_end_date, all_trading_dates):
+    """
+    风险指标（纳指为基准），均按所选时段 [period_start, effective_end_date] 计算：
+    - 最大回撤：该时段内 TWR 净值曲线，(峰值-谷值)/峰值×100%，保留 1 位小数。
+    - 夏普比 / Alpha / Beta：该时段内日 TWR（与收益走势图同一数据源），保证与图中方向一致。
+    - 夏普比 = (年化收益 - 2.1%) / 年化波动率（按 252 日年化）。
+    - Beta = cov(组合日收益, 基准日收益) / var(基准日收益)；组合与基准反向则 Beta 为负。
+    - Alpha（超额收益）= 组合区间收益 − β×基准区间收益（与所选时段一致，%）。
+    时段内不足 2 个日收益时不计算夏普/Alpha/Beta（显示 --）。
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        return {"max_drawdown_pct": None, "sharpe_ratio": None, "alpha_pct": None, "beta": None}
+
+    if not parse_date(effective_end_date):
+        return {"max_drawdown_pct": None, "sharpe_ratio": None, "alpha_pct": None, "beta": None}
+
+    # 时段内交易日
+    dates_in_period = [d for d in all_trading_dates if period_start <= d <= effective_end_date]
+
+    # ---------- 1. 最大回撤：该时段内 TWR 净值曲线 ----------
+    max_drawdown_pct = None
+    if len(dates_in_period) >= 2:
+        r_port, _ = _twr_daily_returns(trades_list, history_cache, bench_cache, dates_in_period)
+        if len(r_port) >= 1:
+            cum = 1.0
+            cum_series = [1.0]
+            for r in r_port:
+                cum *= (1.0 + r)
+                cum_series.append(cum)
+            peak = cum_series[0]
+            max_dd = 0.0
+            for v in cum_series:
+                if v > peak:
+                    peak = v
+                if peak > 1e-12:
+                    dd = (peak - v) / peak
+                    if dd > max_dd:
+                        max_dd = dd
+            max_drawdown_pct = round(max_dd * 100, 1)
+
+    # ---------- 2. 夏普比、Alpha、Beta：同一时段内日 TWR（与走势图一致）----------
+    sharpe_ratio = None
+    alpha_pct = None
+    beta = None
+    if len(dates_in_period) >= 2:
+        r_port_period, r_bench_period = _twr_daily_returns(
+            trades_list, history_cache, bench_cache, dates_in_period
+        )
+        if len(r_port_period) >= 2 and len(r_port_period) == len(r_bench_period):
+            rp = np.array(r_port_period, dtype=float)
+            rb = np.array(r_bench_period, dtype=float)
+            n = len(rp)
+            # 夏普：年化收益 - 无风险利率 再除以年化波动率（252 日年化）
+            R_period = float(np.prod(1.0 + rp) - 1.0)
+            R_ann = (1.0 + R_period) ** (252.0 / n) - 1.0 if n else 0.0
+            sigma_ann = float(np.std(rp)) * (252 ** 0.5)
+            if sigma_ann > 1e-12:
+                sharpe_ratio = round((R_ann - RISK_FREE_RATE) / sigma_ann, 1)
+            # Beta = cov(组合日收益, 基准日收益) / var(基准日收益)
+            var_b = float(np.var(rb))
+            if var_b > 1e-12:
+                cov_pb = float(np.cov(rp, rb)[0, 1])
+                beta = round(cov_pb / var_b, 1)
+            R_bench_period_val = float(np.prod(1.0 + rb) - 1.0)
+            R_bench_ann = (1.0 + R_bench_period_val) ** (252.0 / n) - 1.0 if n else 0.0
+            # Alpha：超额 = 组合区间收益 − β×基准区间收益（与卡片收益率同一量纲，避免年化放大）
+            if beta is not None:
+                alpha_period = R_period - beta * R_bench_period_val
+                alpha_pct = round(alpha_period * 100, 1)
+
+    return {
+        "max_drawdown_pct": max_drawdown_pct,
+        "sharpe_ratio": sharpe_ratio,
+        "alpha_pct": alpha_pct,
+        "beta": beta,
+    }
+
+
+def compute_value_growth_chart(trades_list, history_cache, bench_cache,
+                               period_start, period_end, all_trading_dates):
+    """
+    生成时段内每个交易日的「市值相对期初增长%」走势，用于资金加权收益率下的图表展示。
+    my：组合市值 (V(t)/V_start - 1)*100；bench：纳指相对 period_start 的简单涨跌幅（%）。
+    """
+    dates_in_range = [d for d in all_trading_dates if period_start <= d <= period_end]
+    if not dates_in_range:
+        return {"labels": [], "my": [], "bench": []}
+
+    pos_start = positions_at_date(trades_list, period_start)
+    syms_start = list(pos_start.keys()) if pos_start else []
+    v_start = portfolio_value_with_prices(
+        pos_start,
+        prices_at(syms_start, history_cache, period_start),
+    ) if pos_start else 0.0
+    if v_start < 1e-6:
+        v_start = 1.0
+
+    b_base = get_price_on_date(BENCHMARK_SYMBOL, period_start, bench_cache) or 1.0
+    labels, my_series, bench_series = [], [], []
+
+    for d in dates_in_range:
+        pos = positions_at_date(trades_list, d)
+        v_t = portfolio_value_with_prices(
+            pos,
+            prices_at(list(pos.keys()), history_cache, d),
+        ) if pos else 0.0
+        my_series.append(round((v_t / v_start - 1.0) * 100, 2))
+        b_curr = get_price_on_date(BENCHMARK_SYMBOL, d, bench_cache) or b_base
+        bench_series.append(round((b_curr / b_base - 1) * 100, 2) if b_base > 0 else 0.0)
+        labels.append(d[5:])
 
     return {"labels": labels, "my": my_series, "bench": bench_series}
 
@@ -641,19 +912,18 @@ def api_trades_update():
 @app.route("/api/returns-overview", methods=["GET"])
 def api_returns_overview():
     """
-    收益概览与走势图：所有时段统一使用时间加权收益率（TWR）计算。
-
-    TWR 原理：将持有期分割为若干子区间（每两个相邻交易日为一段），
-    每段内持仓不变（使用前一日收盘后的实际持仓），子区间收益率连乘，
-    消除外部现金流（买入/卖出操作）对收益率的干扰，真实反映策略表现。
+    收益概览与走势图：采用时间加权收益率（TWR），按相邻交易日分段连乘，
+    消除入金/出金对收益率的影响，反映纯持仓涨跌。
 
     end_fetch 取今日（exclusive），不含盘中实时价，保证每次刷新数据稳定。
     """
     trades_list = get_trades()
     symbols = get_all_symbols(trades_list)
+    empty_risk = {"max_drawdown_pct": None, "sharpe_ratio": None, "alpha_pct": None, "beta": None}
     empty_resp = {
         "cards": {k: {"pct": 0, "usd": 0} for k in ["1d", "1m", "1y", "1y_roll", "since"]},
         "chart": {k: {"labels": [], "my": [], "bench": []} for k in ["1d", "1m", "1y", "1y_roll", "since"]},
+        "risk_metrics": {k: dict(empty_risk) for k in ["1d", "1m", "1y", "1y_roll", "since"]},
     }
     if not symbols or not trades_list:
         return jsonify(empty_resp)
@@ -706,12 +976,12 @@ def api_returns_overview():
     chart = {}
 
     for key, p_start in periods.items():
-        # TWR 百分比
+        # 时间加权收益率（TWR）：按相邻交易日分段连乘，排除入金/出金干扰
         twr_pct = compute_twr(trades_list, history_cache, p_start, effective_end_date, trading_dates)
 
         # USD 收益：
         # - since：当前市值 - 总买入成本（真实盈亏）
-        # - 其余时段：期初持仓市值 × TWR%（剔除现金流、只反映价格涨跌的盈亏）
+        # - 其余时段：期初持仓市值 × TWR%，表示该时段纯涨跌带来的金额
         if key == "since":
             usd = round(v_end - total_cost, 2)
         else:
@@ -720,15 +990,12 @@ def api_returns_overview():
                 pos_start,
                 prices_at(list(pos_start.keys()), history_cache, p_start),
             ) if pos_start else 0.0
-            # 用 TWR% × 期初市值，避免期间新增资金虚增 USD 数字
-            # 若期初无持仓（v_start≈0，说明该时段包含完整交易历史），退回用总成本法
             usd = round(v_start * twr_pct / 100, 2) if v_start > 1e-6 else round(v_end - total_cost, 2)
 
         cards[key] = {"pct": twr_pct, "usd": usd}
 
-        # 走势图
+        # 走势图：累计 TWR vs 纳指涨跌幅
         if key == "1d":
-            # 1d 只展示前后两个数据点
             b0 = get_price_on_date(BENCHMARK_SYMBOL, prev_trading_date, bench_cache) or 1.0
             b1 = get_price_on_date(BENCHMARK_SYMBOL, effective_end_date, bench_cache) or b0
             bench_1d = round((b1 / b0 - 1) * 100, 2) if b0 > 0 else 0.0
@@ -743,12 +1010,20 @@ def api_returns_overview():
                 p_start, effective_end_date, trading_dates,
             )
 
-    # 标明数据基准日，便于追溯
+    # 风险指标：按所选时段分别计算，仅用该时段内数据
+    risk_metrics = {}
+    for key, p_start in periods.items():
+        risk_metrics[key] = compute_risk_metrics(
+            trades_list, history_cache, bench_cache,
+            p_start, effective_end_date, trading_dates,
+        )
+
     return jsonify({
         "cards": cards,
         "chart": chart,
         "data_as_of": effective_end_date,
         "method": "TWR",
+        "risk_metrics": risk_metrics,
     })
 
 
@@ -892,10 +1167,18 @@ def api_signals():
         {"symbol": "IAU", "condition": "单日跌幅≤-5%", "k": 0.05, "max_usd": round(t_iau, 2)},
     ]
 
+    # 大盘现状：QQQ、VIX、GLD 实时行情
+    market_overview = []
+    for sym in ("QQQ", "^VIX", "GLD"):
+        q = fetch_realtime_quote(sym)
+        if q:
+            market_overview.append(q)
+
     return jsonify({
         "model_name": "天府 v1.0",
         "version": "1.0.0",
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "market_overview": market_overview,
         "next_dingtou": next_dingtou,
         "toundan_estimate": toundan_estimate,
     })
@@ -903,4 +1186,5 @@ def api_signals():
 
 if __name__ == "__main__":
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    app.run(host="0.0.0.0", port=5001, debug=False)
+    # debug=True 时，修改代码后自动重启（开发用）；生产环境请改为 False 并用 WSGI 部署
+    app.run(host="0.0.0.0", port=5001, debug=True)

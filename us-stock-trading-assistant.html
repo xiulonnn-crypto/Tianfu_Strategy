@@ -79,6 +79,30 @@
           <div class="text-xl font-bold mt-2" data-value="since-pct" style="color: #2d2a3e;">暂无数据</div>
         </div>
       </div>
+      <!-- 风险指标：最大回撤、夏普比、Alpha、Beta（随所选时段 1D/MTD/YTD/1Y/Since 计算） -->
+      <p class="text-xs mb-2" style="color: var(--benchmark-gray);">以下指标随上方所选时段计算</p>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+        <div class="rounded-xl shadow-sm p-4" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">最大回撤（Max Drawdown）</div>
+          <div class="text-lg font-bold mt-1" id="riskMaxDrawdown" style="color: #2d2a3e;">--</div>
+          <div class="text-xs mt-0.5" style="color: var(--benchmark-gray);">单位 %</div>
+        </div>
+        <div class="rounded-xl shadow-sm p-4" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">夏普比（Sharpe Ratio）</div>
+          <div class="text-lg font-bold mt-1" id="riskSharpe" style="color: #2d2a3e;">--</div>
+          <div class="text-xs mt-0.5" style="color: var(--benchmark-gray);">无风险 2.1%</div>
+        </div>
+        <div class="rounded-xl shadow-sm p-4" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">Alpha（阿尔法）</div>
+          <div class="text-lg font-bold mt-1" id="riskAlpha" style="color: #2d2a3e;">--</div>
+          <div class="text-xs mt-0.5" style="color: var(--benchmark-gray);">CAPM 相对纳指，%</div>
+        </div>
+        <div class="rounded-xl shadow-sm p-4" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">Beta（贝塔）</div>
+          <div class="text-lg font-bold mt-1" id="riskBeta" style="color: #2d2a3e;">--</div>
+          <div class="text-xs mt-0.5" style="color: var(--benchmark-gray);">相对纳指</div>
+        </div>
+      </div>
       <!-- 走势图：Morningstar 样式，双线 Portfolio / Nasdaq (Benchmark)，时间维度由上方 5 张卡片切换 -->
       <div class="rounded-xl p-6 shadow-sm" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
         <div class="h-80 relative">
@@ -183,6 +207,8 @@
           <div><span style="color: var(--benchmark-gray);">更新时间</span><div class="font-medium" id="sigUpdated" style="color: #2d2a3e;">-</div></div>
         </div>
       </div>
+      <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">大盘现状</h3>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6" id="marketOverviewList"></div>
       <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">下次定投</h3>
       <div class="rounded-xl shadow-sm p-5 mb-6" id="nextDingtouBlock" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);"></div>
       <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">投弹预估</h3>
@@ -444,15 +470,33 @@
         if (pctEl) pctEl.textContent = '暂无数据';
       });
     }
+    function periodToRiskKey(p) { return p === '1y-roll' ? '1y_roll' : (p || '1y'); }
+    function updateRiskMetrics(risk) {
+      var elDD = document.getElementById('riskMaxDrawdown');
+      var elSharpe = document.getElementById('riskSharpe');
+      var elAlpha = document.getElementById('riskAlpha');
+      var elBeta = document.getElementById('riskBeta');
+      if (elDD) elDD.textContent = (risk && risk.max_drawdown_pct != null) ? '−' + risk.max_drawdown_pct + '%' : '--';
+      if (elSharpe) elSharpe.textContent = (risk && risk.sharpe_ratio != null) ? risk.sharpe_ratio : '--';
+      if (elAlpha) {
+        if (risk && risk.alpha_pct != null) {
+          elAlpha.textContent = (risk.alpha_pct >= 0 ? '+' : '') + risk.alpha_pct + '%';
+          elAlpha.style.color = risk.alpha_pct >= 0 ? '#0d9488' : '#dc2626';
+        } else { elAlpha.textContent = '--'; elAlpha.style.color = '#2d2a3e'; }
+      }
+      if (elBeta) elBeta.textContent = (risk && risk.beta != null) ? risk.beta : '--';
+    }
     async function loadReturnsOverview() {
       const data = await apiGet('/api/returns-overview');
       if (!data) {
         setReturnsCardsNoData();
+        updateRiskMetrics(null);
         buildReturnsChart(currentPeriod);
         return;
       }
       returnsOverview = data;
       updateReturnsCards(data.cards || {});
+      updateRiskMetrics(data.risk_metrics ? data.risk_metrics[periodToRiskKey(currentPeriod)] : null);
       var asOfEl = document.getElementById('returnsDataAsOf');
       if (asOfEl) asOfEl.textContent = (data.data_as_of ? '数据基准日: ' + data.data_as_of : '') + (data.method ? ' | 方法: ' + data.method : '');
       buildReturnsChart(currentPeriod);
@@ -470,6 +514,7 @@
         if (el.dataset.period === p) el.classList.add('active');
       });
       buildReturnsChart(p);
+      updateRiskMetrics(returnsOverview && returnsOverview.risk_metrics ? returnsOverview.risk_metrics[periodToRiskKey(p)] : null);
     }
 
     // ========== 资产配置：从后端拉取并渲染表格与环形图 ==========
@@ -625,6 +670,19 @@
       if (nameEl) nameEl.textContent = data && data.model_name ? data.model_name : '-';
       if (verEl) verEl.textContent = data && data.version ? data.version : '-';
       if (upEl) upEl.textContent = data && data.updated_at ? data.updated_at : '-';
+
+      const marketEl = document.getElementById('marketOverviewList');
+      if (marketEl) {
+        if (!data || !data.market_overview || !data.market_overview.length) {
+          marketEl.innerHTML = '<p class="text-sm col-span-full" style="color:var(--benchmark-gray);">暂无行情数据</p>';
+        } else {
+          marketEl.innerHTML = data.market_overview.map(function (q) {
+            var changeCls = (q.change_pct != null && q.change_pct > 0) ? 'color:#0d9488;' : ((q.change_pct != null && q.change_pct < 0) ? 'color:#dc2626;' : 'color:var(--benchmark-gray);');
+            var changeStr = (q.change_pct != null) ? (q.change_pct >= 0 ? '+' : '') + q.change_pct + '%' : '--';
+            return '<div class="rounded-xl shadow-sm p-4" style="background:#fff;box-shadow:0 2px 16px rgba(74,61,124,0.06);"><div class="font-medium" style="color:var(--deep-purple);">' + (q.name || q.symbol) + ' <span class="text-sm font-normal" style="color:var(--benchmark-gray);">' + (q.symbol || '') + '</span></div><div class="text-xl font-semibold mt-1" style="color:#2d2a3e;">' + (q.price != null ? Number(q.price).toLocaleString(undefined,{minimumFractionDigits:2}) : '--') + '</div><div class="text-sm mt-1" style="' + changeCls + '">' + changeStr + '</div></div>';
+          }).join('');
+        }
+      }
 
       const dingBlock = document.getElementById('nextDingtouBlock');
       if (dingBlock) {
@@ -843,9 +901,10 @@
   2. 启动后端：python server.py（默认 http://localhost:5001）
   3. 浏览器访问：http://localhost:5001 或 直接打开本 HTML 文件（会自动请求 localhost:5001 接口）
 
-  数据说明：收益概览与资产配置由【交易历史】中的出入金、交易明细 + Yahoo Finance 最新股价计算得出；模型信号仅展示下次定投与投弹预估，不展示策略详情。
+  数据说明：收益概览采用时间加权收益率（TWR），由【交易历史】与 Yahoo 股价计算，排除入金/出金对收益率的影响；资产配置同上；模型信号仅展示下次定投与投弹预估。
 
   核心交互：切换收益时间维度、隐藏/显示资产列、添加入出金与交易后会自动刷新收益与配置。
   -->
 </body>
 </html>
+
