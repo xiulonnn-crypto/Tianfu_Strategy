@@ -28,6 +28,11 @@ BENCHMARK_SYMBOL = "^IXIC"
 # 无风险利率：美国3个月期国债年化收益率（用于夏普、Alpha），单位小数
 RISK_FREE_RATE = 0.021
 
+# ===== 天府 v1.0 常量 =====
+TOUNDAN_TOTAL_BUDGET = 50000   # 备弹池固定总额
+MONTHLY_BASE = 2000            # 月定投基数
+MODEL_STATE_FILE = DATA_DIR / "model_state.json"
+
 # 价格缓存：文件持久化，同一天内所有请求使用同一份数据，避免刷新时数据变化
 PRICE_CACHE_FILE = DATA_DIR / "price_cache.json"
 _CACHE_VERSION = 5  # 升级时递增，使旧缓存失效（5：收益概览拉取区间含 1y_roll 缓冲，近1年有数据）
@@ -104,7 +109,7 @@ def fetch_realtime_quote(symbol):
     sy = yf_symbol(symbol.strip())
     # 展示用名称（指数保留 ^ 前缀）
     display_symbol = symbol.strip().upper()
-    names = {"QQQ": "纳斯达克100", "^VIX": "恐慌指数", "GLD": "黄金ETF"}
+    names = {"QQQ": "纳斯达克100", "^VIX": "恐慌指数", "GLD": "黄金ETF", "^TNX": "10Y国债"}
     name = names.get(display_symbol, display_symbol)
     try:
         ticker = yf.Ticker(sy)
@@ -441,82 +446,86 @@ def _npv_mwr(r, v0, v_end, cf_list, t_list):
 
 def compute_mwr(trades_list, fund_records, history_cache, period_start, period_end, all_trading_dates):
     """
-    资金加权收益率（MWR / IRR）计算。
+    资金加权收益率（MWRR / IRR）计算。
 
-    考虑期初市值 V0、期间出入金、期末市值 V_end，求折现率 r 使
-    NPV = -V0 + sum(CF_i/(1+r)^t_i) + V_end/(1+r) = 0。
-    入金为正、出金为负；t_i 为现金流发生日占区间长度的比例。
-    返回 MWR 百分比（float），如 3.25 表示 +3.25%。
+    现金流模型：以交易记录为现金流来源。
+    - 买入 = 投资者投入现金（负现金流）：-price×shares - commission
+    - 卖出 = 投资者回收现金（正现金流）：+price×shares - commission
+    - 期末证券市值 = 终值（正现金流）
+    求内部收益率 r 使 NPV = 0。
+    返回 MWRR 百分比（float）。
     """
     p_start_dt = parse_date(period_start)
     p_end_dt = parse_date(period_end)
     if not p_start_dt or not p_end_dt:
-        return 0.0
+        return None
     T_days = (p_end_dt - p_start_dt).days
     if T_days <= 0:
-        return 0.0
+        return None
 
+    # 期初持仓市值视为 t=0 的投入（负现金流）
     pos_start = positions_at_date(trades_list, period_start)
     syms_start = list(pos_start.keys()) if pos_start else []
     v0 = portfolio_value_with_prices(
-        pos_start,
-        prices_at(syms_start, history_cache, period_start),
+        pos_start, prices_at(syms_start, history_cache, period_start),
     ) if pos_start else 0.0
 
+    # 期末持仓市值视为 t=1 的回收（正现金流）
     pos_end = positions_at_date(trades_list, period_end)
     syms_end = list(pos_end.keys()) if pos_end else []
     v_end = portfolio_value_with_prices(
-        pos_end,
-        prices_at(syms_end, history_cache, period_end),
+        pos_end, prices_at(syms_end, history_cache, period_end),
     ) if pos_end else 0.0
 
-    # 期间内出入金：date 在 (period_start, period_end] 内
+    # 从交易记录构建现金流：仅 (period_start, period_end] 内的交易
+    # 买入 → 投入现金 → 负；卖出 → 收回现金 → 正
     cf_list = []
     t_list = []
-    for rec in fund_records:
-        d = (rec.get("date") or "")[:10]
+    for t in trades_list:
+        d = (t.get("date") or "")[:10]
         if not d or d <= period_start or d > period_end:
             continue
+        action = t.get("action") or ""
         try:
-            amount = float(rec.get("amount") or 0)
+            price = float(t.get("price") or 0)
+            shares = float(t.get("shares") or 0)
+            commission = float(t.get("commission") or 0)
         except (TypeError, ValueError):
             continue
-        rec_dt = parse_date(d)
-        if not rec_dt:
+        trade_val = price * shares
+        if action == "买入":
+            cf = -(trade_val + commission)
+        elif action == "卖出":
+            cf = trade_val - commission
+        else:
             continue
-        d_days = (rec_dt - p_start_dt).days
-        t_i = d_days / T_days if T_days else 0
+        t_dt = parse_date(d)
+        if not t_dt:
+            continue
+        d_days = (t_dt - p_start_dt).days
+        t_i = d_days / T_days
         t_i = max(0.0, min(1.0, t_i))
-        cf_list.append(amount)
+        cf_list.append(cf)
         t_list.append(t_i)
 
-    # NPV(r) = -V0 + sum(CF/(1+r)^t) + V_end/(1+r)；求 r 使 NPV=0
     def f(r):
         return _npv_mwr(r, v0, v_end, cf_list, t_list)
 
-    # 无现金流时：V0*(1+r)=V_end => r=(V_end/V0)-1
     if not cf_list and v0 > 1e-6 and v_end >= 0:
-        r = (v_end / v0) - 1.0
-        return round(r * 100, 2)
+        return round(((v_end / v0) - 1.0) * 100, 2)
     if not cf_list and v0 < 1e-6:
-        return 0.0
+        return None
 
     try:
         from scipy.optimize import brentq
-        # r 在 (-0.99, 10) 内找根；若 f(-0.99) 与 f(10) 同号则无解
         r_lo, r_hi = -0.99, 10.0
         f_lo, f_hi = f(r_lo), f(r_hi)
         if f_lo * f_hi > 0:
-            # 退化为简单收益
-            if v0 > 1e-6:
-                return round((v_end / v0 - 1.0) * 100, 2)
-            return 0.0
+            return round(((v_end / v0) - 1.0) * 100, 2) if v0 > 1e-6 else None
         r = brentq(f, r_lo, r_hi)
         return round(r * 100, 2)
     except Exception:
-        if v0 > 1e-6:
-            return round((v_end / v0 - 1.0) * 100, 2)
-        return 0.0
+        return round(((v_end / v0) - 1.0) * 100, 2) if v0 > 1e-6 else None
 
 
 def compute_twr(trades_list, history_cache, period_start, period_end, all_trading_dates):
@@ -563,25 +572,36 @@ def compute_twr(trades_list, history_cache, period_start, period_end, all_tradin
 def compute_twr_chart(trades_list, history_cache, bench_cache,
                       period_start, period_end, all_trading_dates):
     """
-    生成时段内每个交易日的累计 TWR 走势，用于图表展示。
+    生成时段内每个交易日的累计 TWR 走势 + DCA 基准。
 
-    my：我的组合累计 TWR（%）；bench：纳指相对 period_start 的简单涨跌幅（%）。
-    返回 {"labels": [...], "my": [...], "bench": [...]}
+    my：组合累计 TWR（%）；bench：纳指涨跌幅（%）；dca：等额定投收益（%）。
+    DCA 模拟：将时段内实际总买入金额均匀分配到每个交易日，按组合加权价格买入。
     """
     dates_before = [d for d in all_trading_dates if d < period_start]
     anchor = dates_before[-1] if dates_before else None
 
     dates_in_range = [d for d in all_trading_dates if period_start <= d <= period_end]
     if not dates_in_range:
-        return {"labels": [], "my": [], "bench": []}
+        return {"labels": [], "my": [], "bench": [], "dca": []}
 
     chain = ([anchor] if anchor else []) + dates_in_range
 
-    # 纳指基准价：period_start（或之前最近交易日）的收盘价
     b_base = get_price_on_date(BENCHMARK_SYMBOL, period_start, bench_cache) or 1.0
 
-    labels, my_series, bench_series = [], [], []
+    # 计算时段内实际总买入金额（用于 DCA 模拟）
+    total_buy_amount = sum(
+        float(t.get("price", 0)) * float(t.get("shares", 0))
+        for t in trades_list
+        if (t.get("action") or "") == "买入"
+        and period_start <= (t.get("date") or "")[:10] <= period_end
+    )
+    n_days = len(dates_in_range)
+    daily_dca_amount = total_buy_amount / n_days if n_days > 0 and total_buy_amount > 0 else 0
+
+    labels, my_series, bench_series, dca_series = [], [], [], []
     cumulative_factor = 1.0
+    dca_cum_shares = 0.0
+    dca_cum_cost = 0.0
 
     for i in range(1, len(chain)):
         prev_d, curr_d = chain[i - 1], chain[i]
@@ -593,14 +613,42 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
             if v_prev > 1e-6:
                 cumulative_factor *= (v_curr / v_prev)
 
-        # 只输出 period_start 之后（含）的数据点
         if curr_d >= period_start:
             b_curr = get_price_on_date(BENCHMARK_SYMBOL, curr_d, bench_cache) or b_base
-            labels.append(curr_d[5:])  # MM-DD 格式
+            labels.append(curr_d[5:])
             my_series.append(round((cumulative_factor - 1) * 100, 2))
             bench_series.append(round((b_curr / b_base - 1) * 100, 2) if b_base > 0 else 0.0)
 
-    return {"labels": labels, "my": my_series, "bench": bench_series}
+            # DCA：每日等额买入，用组合中占比最大的标的价格模拟
+            # 简化为用 QQQM 价格（主力标的），无 QQQM 时用基准
+            qqqm_p = get_price_on_date("QQQM", curr_d, history_cache)
+            dca_price = qqqm_p if qqqm_p and qqqm_p > 0 else (b_curr if b_curr > 0 else 1)
+            if daily_dca_amount > 0 and dca_price > 0:
+                dca_cum_shares += daily_dca_amount / dca_price
+                dca_cum_cost += daily_dca_amount
+                dca_value = dca_cum_shares * dca_price
+                dca_ret = round((dca_value / dca_cum_cost - 1) * 100, 2) if dca_cum_cost > 0 else 0
+                dca_series.append(dca_ret)
+            else:
+                dca_series.append(0)
+
+    # 收集时段内的买入事件（用于走势图散点标记）
+    buy_markers = []
+    for t in trades_list:
+        td = (t.get("date") or "")[:10]
+        if (t.get("action") or "") != "买入" or td < period_start or td > period_end:
+            continue
+        label_key = td[5:]  # MM-DD
+        if label_key in labels:
+            idx = labels.index(label_key)
+            buy_markers.append({
+                "idx": idx, "label": label_key,
+                "type": t.get("type") or "定投",
+                "symbol": (t.get("symbol") or "").upper(),
+                "price_shares": round(float(t.get("price", 0)) * float(t.get("shares", 0)), 0),
+            })
+
+    return {"labels": labels, "my": my_series, "bench": bench_series, "dca": dca_series, "buy_markers": buy_markers}
 
 
 def _twr_daily_returns(trades_list, history_cache, bench_cache, dates_in_range):
@@ -624,50 +672,127 @@ def _twr_daily_returns(trades_list, history_cache, bench_cache, dates_in_range):
     return r_port, r_bench
 
 
+def _build_drawdown_series(r_port_list, dates_with_returns):
+    """
+    根据日 TWR 收益序列构建回撤序列，并识别 Top-3 回撤区间。
+    dates_with_returns: 与 r_port_list 对应的日期列表（长度 = len(r_port_list)+1，首元素为起始日）。
+    返回 (dd_pct_series, top3_drawdowns)
+      dd_pct_series: 每日回撤百分比列表（负值），与 dates_with_returns 等长
+      top3_drawdowns: 最大三段回撤 [{peak_date, trough_date, recovery_date, drawdown_pct, duration_days, recovery_days}]
+    """
+    if not r_port_list:
+        return [], []
+
+    cum = 1.0
+    cum_series = [1.0]
+    for r in r_port_list:
+        cum *= (1.0 + r)
+        cum_series.append(cum)
+
+    # 每日回撤百分比（从峰值到当前）
+    peak = cum_series[0]
+    dd_pct_series = []
+    for v in cum_series:
+        if v > peak:
+            peak = v
+        dd = (v / peak - 1.0) * 100 if peak > 1e-12 else 0.0
+        dd_pct_series.append(round(dd, 2))
+
+    # 识别所有回撤区间：从峰值开始下跌 → 回到（或超过）峰值
+    # 状态机：追踪 peak_idx → trough_idx → recovery_idx
+    n = len(cum_series)
+    intervals = []
+    i = 0
+    while i < n:
+        # 找下一个开始下跌的点
+        while i < n - 1 and cum_series[i + 1] >= cum_series[i]:
+            i += 1
+        if i >= n - 1:
+            break
+        peak_idx = i
+        peak_val = cum_series[peak_idx]
+        # 找谷底
+        trough_idx = peak_idx + 1
+        j = trough_idx + 1
+        while j < n and cum_series[j] < peak_val:
+            if cum_series[j] < cum_series[trough_idx]:
+                trough_idx = j
+            j += 1
+        # j 现在是恢复点（或序列末尾）
+        recovery_idx = j if j < n else None
+        dd_val = (cum_series[trough_idx] / peak_val - 1.0) * 100 if peak_val > 1e-12 else 0.0
+        intervals.append({
+            "peak_idx": peak_idx,
+            "trough_idx": trough_idx,
+            "recovery_idx": recovery_idx,
+            "dd_pct": dd_val,
+        })
+        i = j if j < n else n
+
+    # 按回撤幅度（绝对值）降序取 Top-3
+    intervals.sort(key=lambda x: x["dd_pct"])
+    top3 = intervals[:3]
+
+    top3_result = []
+    for seg in top3:
+        pi, ti, ri = seg["peak_idx"], seg["trough_idx"], seg["recovery_idx"]
+        peak_date = dates_with_returns[pi] if pi < len(dates_with_returns) else None
+        trough_date = dates_with_returns[ti] if ti < len(dates_with_returns) else None
+        recovery_date = dates_with_returns[ri] if ri is not None and ri < len(dates_with_returns) else None
+        p_dt = parse_date(peak_date) if peak_date else None
+        t_dt = parse_date(trough_date) if trough_date else None
+        r_dt = parse_date(recovery_date) if recovery_date else None
+        duration_days = (t_dt - p_dt).days if p_dt and t_dt else None
+        recovery_days = (r_dt - t_dt).days if t_dt and r_dt else None
+        top3_result.append({
+            "peak_date": peak_date,
+            "trough_date": trough_date,
+            "recovery_date": recovery_date,
+            "drawdown_pct": round(seg["dd_pct"], 1),
+            "duration_days": duration_days,
+            "recovery_days": recovery_days,
+        })
+
+    return dd_pct_series, top3_result
+
+
 def compute_risk_metrics(trades_list, history_cache, bench_cache,
                          period_start, effective_end_date, all_trading_dates):
     """
     风险指标（纳指为基准），均按所选时段 [period_start, effective_end_date] 计算：
-    - 最大回撤：该时段内 TWR 净值曲线，(峰值-谷值)/峰值×100%，保留 1 位小数。
-    - 夏普比 / Alpha / Beta：该时段内日 TWR（与收益走势图同一数据源），保证与图中方向一致。
+    - 最大回撤 + 回撤序列 + Top-3 回撤明细（Duration / Recovery）。
     - 夏普比 = (年化收益 - 2.1%) / 年化波动率（按 252 日年化）。
-    - Beta = cov(组合日收益, 基准日收益) / var(基准日收益)；组合与基准反向则 Beta 为负。
-    - Alpha（超额收益）= 组合区间收益 − β×基准区间收益（与所选时段一致，%）。
-    时段内不足 2 个日收益时不计算夏普/Alpha/Beta（显示 --）。
+    - Beta = cov(组合日收益, 基准日收益) / var(基准日收益)。
+    - Alpha（超额收益）= 组合区间收益 − β×基准区间收益。
     """
     try:
         import numpy as np
     except ImportError:
-        return {"max_drawdown_pct": None, "sharpe_ratio": None, "alpha_pct": None, "beta": None}
+        return {"max_drawdown_pct": None, "sharpe_ratio": None, "alpha_pct": None, "beta": None,
+                "drawdown_series": None, "top3_drawdowns": None}
 
+    empty = {"max_drawdown_pct": None, "sharpe_ratio": None, "alpha_pct": None, "beta": None,
+             "drawdown_series": None, "top3_drawdowns": None}
     if not parse_date(effective_end_date):
-        return {"max_drawdown_pct": None, "sharpe_ratio": None, "alpha_pct": None, "beta": None}
+        return dict(empty)
 
-    # 时段内交易日
     dates_in_period = [d for d in all_trading_dates if period_start <= d <= effective_end_date]
 
-    # ---------- 1. 最大回撤：该时段内 TWR 净值曲线 ----------
+    # ---------- 1. 回撤分析：净值曲线 → 回撤序列 + Top3 ----------
     max_drawdown_pct = None
+    drawdown_series = None
+    drawdown_labels = None
+    top3_drawdowns = None
     if len(dates_in_period) >= 2:
         r_port, _ = _twr_daily_returns(trades_list, history_cache, bench_cache, dates_in_period)
         if len(r_port) >= 1:
-            cum = 1.0
-            cum_series = [1.0]
-            for r in r_port:
-                cum *= (1.0 + r)
-                cum_series.append(cum)
-            peak = cum_series[0]
-            max_dd = 0.0
-            for v in cum_series:
-                if v > peak:
-                    peak = v
-                if peak > 1e-12:
-                    dd = (peak - v) / peak
-                    if dd > max_dd:
-                        max_dd = dd
-            max_drawdown_pct = round(max_dd * 100, 1)
+            dd_series, top3 = _build_drawdown_series(r_port, dates_in_period)
+            max_drawdown_pct = round(min(dd_series) * -1, 1) if dd_series else None
+            drawdown_series = dd_series
+            drawdown_labels = [d[5:] for d in dates_in_period]
+            top3_drawdowns = top3
 
-    # ---------- 2. 夏普比、Alpha、Beta：同一时段内日 TWR（与走势图一致）----------
+    # ---------- 2. 夏普比、Alpha、Beta ----------
     sharpe_ratio = None
     alpha_pct = None
     beta = None
@@ -679,20 +804,16 @@ def compute_risk_metrics(trades_list, history_cache, bench_cache,
             rp = np.array(r_port_period, dtype=float)
             rb = np.array(r_bench_period, dtype=float)
             n = len(rp)
-            # 夏普：年化收益 - 无风险利率 再除以年化波动率（252 日年化）
             R_period = float(np.prod(1.0 + rp) - 1.0)
             R_ann = (1.0 + R_period) ** (252.0 / n) - 1.0 if n else 0.0
             sigma_ann = float(np.std(rp)) * (252 ** 0.5)
             if sigma_ann > 1e-12:
                 sharpe_ratio = round((R_ann - RISK_FREE_RATE) / sigma_ann, 1)
-            # Beta = cov(组合日收益, 基准日收益) / var(基准日收益)
             var_b = float(np.var(rb))
             if var_b > 1e-12:
                 cov_pb = float(np.cov(rp, rb)[0, 1])
                 beta = round(cov_pb / var_b, 1)
             R_bench_period_val = float(np.prod(1.0 + rb) - 1.0)
-            R_bench_ann = (1.0 + R_bench_period_val) ** (252.0 / n) - 1.0 if n else 0.0
-            # Alpha：超额 = 组合区间收益 − β×基准区间收益（与卡片收益率同一量纲，避免年化放大）
             if beta is not None:
                 alpha_period = R_period - beta * R_bench_period_val
                 alpha_pct = round(alpha_period * 100, 1)
@@ -702,6 +823,8 @@ def compute_risk_metrics(trades_list, history_cache, bench_cache,
         "sharpe_ratio": sharpe_ratio,
         "alpha_pct": alpha_pct,
         "beta": beta,
+        "drawdown_series": {"labels": drawdown_labels or [], "values": drawdown_series or []},
+        "top3_drawdowns": top3_drawdowns or [],
     }
 
 
@@ -909,6 +1032,74 @@ def api_trades_update():
     return jsonify({"ok": True})
 
 
+@app.route("/api/trade-summary", methods=["GET"])
+def api_trade_summary():
+    """交易汇总统计：总入金、总佣金、资金利用率。支持 ?period=year|month|all 筛选。"""
+    period = request.args.get("period", "all")
+    now = datetime.now()
+    fund_records = get_fund_records()
+    trades_list = get_trades()
+
+    if period == "year":
+        year_prefix = now.strftime("%Y")
+        funds = [r for r in fund_records if (r.get("date") or "")[:4] == year_prefix]
+        tds = [t for t in trades_list if (t.get("date") or "")[:4] == year_prefix]
+    elif period == "month":
+        month_prefix = now.strftime("%Y-%m")
+        funds = [r for r in fund_records if (r.get("date") or "")[:7] == month_prefix]
+        tds = [t for t in trades_list if (t.get("date") or "")[:7] == month_prefix]
+    else:
+        funds = fund_records
+        tds = trades_list
+
+    # 出入金中备注含"出金"的 amount 取反
+    total_inflow = 0.0
+    total_outflow = 0.0
+    for r in funds:
+        amt = float(r.get("amount") or 0)
+        note = (r.get("note") or "").lower()
+        if "出金" in note and amt > 0:
+            total_outflow += amt
+        elif amt > 0:
+            total_inflow += amt
+        elif amt < 0:
+            total_outflow += abs(amt)
+
+    total_commission = round(sum(float(t.get("commission") or 0) for t in tds), 2)
+
+    # 资金利用率需要当前持仓数据
+    all_trades = get_trades()
+    all_symbols = get_all_symbols(all_trades)
+    cash_util = 0.0
+    if all_symbols:
+        dt = datetime.now()
+        since_date = min((t["date"][:10] for t in all_trades), default=dt.strftime("%Y-%m-%d"))
+        start_f = min(since_date, (dt - timedelta(days=365)).strftime("%Y-%m-%d"))
+        end_f = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
+        hc, _, td_dates = fetch_histories_with_bench(all_symbols, start_f, end_f)
+        eff_date = td_dates[-1] if td_dates else dt.strftime("%Y-%m-%d")
+        pos = positions_at_date(all_trades, eff_date)
+        tv = 0.0
+        boxx_v = 0.0
+        for sym, qty in pos.items():
+            p = get_price_on_date(sym, eff_date, hc) or 0
+            v = qty * p
+            tv += v
+            if sym.upper() == "BOXX":
+                boxx_v += v
+        cash_util = round((1 - boxx_v / tv) * 100, 1) if tv > 0 else 0
+
+    return jsonify({
+        "period": period,
+        "total_inflow": round(total_inflow, 2),
+        "total_outflow": round(total_outflow, 2),
+        "net_inflow": round(total_inflow - total_outflow, 2),
+        "total_commission": total_commission,
+        "trade_count": len(tds),
+        "cash_utilization_pct": cash_util,
+    })
+
+
 @app.route("/api/returns-overview", methods=["GET"])
 def api_returns_overview():
     """
@@ -972,16 +1163,17 @@ def api_returns_overview():
     cost_basis_map = compute_cost_basis(trades_list)
     total_cost = sum(cb["total_cost"] for cb in cost_basis_map.values()) or v_end
 
+    fund_records = get_fund_records()
     cards = {}
     chart = {}
 
     for key, p_start in periods.items():
-        # 时间加权收益率（TWR）：按相邻交易日分段连乘，排除入金/出金干扰
+        # TWR（时间加权）
         twr_pct = compute_twr(trades_list, history_cache, p_start, effective_end_date, trading_dates)
+        # MWRR（金额加权）
+        mwrr_pct = compute_mwr(trades_list, fund_records, history_cache, p_start, effective_end_date, trading_dates)
 
-        # USD 收益：
-        # - since：当前市值 - 总买入成本（真实盈亏）
-        # - 其余时段：期初持仓市值 × TWR%，表示该时段纯涨跌带来的金额
+        # USD 收益
         if key == "since":
             usd = round(v_end - total_cost, 2)
         else:
@@ -992,9 +1184,9 @@ def api_returns_overview():
             ) if pos_start else 0.0
             usd = round(v_start * twr_pct / 100, 2) if v_start > 1e-6 else round(v_end - total_cost, 2)
 
-        cards[key] = {"pct": twr_pct, "usd": usd}
+        cards[key] = {"pct": twr_pct, "usd": usd, "mwrr_pct": mwrr_pct}
 
-        # 走势图：累计 TWR vs 纳指涨跌幅
+        # 走势图
         if key == "1d":
             b0 = get_price_on_date(BENCHMARK_SYMBOL, prev_trading_date, bench_cache) or 1.0
             b1 = get_price_on_date(BENCHMARK_SYMBOL, effective_end_date, bench_cache) or b0
@@ -1003,6 +1195,8 @@ def api_returns_overview():
                 "labels": [prev_trading_date[5:], effective_end_date[5:]],
                 "my": [0, twr_pct],
                 "bench": [0, bench_1d],
+                "dca": [0, 0],
+                "buy_markers": [],
             }
         else:
             chart[key] = compute_twr_chart(
@@ -1010,7 +1204,7 @@ def api_returns_overview():
                 p_start, effective_end_date, trading_dates,
             )
 
-    # 风险指标：按所选时段分别计算，仅用该时段内数据
+    # 风险指标（含回撤序列 + Top3 回撤明细）
     risk_metrics = {}
     for key, p_start in periods.items():
         risk_metrics[key] = compute_risk_metrics(
@@ -1018,12 +1212,54 @@ def api_returns_overview():
             p_start, effective_end_date, trading_dates,
         )
 
+    # ===== 策略驱动力归因（Since Inception）=====
+    strategy_driver = None
+    since_risk = risk_metrics.get("since", {})
+    since_card = cards.get("since", {})
+    total_return_pct = since_card.get("pct", 0) or 0
+    beta_val = since_risk.get("beta")
+    # 纳指同期涨跌幅
+    b_start = get_price_on_date(BENCHMARK_SYMBOL, periods["since"], bench_cache) or 1
+    b_end_val = get_price_on_date(BENCHMARK_SYMBOL, effective_end_date, bench_cache) or b_start
+    bench_return_pct = round((b_end_val / b_start - 1) * 100, 2) if b_start > 0 else 0
+    # Beta 贡献 = Beta × 基准收益
+    if beta_val is not None:
+        beta_contrib = round(beta_val * bench_return_pct, 2)
+    else:
+        beta_contrib = bench_return_pct
+
+    # 投弹 Alpha：type=="投弹" 的交易产生的盈亏 / 组合总市值
+    toundan_pnl = 0.0
+    for t in trades_list:
+        if (t.get("type") or "") != "投弹" or (t.get("action") or "") != "买入":
+            continue
+        sym = (t.get("symbol") or "").upper()
+        bp = float(t.get("price") or 0)
+        bs = float(t.get("shares") or 0)
+        if bp <= 0 or bs <= 0:
+            continue
+        cur_p = get_price_on_date(sym, effective_end_date, history_cache)
+        if cur_p:
+            toundan_pnl += (cur_p - bp) * bs
+    toundan_alpha_pct = round(toundan_pnl / v_end * 100, 2) if v_end > 1e-6 else 0
+    # 月投贡献 = 残差
+    dingtou_pct = round(total_return_pct - beta_contrib - toundan_alpha_pct, 2)
+
+    strategy_driver = {
+        "total_pct": total_return_pct,
+        "beta_pct": beta_contrib,
+        "toundan_alpha_pct": toundan_alpha_pct,
+        "dingtou_pct": dingtou_pct,
+        "bench_return_pct": bench_return_pct,
+    }
+
     return jsonify({
         "cards": cards,
         "chart": chart,
         "data_as_of": effective_end_date,
         "method": "TWR",
         "risk_metrics": risk_metrics,
+        "strategy_driver": strategy_driver,
     })
 
 
@@ -1069,39 +1305,682 @@ def api_allocation():
             "avg_cost": round(avg_cost, 2),
         })
     total = sum(r["amount"] for r in rows)
+    # 风险资产归一化：排除 BOXX 等现金类标的
+    CASH_TICKERS = {"BOXX"}
+    TARGET_PCT = {"QQQM": 50, "BRK.B": 35, "IAU": 15}
+    risk_total = sum(r["amount"] for r in rows if r["symbol"] not in CASH_TICKERS)
+    qqqm_effective_pct = 0
     for r in rows:
         r["pct"] = round(r["amount"] / total * 100, 1) if total else 0
-        # 持仓盈亏：(当前价 - 均价) / 均价 × 100
+        r["is_cash"] = r["symbol"] in CASH_TICKERS
         if r["avg_cost"] and r["avg_cost"] > 0:
             r["gain_pct"] = round((r["price"] - r["avg_cost"]) / r["avg_cost"] * 100, 2)
         else:
             r["gain_pct"] = 0.0
-    # 按持仓金额倒序
+        # 有效敞口比例（仅风险资产参与归一化）
+        if r["is_cash"]:
+            r["effective_pct"] = None
+            r["target_pct"] = 0
+            r["deviation_pct"] = 0
+        else:
+            r["effective_pct"] = round(r["amount"] / risk_total * 100, 1) if risk_total > 0 else 0
+            r["target_pct"] = TARGET_PCT.get(r["symbol"], 0)
+            r["deviation_pct"] = round(r["effective_pct"] - r["target_pct"], 1)
+        if r["symbol"] == "QQQM":
+            qqqm_effective_pct = r["effective_pct"] or 0
     rows.sort(key=lambda r: r["amount"], reverse=True)
-    # 单标的盈亏率 = (现价/成本-1)，与 TWR 在无现金流时等价
     return jsonify({
         "rows": rows,
         "data_as_of": effective_end_date,
+        "total_value": round(total, 2),
+        "risk_total": round(risk_total, 2),
+        "qqqm_warning": qqqm_effective_pct < 35,
+        "qqqm_pct": round(qqqm_effective_pct, 1),
     })
 
+
+@app.route("/api/asset-analysis/<symbol>", methods=["GET"])
+def api_asset_analysis(symbol):
+    """
+    单标的盈亏归因分析：价格序列、VWAC 动态成本线、加仓散点、性能指标。
+    价格数据源与 /api/allocation 使用同一套缓存，确保最新价与表格一致。
+    """
+    symbol = symbol.strip().upper()
+    trades_list = get_trades()
+    all_symbols = get_all_symbols(trades_list)
+
+    dt = datetime.now()
+    one_year_ago = (dt - timedelta(days=395)).strftime("%Y-%m-%d")
+    # 取最近一年与该标的最早交易日的孰晚者（不展示交易前的空白区间）
+    sym_trades_dates = [
+        (t.get("date") or "")[:10] for t in trades_list
+        if (t.get("symbol") or "").upper() == symbol and (t.get("date") or "")[:10] > "2000"
+    ]
+    earliest_trade = min(sym_trades_dates) if sym_trades_dates else one_year_ago
+    start_fetch = max(one_year_ago, earliest_trade)
+    # 额外多拉 30 天缓冲，确保 EMA / 均价计算有前置数据
+    start_fetch_buffered = (parse_date(start_fetch) - timedelta(days=30)).strftime("%Y-%m-%d") if parse_date(start_fetch) else start_fetch
+    end_fetch = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # 使用与 /api/allocation 相同的缓存拿价格，保证最新价一致
+    alloc_since = min((t["date"][:10] for t in trades_list), default=dt.strftime("%Y-%m-%d"))
+    alloc_start = min(alloc_since, (dt - timedelta(days=365)).strftime("%Y-%m-%d"), dt.replace(month=1, day=1).strftime("%Y-%m-%d"))
+    alloc_end = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
+    alloc_cache, _, alloc_trading_dates = fetch_histories_with_bench(all_symbols, alloc_start, alloc_end)
+    alloc_end_date = alloc_trading_dates[-1] if alloc_trading_dates else dt.strftime("%Y-%m-%d")
+    # allocation 一致的当前价和成本
+    alloc_price = get_price_on_date(symbol, alloc_end_date, alloc_cache)
+    alloc_cost_map = compute_cost_basis(trades_list)
+    alloc_cb = alloc_cost_map.get(symbol, {})
+    alloc_avg_cost = alloc_cb.get("avg_cost", 0.0)
+    alloc_shares = alloc_cb.get("shares", 0.0)
+
+    # 图表用的历史序列单独拉（可能范围更广）
+    raw = _fetch_histories_raw([symbol], start_fetch_buffered, end_fetch)
+    df = raw.get(symbol)
+    if df is None or df.empty:
+        return jsonify({"error": f"无法获取 {symbol} 的历史数据"}), 404
+
+    closes = df["Close"].dropna()
+    dates = [str(idx)[:10] for idx in closes.index]
+    prices = [round(float(v), 2) for v in closes.values]
+
+    # 筛选该标的所有交易，按日期排序
+    sym_trades = sorted(
+        [t for t in trades_list if (t.get("symbol") or "").upper() == symbol],
+        key=lambda x: x.get("date") or ""
+    )
+
+    # --- VWAC 动态成本流 ---
+    cum_cost = 0.0
+    cum_shares = 0.0
+    # 按日期建立交易索引：{date: [{action, price, shares, commission, type}, ...]}
+    trade_by_date = {}
+    for t in sym_trades:
+        d = (t.get("date") or "")[:10]
+        trade_by_date.setdefault(d, []).append(t)
+
+    cost_series = []
+    for i, d in enumerate(dates):
+        if d in trade_by_date:
+            for t in trade_by_date[d]:
+                action = t.get("action") or ""
+                p = float(t.get("price") or 0)
+                s = float(t.get("shares") or 0)
+                c = float(t.get("commission") or 0)
+                if action == "买入" and s > 0:
+                    cum_cost += p * s + c
+                    cum_shares += s
+                elif action == "卖出" and cum_shares > 1e-9 and s > 0:
+                    ratio = min(s, cum_shares) / cum_shares
+                    cum_cost *= (1.0 - ratio)
+                    cum_shares = max(0.0, cum_shares - s)
+        vwac = round(cum_cost / cum_shares, 2) if cum_shares > 1e-6 else None
+        cost_series.append(vwac)
+
+    # --- 加仓散点 ---
+    buy_points = []
+    for t in sym_trades:
+        if (t.get("action") or "") != "买入":
+            continue
+        tp = t.get("type") or "定投"
+        label = "投弹" if tp == "投弹" else ("投机" if tp == "投机" else "月投")
+        buy_points.append({
+            "date": (t.get("date") or "")[:10],
+            "price": round(float(t.get("price") or 0), 2),
+            "shares": round(float(t.get("shares") or 0), 2),
+            "type": tp,
+            "label": label,
+        })
+
+    # --- 性能指标（使用与 allocation 表格一致的价格和成本）---
+    current_price = round(alloc_price, 2) if alloc_price else (prices[-1] if prices else 0)
+    avg_cost = round(alloc_avg_cost, 2) if alloc_avg_cost > 0 else (round(cum_cost / cum_shares, 2) if cum_shares > 1e-6 else 0)
+    yoc_pct = round((current_price / avg_cost - 1) * 100, 2) if avg_cost > 0 else 0
+
+    # 策略贡献度 Alpha：投弹买入价 vs 后 30 个交易日均价
+    strategy_alpha = {}
+    for tp in ("投弹", "定投"):
+        alphas = []
+        for bp in buy_points:
+            if bp["type"] != tp:
+                continue
+            bd = bp["date"]
+            bp_price = bp["price"]
+            if bp_price <= 0:
+                continue
+            # 找到买入日之后的 30 个交易日
+            try:
+                idx_start = dates.index(bd)
+            except ValueError:
+                continue
+            future_30 = prices[idx_start + 1: idx_start + 31]
+            if len(future_30) >= 5:
+                avg_30 = sum(future_30) / len(future_30)
+                # 正值 = 买入价低于后续均价 = 买到了便宜货
+                alpha = round((avg_30 / bp_price - 1) * 100, 2)
+                alphas.append(alpha)
+        if alphas:
+            strategy_alpha[tp] = round(sum(alphas) / len(alphas), 2)
+
+    # 最大浮亏：(close - VWAC) / VWAC 的最小值
+    max_dd_pct = 0.0
+    max_dd_start = None
+    max_dd_end = None
+    for i, (p, c) in enumerate(zip(prices, cost_series)):
+        if c is not None and c > 0:
+            pnl = (p - c) / c * 100
+            if pnl < max_dd_pct:
+                max_dd_pct = round(pnl, 2)
+                max_dd_end = dates[i]
+                # 回溯找峰值点（最近一次盈利或起始）
+                for j in range(i, -1, -1):
+                    cj = cost_series[j]
+                    if cj is not None and cj > 0 and prices[j] >= cj:
+                        max_dd_start = dates[j]
+                        break
+                if not max_dd_start:
+                    max_dd_start = dates[0]
+
+    return jsonify({
+        "symbol": symbol,
+        "data_as_of": alloc_end_date,
+        "price_series": [{"date": d, "close": p} for d, p in zip(dates, prices)],
+        "cost_series": [{"date": d, "vwac": c} for d, c in zip(dates, cost_series)],
+        "buy_points": buy_points,
+        "metrics": {
+            "current_price": current_price,
+            "avg_cost": avg_cost,
+            "total_shares": round(cum_shares, 4),
+            "yoc_pct": yoc_pct,
+            "strategy_alpha": strategy_alpha,
+            "max_drawdown_pct": max_dd_pct,
+            "max_drawdown_period": {"start": max_dd_start, "end": max_dd_end} if max_dd_end else None,
+        },
+    })
+
+
+# =====================================================================
+#  天府 v1.0  ——  核心算法引擎
+# =====================================================================
+
+# ---------- 1.5 模型状态持久化 ----------
+
+def _default_model_state():
+    return {
+        "last_toundan_prices": {},
+        "monthly_toundan_count": {"QQQM": 0, "IAU": 0},
+        "daily_toundan": {},
+        "yearly_m4_used": False,
+        "qqqm_below_35pct_days": 0,
+        "state_month": datetime.now().strftime("%Y-%m"),
+        "state_year": datetime.now().strftime("%Y"),
+        "last_updated": datetime.now().strftime("%Y-%m-%d"),
+    }
+
+
+def load_model_state():
+    raw = load_json(MODEL_STATE_FILE, None)
+    if not raw or not isinstance(raw, dict):
+        return _default_model_state()
+    now = datetime.now()
+    cur_month = now.strftime("%Y-%m")
+    cur_year = now.strftime("%Y")
+    # 月初自动重置月计数与日计数
+    if raw.get("state_month") != cur_month:
+        raw["monthly_toundan_count"] = {"QQQM": 0, "IAU": 0}
+        raw["daily_toundan"] = {}
+        raw["state_month"] = cur_month
+    # 年初重置 M4
+    if raw.get("state_year") != cur_year:
+        raw["yearly_m4_used"] = False
+        raw["state_year"] = cur_year
+    return raw
+
+
+def save_model_state(state):
+    state["last_updated"] = datetime.now().strftime("%Y-%m-%d")
+    save_json(MODEL_STATE_FILE, state)
+
+
+def _toundan_stats_from_trades(trades_list):
+    """
+    直接从交易明细中统计投弹次数和最近投弹价格（权威数据源，不依赖 model_state 手动维护）。
+    返回 {
+      "monthly_count": {"QQQM": n, "IAU": n},  -- 当月投弹次数
+      "daily_count":   {"QQQM": n, "IAU": n},  -- 今日投弹次数
+      "last_prices":   {"QQQM": price, "IAU": price},  -- 最近一次投弹价格
+      "yearly_m4_used": bool,  -- 本年是否已投弹 QLD
+    }
+    """
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    cur_month = datetime.now().strftime("%Y-%m")
+    cur_year = datetime.now().strftime("%Y")
+
+    monthly_count = {"QQQM": 0, "IAU": 0}
+    daily_count = {"QQQM": 0, "IAU": 0}
+    last_prices = {}
+    yearly_m4 = False
+
+    for t in trades_list:
+        if (t.get("type") or "") != "投弹":
+            continue
+        sym = (t.get("symbol") or "").upper()
+        d = (t.get("date") or "")[:10]
+        price = float(t.get("price") or 0)
+
+        # 记录最近一次投弹价格（按日期升序，后者覆盖前者）
+        if sym in ("QQQM", "IAU") and price > 0:
+            last_prices[sym] = price
+
+        # 当月计数
+        if d[:7] == cur_month and sym in ("QQQM", "IAU"):
+            monthly_count[sym] = monthly_count.get(sym, 0) + 1
+
+        # 当日计数
+        if d == today_str and sym in ("QQQM", "IAU"):
+            daily_count[sym] = daily_count.get(sym, 0) + 1
+
+        # M4 年度 QLD
+        if d[:4] == cur_year and sym == "QLD":
+            yearly_m4 = True
+
+    return {
+        "monthly_count": monthly_count,
+        "daily_count": daily_count,
+        "last_prices": last_prices,
+        "yearly_m4_used": yearly_m4,
+    }
+
+
+# ---------- 1.1 分位数引擎 ----------
+
+_quantile_cache = {"date": None, "data": None}
+
+
+def compute_quantile_engine():
+    """
+    拉取 3 年 + 缓冲日线，计算所有分位数指标。
+    同一天内缓存结果，避免重复拉取。
+    """
+    import numpy as np
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    if _quantile_cache["date"] == today_str and _quantile_cache["data"]:
+        return _quantile_cache["data"]
+
+    dt = datetime.now()
+    start_3y = (dt - timedelta(days=3 * 365 + 60)).strftime("%Y-%m-%d")
+    end_d = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # 需要拉取的标的：QQQM、^VIX、^TNX（10年期国债收益率）、IAU、SPY（PE 代理）
+    tickers_needed = ["QQQM", "^VIX", "^TNX", "IAU", "SPY"]
+    raw = _fetch_histories_raw(tickers_needed, start_3y, end_d)
+
+    result = {
+        "qqqm_price": None, "qqqm_prev_close": None, "qqqm_change_pct": None,
+        "qqqm_drop_3y_pctile": None,
+        "vix_price": None, "vix_3y_pctile": None,
+        "qqqm_ema200": None, "qqqm_above_ema200": None,
+        "qqqm_ema20": None, "qqqm_above_ema20": None,
+        "qqqm_low20": None,
+        "tnx_yield": None,
+        "iau_price": None, "iau_prev_close": None, "iau_change_pct": None,
+        "pe_10y_pctile": None, "pe_3y_pctile": None,
+        "ema200_deviation_3y_pctile": None,
+        "ema20_deviation_3y_pctile": None,
+        "vix_3y_median_s": None,
+    }
+
+    # --- QQQM ---
+    df_qqqm = raw.get("QQQM")
+    if df_qqqm is not None and not df_qqqm.empty and len(df_qqqm) > 5:
+        closes = df_qqqm["Close"].dropna()
+        if len(closes) > 1:
+            result["qqqm_price"] = round(float(closes.iloc[-1]), 2)
+            result["qqqm_prev_close"] = round(float(closes.iloc[-2]), 2)
+            pct_chg = (closes.iloc[-1] / closes.iloc[-2] - 1) * 100
+            result["qqqm_change_pct"] = round(float(pct_chg), 2)
+
+            # 日收益率序列
+            daily_ret = closes.pct_change().dropna()
+            if len(daily_ret) > 10:
+                today_ret = float(daily_ret.iloc[-1])
+                # 当日跌幅在 3 年历史日收益中的分位（越低 = 跌幅越罕见 = 分位值越高）
+                rank = float((daily_ret <= today_ret).sum()) / len(daily_ret)
+                # 反转：跌幅越深 → rank 越小 → (1-rank) 越大 → 分位越高
+                result["qqqm_drop_3y_pctile"] = round(1.0 - rank, 4)
+
+            # 200 日 EMA
+            if len(closes) > 200:
+                ema200 = closes.ewm(span=200, adjust=False).mean()
+                result["qqqm_ema200"] = round(float(ema200.iloc[-1]), 2)
+                result["qqqm_above_ema200"] = bool(closes.iloc[-1] > ema200.iloc[-1])
+
+                # 200 日偏离分位：(price/ema200 - 1) 在 3 年中的分位
+                deviation_200 = (closes / ema200 - 1.0).dropna()
+                if len(deviation_200) > 10:
+                    cur_dev = float(deviation_200.iloc[-1])
+                    pctile = float((deviation_200 <= cur_dev).sum()) / len(deviation_200)
+                    result["ema200_deviation_3y_pctile"] = round(pctile, 4)
+
+            # 20 日 EMA
+            if len(closes) > 20:
+                ema20 = closes.ewm(span=20, adjust=False).mean()
+                result["qqqm_ema20"] = round(float(ema20.iloc[-1]), 2)
+                result["qqqm_above_ema20"] = bool(closes.iloc[-1] > ema20.iloc[-1])
+
+                deviation_20 = (closes / ema20 - 1.0).dropna()
+                if len(deviation_20) > 10:
+                    cur_dev20 = float(deviation_20.iloc[-1])
+                    pctile20 = float((deviation_20 <= cur_dev20).sum()) / len(deviation_20)
+                    result["ema20_deviation_3y_pctile"] = round(pctile20, 4)
+
+            # 20 日最低价
+            if len(closes) >= 20:
+                result["qqqm_low20"] = round(float(closes.iloc[-20:].min()), 2)
+
+    # --- VIX ---
+    df_vix = raw.get("^VIX")
+    if df_vix is not None and not df_vix.empty and len(df_vix) > 5:
+        vix_closes = df_vix["Close"].dropna()
+        if len(vix_closes) > 1:
+            result["vix_price"] = round(float(vix_closes.iloc[-1]), 2)
+            rank_vix = float((vix_closes <= vix_closes.iloc[-1]).sum()) / len(vix_closes)
+            result["vix_3y_pctile"] = round(rank_vix, 4)
+
+    # --- ^TNX（10 年期国债收益率，作为 TIPS 近似）---
+    df_tnx = raw.get("^TNX")
+    if df_tnx is not None and not df_tnx.empty:
+        tnx_closes = df_tnx["Close"].dropna()
+        if len(tnx_closes) > 0:
+            result["tnx_yield"] = round(float(tnx_closes.iloc[-1]), 2)
+
+    # --- IAU ---
+    df_iau = raw.get("IAU")
+    if df_iau is not None and not df_iau.empty and len(df_iau) > 2:
+        iau_closes = df_iau["Close"].dropna()
+        if len(iau_closes) > 1:
+            result["iau_price"] = round(float(iau_closes.iloc[-1]), 2)
+            result["iau_prev_close"] = round(float(iau_closes.iloc[-2]), 2)
+            iau_pct = (iau_closes.iloc[-1] / iau_closes.iloc[-2] - 1) * 100
+            result["iau_change_pct"] = round(float(iau_pct), 2)
+
+    # --- PE 分位（用 SPY 价格/收益 简化代理：价格水位的百分位排名）---
+    df_spy = raw.get("SPY")
+    if df_spy is not None and not df_spy.empty and len(df_spy) > 20:
+        spy_closes = df_spy["Close"].dropna()
+        if len(spy_closes) > 20:
+            cur_spy = float(spy_closes.iloc[-1])
+            # 10 年分位：使用全部可用数据
+            result["pe_10y_pctile"] = round(float((spy_closes <= cur_spy).sum()) / len(spy_closes), 4)
+            # 3 年分位：截取最近 ~756 个交易日
+            spy_3y = spy_closes.iloc[-756:] if len(spy_closes) > 756 else spy_closes
+            result["pe_3y_pctile"] = round(float((spy_3y <= cur_spy).sum()) / len(spy_3y), 4)
+
+    # --- 月投合成信号 S 的 3 年中位数（用于 M 计算）---
+    # 简化：用当前 S 的组成因子估算历史中位，实际中 S ≈ 0.5 附近波动
+    result["vix_3y_median_s"] = 0.5
+
+    _quantile_cache["date"] = today_str
+    _quantile_cache["data"] = result
+    return result
+
+
+# ---------- 1.2 风险预算 R → RR → K → T ----------
+
+def compute_risk_budget(qe, reserve_pool, trigger_level=None):
+    """
+    按天府 v1.0 公式计算投弹比例 K 和额度 T。
+    trigger_level: "M1"/"M2"/"M3"/None，M1 时 K 固定 0.05。
+    """
+    qqqm_drop_pctile = qe.get("qqqm_drop_3y_pctile") or 0
+    vix_pctile = qe.get("vix_3y_pctile") or 0
+
+    R = max(0, min(1, 0.6 * qqqm_drop_pctile + 0.4 * vix_pctile))
+
+    S_ema = 1.1 if qe.get("qqqm_above_ema200") else 0.9
+    RR = max(0, min(1, R * S_ema))
+
+    # M1 固定 K=0.05
+    if trigger_level == "M1":
+        K = 0.05
+    elif RR < 0.25:
+        K = 0.05
+    elif RR < 0.7:
+        K = 0.10
+    else:
+        q = max(0.5, min(1.0, 0.5 + 0.5 * vix_pctile))
+        K = (0.1 + 0.1 * RR) * q
+
+    T = min(reserve_pool * K, 10000)
+
+    return {
+        "R": round(R, 4), "S_ema": S_ema, "RR": round(RR, 4),
+        "K": round(K, 4), "T": round(T, 2),
+    }
+
+
+# ---------- 1.3 触发判断引擎 ----------
+
+def evaluate_triggers(qe, model_state, reserve_pool, trades_list):
+    """
+    判断 M1/M2/M3/M4/IAU 的触发状态及临界价格。
+    投弹次数和最近投弹价格直接从 trades_list 统计（权威数据源）。
+    """
+    vix = qe.get("vix_price") or 0
+    qqqm_price = qe.get("qqqm_price") or 0
+    qqqm_chg = qe.get("qqqm_change_pct") or 0
+    iau_chg = qe.get("iau_change_pct") or 0
+    qqqm_low20 = qe.get("qqqm_low20") or qqqm_price
+
+    # 从交易明细动态统计（不依赖 model_state 手动计数）
+    stats = _toundan_stats_from_trades(trades_list)
+    monthly = stats["monthly_count"]
+    daily_count = stats["daily_count"]
+    last_prices = stats["last_prices"]
+    last_qqqm_toundan = last_prices.get("QQQM")
+
+    # 次数约束：QQQM 每日1次每月2次，IAU 每日1次每月1次
+    qqqm_month_ok = monthly.get("QQQM", 0) < 2
+    qqqm_day_ok = daily_count.get("QQQM", 0) < 1
+    iau_month_ok = monthly.get("IAU", 0) < 1
+    iau_day_ok = daily_count.get("IAU", 0) < 1
+
+    triggers = {}
+
+    # 状态文案辅助函数
+    def _qqqm_status(triggered, month_ok, day_ok):
+        if not month_ok:
+            return "month_exhausted"
+        if triggered and not day_ok:
+            return "day_exhausted"
+        if triggered and month_ok and day_ok:
+            return "can_fire"
+        return "idle"
+
+    def _iau_status(triggered, month_ok, day_ok):
+        if not month_ok:
+            return "month_exhausted"
+        if triggered and not day_ok:
+            return "day_exhausted"
+        if triggered and month_ok and day_ok:
+            return "can_fire"
+        return "idle"
+
+    # --- M1: VIX<20 且 QQQM 单日跌幅 ≤ -2% ---
+    m1_threshold = qe.get("qqqm_prev_close", 0) * 0.98 if qe.get("qqqm_prev_close") else 0
+    m1_triggered = vix < 20 and qqqm_chg <= -2.0
+    m1_budget = compute_risk_budget(qe, reserve_pool, trigger_level="M1")
+    m1_can = m1_triggered and qqqm_month_ok and qqqm_day_ok
+    m1_status = _qqqm_status(m1_triggered, qqqm_month_ok, qqqm_day_ok)
+    distance_m1 = round((qqqm_price / m1_threshold - 1) * 100, 2) if m1_threshold > 0 else None
+    triggers["M1"] = {
+        "triggered": m1_triggered, "can_fire": m1_can, "status": m1_status,
+        "condition": f"VIX<20（当前{vix}）且单日跌幅≤-2%（当前{qqqm_chg}%）",
+        "threshold_price": round(m1_threshold, 2),
+        "distance_pct": distance_m1,
+        "K": m1_budget["K"], "T": m1_budget["T"],
+    }
+
+    # --- M2: 20<=VIX<25 且 QQQM < (low20 + last_toundan_price)/2 * 0.97 ---
+    if last_qqqm_toundan and qqqm_low20:
+        m2_threshold = round((qqqm_low20 + last_qqqm_toundan) / 2 * 0.97, 2)
+    else:
+        m2_threshold = round(qqqm_low20 * 0.97, 2) if qqqm_low20 else 0
+    m2_vix_ok = 20 <= vix < 25
+    m2_price_ok = qqqm_price < m2_threshold if m2_threshold > 0 else False
+    m2_triggered = m2_vix_ok and m2_price_ok
+    m2_budget = compute_risk_budget(qe, reserve_pool, trigger_level="M2")
+    m2_can = m2_triggered and qqqm_month_ok and qqqm_day_ok
+    m2_status = _qqqm_status(m2_triggered, qqqm_month_ok, qqqm_day_ok)
+    distance_m2 = round((qqqm_price / m2_threshold - 1) * 100, 2) if m2_threshold > 0 else None
+    triggers["M2"] = {
+        "triggered": m2_triggered, "can_fire": m2_can, "status": m2_status,
+        "condition": f"20≤VIX<25（当前{vix}）且价格<{m2_threshold}",
+        "threshold_price": m2_threshold,
+        "distance_pct": distance_m2,
+        "K": m2_budget["K"], "T": m2_budget["T"],
+        "components": {"low20": qqqm_low20, "last_toundan": last_qqqm_toundan},
+    }
+
+    # --- M3: VIX >= 25，立即触发 ---
+    m3_triggered = vix >= 25
+    m3_budget = compute_risk_budget(qe, reserve_pool, trigger_level="M3")
+    m3_can = m3_triggered and qqqm_month_ok and qqqm_day_ok
+    m3_status = _qqqm_status(m3_triggered, qqqm_month_ok, qqqm_day_ok)
+    triggers["M3"] = {
+        "triggered": m3_triggered, "can_fire": m3_can, "status": m3_status,
+        "condition": f"VIX≥25（当前{vix}）",
+        "threshold_price": None,
+        "distance_pct": None,
+        "K": m3_budget["K"], "T": m3_budget["T"],
+    }
+
+    # --- IAU: 单日跌幅 ≤ -5%，K=0.05 ---
+    iau_threshold = qe.get("iau_prev_close", 0) * 0.95 if qe.get("iau_prev_close") else 0
+    iau_triggered = iau_chg <= -5.0
+    iau_K = 0.05
+    iau_T = min(reserve_pool * iau_K, 10000)
+    iau_can = iau_triggered and iau_month_ok and iau_day_ok
+    iau_status = _iau_status(iau_triggered, iau_month_ok, iau_day_ok)
+    distance_iau = round((qe.get("iau_price", 0) / iau_threshold - 1) * 100, 2) if iau_threshold > 0 else None
+    triggers["IAU"] = {
+        "triggered": iau_triggered, "can_fire": iau_can, "status": iau_status,
+        "condition": f"IAU单日跌幅≤-5%（当前{iau_chg}%）",
+        "threshold_price": round(iau_threshold, 2),
+        "distance_pct": distance_iau,
+        "K": iau_K, "T": round(iau_T, 2),
+    }
+
+    # --- M4: VIX > 50，每年 1 次 QLD ---
+    m4_used = stats["yearly_m4_used"]
+    m4_triggered = vix > 50
+    qld_exit_signal = False
+    if qe.get("qqqm_above_ema20") and any(
+        (t.get("symbol") or "").upper() == "QLD" for t in trades_list
+        if (t.get("action") or "") == "买入"
+    ):
+        qld_exit_signal = True
+    m4_can = m4_triggered and not m4_used
+    m4_status = "year_exhausted" if m4_used else ("can_fire" if m4_triggered else "idle")
+    triggers["M4"] = {
+        "triggered": m4_triggered, "can_fire": m4_can, "status": m4_status,
+        "condition": f"VIX>50（当前{vix}），年度 QLD 投弹",
+        "yearly_used": m4_used,
+        "qld_exit_signal": qld_exit_signal,
+        "qld_exit_reason": "QQQM 已上穿 20 日均线" if qld_exit_signal else None,
+    }
+
+    triggers["_constraints"] = {
+        "qqqm_monthly_count": monthly.get("QQQM", 0),
+        "qqqm_monthly_limit": 2,
+        "iau_monthly_count": monthly.get("IAU", 0),
+        "iau_monthly_limit": 1,
+        "qqqm_today_count": daily_count.get("QQQM", 0),
+        "iau_today_count": daily_count.get("IAU", 0),
+    }
+
+    # 临界状态标记：距触发 ≤ 1% 时标记为 near_critical
+    THRESHOLD_CRITICAL = 1.0
+    for lv in ["M1", "M2", "M3", "IAU", "M4"]:
+        t = triggers.get(lv, {})
+        dist = t.get("distance_pct")
+        is_near = (t.get("status") == "idle"
+                   and dist is not None
+                   and 0 < dist <= THRESHOLD_CRITICAL)
+        t["near_critical"] = is_near
+
+    return triggers
+
+
+# ---------- 1.4 月投倍率 S / RRF / M ----------
+
+def compute_monthly_multiplier(qe, reserve_pool, has_toundan_this_month):
+    """
+    计算合成信号 S、真实利率抑制因子 RRF、最终月投倍率 M。
+    返回 {S, RRF, M, monthly_amount, double_up_amount, double_up_from_reserve}。
+    """
+    pe_10y = qe.get("pe_10y_pctile") or 0.5
+    pe_3y = qe.get("pe_3y_pctile") or 0.5
+    vix_3y = qe.get("vix_3y_pctile") or 0.5
+    ema200_dev = qe.get("ema200_deviation_3y_pctile") or 0.5
+    ema20_dev = qe.get("ema20_deviation_3y_pctile") or 0.5
+    tips = qe.get("tnx_yield") or 4.0
+
+    S = (0.20 * (1 - pe_10y)
+         + 0.15 * (1 - pe_3y)
+         + 0.45 * vix_3y
+         + 0.10 * (1 - ema200_dev)
+         + 0.10 * (1 - ema20_dev))
+
+    RRF = max(0.7, min(1.0, 1 - 0.2 * max(0, tips - 1.0)))
+
+    median_s_3y = qe.get("vix_3y_median_s", 0.5)
+    M = max(0.25, min(1.25, 1 + 2 * (S * RRF - median_s_3y)))
+
+    monthly_amount = round(MONTHLY_BASE * M, 2)
+
+    # 备弹池倍投：当月无投弹时翻倍，翻倍部分（最多 2000）从备弹池支取
+    double_up_amount = 0.0
+    double_up_from_reserve = False
+    if not has_toundan_this_month:
+        extra = min(monthly_amount, MONTHLY_BASE)
+        if reserve_pool >= extra:
+            double_up_amount = round(extra, 2)
+            double_up_from_reserve = True
+
+    return {
+        "S": round(S, 4), "RRF": round(RRF, 4), "M": round(M, 4),
+        "monthly_amount": monthly_amount,
+        "double_up_amount": double_up_amount,
+        "double_up_from_reserve": double_up_from_reserve,
+        "total_invest": round(monthly_amount + double_up_amount, 2),
+    }
+
+
+# ---------- 1.6 重构 /api/signals ----------
 
 @app.route("/api/signals", methods=["GET"])
 def api_signals():
     """
-    交易机会：仅展示下次定投与投弹预估，不展示策略详情。
-    下次定投：每月最后一天 2k，按 50% QQQM / 35% BRK.B / 15% IAU（若 QQQM>65% 则 70% BRK.B / 30% IAU）。
-    投弹预估：QQQM M1/M2/M3 触发时额度 T=备弹*K（上限 10000）；IAU -5% 时 K=0.05。
+    天府 v1.0 决策信号中心。
+    合并分位数引擎、风险预算、触发判断、月投倍率、仓位风控。
+    完全向后兼容旧字段，新增 quantile_engine / risk_budget / triggers / monthly_signal / position_alerts。
     """
-    fund_records = get_fund_records()
+    from calendar import monthrange
+
     trades_list = get_trades()
-    # 备弹池 ≈ 入金 - 出金 - 已用于投弹/定投的现金（此处简化为：年度入金 40k + 月入金 - 月定投支出，不逐笔算）
-    total_in = sum(r["amount"] for r in fund_records if r["amount"] > 0)
-    total_out = sum(abs(r["amount"]) for r in fund_records if r["amount"] < 0)
-    # 简化：备弹池 = 总入金 - 总出金 的某个比例，或固定假设
-    reserve_pool = max(0, total_in - total_out - 10000)  # 粗略
-    # 月定投基数 2000
-    monthly_base = 2000
-    # 当前持仓占比（用于决定定投分配）：与资产配置/收益概览使用同一套日期范围与缓存，避免价格每次刷新变化
+    model_state = load_model_state()
+
+    # 已投弹总额 & 备弹池
+    total_toundan_used = sum(
+        float(t.get("price", 0)) * float(t.get("shares", 0))
+        for t in trades_list if (t.get("type") or "") == "投弹"
+    )
+    reserve_pool = max(0, TOUNDAN_TOTAL_BUDGET - total_toundan_used)
+
+    # 当前持仓与占比
     symbols = get_all_symbols(trades_list)
     if not symbols:
         history_cache = {}
@@ -1115,21 +1994,43 @@ def api_signals():
         end_fetch = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
         history_cache, _, trading_dates = fetch_histories_with_bench(symbols, start_fetch, end_fetch)
         effective_end_date = trading_dates[-1] if trading_dates else dt.strftime("%Y-%m-%d")
+
     pos = positions_at_date(trades_list, effective_end_date)
     total_value = 0.0
     qqqm_value = 0.0
+    risk_value = 0.0
+    CASH_TICKERS = {"BOXX"}
+    sym_values = {}
     for sym, qty in pos.items():
         p = get_price_on_date(sym, effective_end_date, history_cache)
         if p is None:
             p = 0.0
         v = qty * p
         total_value += v
+        sym_values[sym.upper()] = v
+        if sym.upper() not in CASH_TICKERS:
+            risk_value += v
         if sym.upper() == "QQQM":
             qqqm_value += v
-    qqqm_ratio = (qqqm_value / total_value * 100) if total_value else 0
+    # 仓位熔断和强补基于风险资产有效敞口比例（排除现金类 BOXX）
+    qqqm_ratio = (qqqm_value / risk_value * 100) if risk_value > 0 else 0
 
-    # 下次定投：本月或下月最后一天
-    from calendar import monthrange
+    # ===== 分位数引擎 =====
+    qe = compute_quantile_engine()
+
+    # ===== 风险预算 =====
+    risk_budget = compute_risk_budget(qe, reserve_pool)
+
+    # ===== 触发判断 =====
+    triggers = evaluate_triggers(qe, model_state, reserve_pool, trades_list)
+
+    # ===== 月投倍率 =====
+    td_stats = _toundan_stats_from_trades(trades_list)
+    has_toundan = td_stats["monthly_count"].get("QQQM", 0) > 0 or \
+                  td_stats["monthly_count"].get("IAU", 0) > 0
+    monthly_signal = compute_monthly_multiplier(qe, reserve_pool, has_toundan)
+
+    # ===== 下次定投 =====
     now = datetime.now()
     _, last_day = monthrange(now.year, now.month)
     next_ding_date = f"{now.year}-{now.month:02d}-{last_day}"
@@ -1139,52 +2040,306 @@ def api_signals():
         _, last_day = monthrange(next_y, next_m)
         next_ding_date = f"{next_y}-{next_m:02d}-{last_day}"
 
-    if qqqm_ratio > 65:
-        ding_allocation = [{"symbol": "BRK.B", "pct": 70, "amount": round(monthly_base * 0.7, 2)},
-                          {"symbol": "IAU", "pct": 30, "amount": round(monthly_base * 0.3, 2)}]
+    M_amount = monthly_signal["monthly_amount"]
+    fuse_active = qqqm_ratio > 65
+    if fuse_active:
+        ding_allocation = [
+            {"symbol": "BRK.B", "pct": 70, "amount": round(M_amount * 0.7, 2)},
+            {"symbol": "IAU", "pct": 30, "amount": round(M_amount * 0.3, 2)},
+        ]
     else:
         ding_allocation = [
-            {"symbol": "QQQM", "pct": 50, "amount": round(monthly_base * 0.5, 2)},
-            {"symbol": "BRK.B", "pct": 35, "amount": round(monthly_base * 0.35, 2)},
-            {"symbol": "IAU", "pct": 15, "amount": round(monthly_base * 0.15, 2)},
+            {"symbol": "QQQM", "pct": 50, "amount": round(M_amount * 0.5, 2)},
+            {"symbol": "BRK.B", "pct": 35, "amount": round(M_amount * 0.35, 2)},
+            {"symbol": "IAU", "pct": 15, "amount": round(M_amount * 0.15, 2)},
         ]
-
-    # 投弹预估：K=0.05/0.10 等，T=min(备弹*K, 10000)
-    k_qqqm_m1 = 0.05
-    t_qqqm_m1 = min(reserve_pool * k_qqqm_m1, 10000)
-    k_iau = 0.05
-    t_iau = min(reserve_pool * k_iau, 10000)
 
     next_dingtou = {
         "date": next_ding_date,
-        "total_usd": monthly_base,
-        "description": "每月定投（月末）",
+        "total_usd": round(M_amount, 2),
+        "description": f"每月定投（月末），倍率 M={monthly_signal['M']}",
         "allocation": ding_allocation,
+        "fuse_active": fuse_active,
     }
-    toundan_estimate = [
-        {"symbol": "QQQM", "condition": "M1: VIX<20 且单日跌幅≤-2%", "k": 0.05, "max_usd": round(t_qqqm_m1, 2)},
-        {"symbol": "QQQM", "condition": "M2/M3 触发", "k": "0.10~0.20", "max_usd": min(reserve_pool * 0.10, 10000)},
-        {"symbol": "IAU", "condition": "单日跌幅≤-5%", "k": 0.05, "max_usd": round(t_iau, 2)},
-    ]
 
-    # 大盘现状：QQQ、VIX、GLD 实时行情
+    # ===== 投弹预估（兼容旧字段 + 动态 K/T + 交易指令）=====
+    import math
+    toundan_estimate = []
+    for lv, sym in [("M1", "QQQM"), ("M2", "QQQM"), ("M3", "QQQM"), ("IAU", "IAU")]:
+        tr_item = triggers[lv]
+        T_val = tr_item["T"]
+        latest_p = qe.get("qqqm_price") if sym == "QQQM" else qe.get("iau_price")
+        shares = round(math.ceil(T_val / latest_p * 10) / 10, 1) if latest_p and latest_p > 0 else 0
+        order_text = f"[天府计划] {lv}触发：买入 {sym} @ ${latest_p}，数量 {shares}股，额度 ${T_val:,.2f}" if latest_p else ""
+        toundan_estimate.append({
+            "symbol": sym, "level": lv,
+            "condition": tr_item["condition"],
+            "k": tr_item["K"], "max_usd": T_val,
+            "triggered": tr_item["triggered"], "can_fire": tr_item["can_fire"],
+            "status": tr_item["status"], "near_critical": tr_item.get("near_critical", False),
+            "latest_price": latest_p, "shares_to_buy": shares, "order_text": order_text,
+        })
+
+    # ===== 大盘现状 =====
     market_overview = []
-    for sym in ("QQQ", "^VIX", "GLD"):
+    for sym in ("QQQ", "^VIX", "GLD", "^TNX"):
         q = fetch_realtime_quote(sym)
         if q:
             market_overview.append(q)
+
+    # ===== 仓位风控 =====
+    # 3.2 下行强补：QQQM 占比连续 < 35% 追踪
+    if qqqm_ratio < 35:
+        model_state["qqqm_below_35pct_days"] = model_state.get("qqqm_below_35pct_days", 0) + 1
+    else:
+        model_state["qqqm_below_35pct_days"] = 0
+
+    rebalance_alert = None
+    if model_state.get("qqqm_below_35pct_days", 0) >= 3:
+        rebalance_alert = {
+            "type": "downside_rebalance",
+            "message": "QQQM 占比连续 3 日低于 35%，建议卖出 BRK.B/IAU 补足 QQQM 至 50:35:15",
+            "days_below": model_state["qqqm_below_35pct_days"],
+            "current_ratio": round(qqqm_ratio, 1),
+        }
+
+    # 备弹池健康度
+    reserve_health_pct = round(reserve_pool / total_value * 100, 1) if total_value > 0 else 0
+    next_estimated_T = risk_budget["T"]
+    reserve_warning = reserve_pool < next_estimated_T or reserve_pool < monthly_signal.get("double_up_amount", 0)
+
+    position_alerts = {
+        "qqqm_ratio": round(qqqm_ratio, 1),
+        "fuse_active": fuse_active,
+        "rebalance_alert": rebalance_alert,
+        "qld_exit_signal": triggers.get("M4", {}).get("qld_exit_signal", False),
+        "qld_exit_reason": triggers.get("M4", {}).get("qld_exit_reason"),
+        "reserve_health_pct": reserve_health_pct,
+        "reserve_warning": reserve_warning,
+    }
+
+    # ===== B: history_7d 追踪 S 和 RR 的 7 日历史 =====
+    today_str_h = datetime.now().strftime("%Y-%m-%d")
+    h7 = model_state.get("history_7d", {"S": [], "RR": []})
+    if not isinstance(h7, dict):
+        h7 = {"S": [], "RR": []}
+    for key, val in [("S", monthly_signal.get("S")), ("RR", risk_budget.get("RR"))]:
+        entries = h7.get(key, [])
+        if not entries or entries[-1].get("date") != today_str_h:
+            entries.append({"date": today_str_h, "value": val})
+        else:
+            entries[-1]["value"] = val
+        h7[key] = entries[-7:]
+    model_state["history_7d"] = h7
+
+    # ===== D: 备弹池消耗速率预测 =====
+    cutoff_90d = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+    recent_toundan_amount = sum(
+        float(t.get("price", 0)) * float(t.get("shares", 0))
+        for t in trades_list
+        if (t.get("type") or "") == "投弹" and (t.get("date") or "") >= cutoff_90d
+    )
+    if recent_toundan_amount > 0:
+        daily_burn = recent_toundan_amount / 90.0
+        days_remaining = round(reserve_pool / daily_burn) if daily_burn > 0 else None
+    else:
+        daily_burn = 0
+        days_remaining = None
+    position_alerts["reserve_forecast"] = {
+        "daily_burn_rate": round(daily_burn, 2),
+        "days_remaining": days_remaining,
+    }
+
+    # 持久化状态
+    save_model_state(model_state)
+
+    # 最大可投弹次数（按当前动态 K）
+    single_T = risk_budget["T"] if risk_budget["T"] > 0 else 1
+    max_toundan_times = int(reserve_pool / single_T) if single_T > 0 else 0
 
     return jsonify({
         "model_name": "天府 v1.0",
         "version": "1.0.0",
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "computed_at": datetime.now().isoformat(),
+        # 兼容旧字段
         "market_overview": market_overview,
         "next_dingtou": next_dingtou,
         "toundan_estimate": toundan_estimate,
+        "reserve_pool": round(reserve_pool, 2),
+        "total_toundan_used": round(total_toundan_used, 2),
+        "max_toundan_times": max_toundan_times,
+        # v1.0 决策字段
+        "quantile_engine": qe,
+        "risk_budget": risk_budget,
+        "triggers": triggers,
+        "monthly_signal": monthly_signal,
+        "position_alerts": position_alerts,
+        "history_7d": h7,
     })
+
+
+@app.route("/api/stress-test", methods=["GET"])
+def api_stress_test():
+    """
+    压力测试：模拟 QQQ 单月 -20%、VIX 飙升至 40 场景下，
+    按当前投弹逻辑（M1~M3 连续触发）计算组合总回撤与现金占用。
+    同时基于过去 5 年日收益数据，蒙特卡洛模拟未来 30 天收益概率分布（95% CI）。
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        return jsonify({"error": "numpy 未安装"}), 500
+
+    trades_list = get_trades()
+    symbols = get_all_symbols(trades_list)
+
+    total_toundan_used = sum(
+        float(t.get("price", 0)) * float(t.get("shares", 0))
+        for t in trades_list if (t.get("type") or "") == "投弹"
+    )
+    TOUNDAN_TOTAL_BUDGET = 50000
+    reserve_pool = max(0, TOUNDAN_TOTAL_BUDGET - total_toundan_used)
+
+    if not symbols:
+        return jsonify({"stress": None, "monte_carlo": None})
+
+    dt = datetime.now()
+    since_date = min((t["date"][:10] for t in trades_list), default=dt.strftime("%Y-%m-%d"))
+    one_year_ago = (dt - timedelta(days=365)).strftime("%Y-%m-%d")
+    year_start = dt.replace(month=1, day=1).strftime("%Y-%m-%d")
+    start_fetch = min(since_date, one_year_ago, year_start)
+    end_fetch = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
+    history_cache, bench_cache, trading_dates = fetch_histories_with_bench(symbols, start_fetch, end_fetch)
+    effective_end_date = trading_dates[-1] if trading_dates else dt.strftime("%Y-%m-%d")
+
+    pos = positions_at_date(trades_list, effective_end_date)
+    prices_now = prices_at(list(pos.keys()), history_cache, effective_end_date)
+    v_now = portfolio_value_with_prices(pos, prices_now)
+
+    # ===== 压力测试：QQQ -20%，VIX=40 =====
+    # 估算各标的在此极端场景下的跌幅（基于历史 beta 近似）
+    # QQQM 与 QQQ 高度相关 → -20%；BRK.B 防御 → ~-8%；IAU 避险 → +3%；VIG → -12%；IVV → -15%；BOXX → 0%
+    stress_shocks = {
+        "QQQM": -0.20, "QQQ": -0.20, "BRK.B": -0.08, "BRK-B": -0.08,
+        "IAU": 0.03, "VIG": -0.12, "IVV": -0.15, "BOXX": 0.0,
+    }
+    default_shock = -0.15
+
+    v_stressed = 0.0
+    stress_detail = []
+    for sym, qty in pos.items():
+        p = prices_now.get(sym) or 0
+        shock = stress_shocks.get(sym.upper(), default_shock)
+        p_stressed = p * (1 + shock)
+        val_before = qty * p
+        val_after = qty * p_stressed
+        stress_detail.append({
+            "symbol": sym, "shock_pct": round(shock * 100, 1),
+            "value_before": round(val_before, 2), "value_after": round(val_after, 2),
+        })
+        v_stressed += val_after
+
+    portfolio_drawdown_pct = round((1 - v_stressed / v_now) * 100, 1) if v_now > 1e-6 else 0.0
+
+    # 投弹逻辑模拟：M1(K=0.05) → M2(K=0.10) → M3(K=0.20) 连续触发
+    toundan_rounds = [
+        {"level": "M1", "k": 0.05},
+        {"level": "M2", "k": 0.10},
+        {"level": "M3", "k": 0.20},
+    ]
+    remaining_pool = reserve_pool
+    total_cash_deployed = 0.0
+    toundan_sim = []
+    for rd in toundan_rounds:
+        deploy = min(remaining_pool * rd["k"], 10000)
+        toundan_sim.append({"level": rd["level"], "k": rd["k"], "deployed_usd": round(deploy, 2)})
+        total_cash_deployed += deploy
+        remaining_pool -= deploy
+
+    stress_result = {
+        "scenario": "QQQ 单月 -20%，VIX=40",
+        "portfolio_value_before": round(v_now, 2),
+        "portfolio_value_after": round(v_stressed, 2),
+        "portfolio_drawdown_pct": portfolio_drawdown_pct,
+        "detail": stress_detail,
+        "toundan_simulation": toundan_sim,
+        "total_cash_deployed": round(total_cash_deployed, 2),
+        "remaining_reserve": round(remaining_pool, 2),
+    }
+
+    # ===== 蒙特卡洛：过去 5 年日收益 → 模拟 30 天 =====
+    mc_result = None
+    try:
+        five_yr_ago = (dt - timedelta(days=5 * 365 + 30)).strftime("%Y-%m-%d")
+        mc_end = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
+        mc_raw = _fetch_histories_raw(list(pos.keys()), five_yr_ago, mc_end)
+        bench_raw = _fetch_histories_raw([BENCHMARK_SYMBOL], five_yr_ago, mc_end)
+
+        # 计算组合历史日收益（用持仓权重加权各标的日收益）
+        weights = {}
+        for sym, qty in pos.items():
+            p = prices_now.get(sym) or 0
+            weights[sym] = qty * p / v_now if v_now > 1e-6 else 0
+
+        # 收集各标的日收益序列
+        sym_returns = {}
+        all_dates_set = None
+        for sym in pos.keys():
+            df = mc_raw.get(sym)
+            if df is None or df.empty:
+                continue
+            closes = df["Close"].dropna()
+            if len(closes) < 10:
+                continue
+            rets = closes.pct_change().dropna()
+            dates_idx = set(str(d)[:10] for d in rets.index)
+            sym_returns[sym] = {str(d)[:10]: float(rets.loc[d]) for d in rets.index}
+            all_dates_set = dates_idx if all_dates_set is None else all_dates_set & dates_idx
+
+        if all_dates_set and len(all_dates_set) > 100:
+            sorted_dates = sorted(all_dates_set)
+            port_daily_returns = []
+            for d in sorted_dates:
+                r_day = sum(weights.get(sym, 0) * sym_returns[sym].get(d, 0.0) for sym in sym_returns)
+                port_daily_returns.append(r_day)
+
+            port_daily_returns = np.array(port_daily_returns)
+            mu = float(np.mean(port_daily_returns))
+            sigma = float(np.std(port_daily_returns))
+
+            n_sims = 5000
+            n_days = 30
+            rng = np.random.default_rng(42)
+            sim_returns = rng.normal(mu, sigma, (n_sims, n_days))
+            sim_cum = np.cumprod(1 + sim_returns, axis=1)
+            final_returns = (sim_cum[:, -1] - 1.0) * 100
+
+            percentiles = [2.5, 10, 25, 50, 75, 90, 97.5]
+            pct_vals = {str(p): round(float(np.percentile(final_returns, p)), 2) for p in percentiles}
+
+            # 概率密度直方图数据
+            hist_counts, hist_edges = np.histogram(final_returns, bins=40)
+            hist_labels = [round(float((hist_edges[i] + hist_edges[i+1]) / 2), 1) for i in range(len(hist_counts))]
+            hist_values = [int(c) for c in hist_counts]
+
+            mc_result = {
+                "n_simulations": n_sims,
+                "n_days": n_days,
+                "daily_mu_pct": round(mu * 100, 4),
+                "daily_sigma_pct": round(sigma * 100, 4),
+                "n_history_days": len(port_daily_returns),
+                "percentiles": pct_vals,
+                "histogram": {"labels": hist_labels, "counts": hist_values},
+                "ci_95_low": pct_vals["2.5"],
+                "ci_95_high": pct_vals["97.5"],
+            }
+    except Exception:
+        mc_result = None
+
+    return jsonify({"stress": stress_result, "monte_carlo": mc_result})
 
 
 if __name__ == "__main__":
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    # debug=True 时，修改代码后自动重启（开发用）；生产环境请改为 False 并用 WSGI 部署
     app.run(host="0.0.0.0", port=5001, debug=True)
