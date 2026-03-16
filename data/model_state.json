@@ -1,0 +1,35 @@
+{
+  "last_toundan_prices": {},
+  "monthly_toundan_count": {
+    "QQQM": 0,
+    "IAU": 0
+  },
+  "daily_toundan": {},
+  "yearly_m4_used": false,
+  "qqqm_below_35pct_days": 0,
+  "state_month": "2026-03",
+  "state_year": "2026",
+  "last_updated": "2026-03-17",
+  "history_7d": {
+    "S": [
+      {
+        "date": "2026-03-16",
+        "value": 0.635
+      },
+      {
+        "date": "2026-03-17",
+        "value": 0.6408
+      }
+    ],
+    "RR": [
+      {
+        "date": "2026-03-16",
+        "value": 0.5047
+      },
+      {
+        "date": "2026-03-17",
+        "value": 0.5099
+      }
+    ]
+  }
+}

@@ -31,27 +31,27 @@
     "symbol": "BOXX",
     "action": "买入",
     "price": 115.33,
-    "shares": 34,
+    "shares": 34.0,
     "commission": 1.0,
-    "type": "定投"
+    "type": "现金管理"
   },
   {
     "date": "2026-01-20",
     "symbol": "QQQM",
     "action": "买入",
-    "price": 250,
-    "shares": 5,
+    "price": 250.0,
+    "shares": 5.0,
     "commission": 0.35,
-    "type": "定投"
+    "type": "投弹"
   },
   {
     "date": "2026-01-20",
     "symbol": "QQQM",
     "action": "买入",
     "price": 251.6,
-    "shares": 5,
+    "shares": 5.0,
     "commission": 0.35,
-    "type": "定投"
+    "type": "投弹"
   },
   {
     "date": "2026-01-21",
@@ -67,16 +67,16 @@
     "symbol": "BOXX",
     "action": "卖出",
     "price": 115.39,
-    "shares": 34,
+    "shares": 34.0,
     "commission": 0.25,
-    "type": "定投"
+    "type": "现金管理"
   },
   {
     "date": "2026-01-22",
     "symbol": "IAU",
     "action": "买入",
     "price": 90.8,
-    "shares": 6,
+    "shares": 6.0,
     "commission": 0.34,
     "type": "定投"
   },
@@ -103,9 +103,9 @@
     "symbol": "BOXX",
     "action": "买入",
     "price": 115.45,
-    "shares": 11,
+    "shares": 11.0,
     "commission": 0.32,
-    "type": "定投"
+    "type": "现金管理"
   },
   {
     "date": "2026-01-28",
@@ -184,36 +184,36 @@
     "symbol": "IAU",
     "action": "买入",
     "price": 88.8,
-    "shares": 13,
+    "shares": 13.0,
     "commission": 0.35,
-    "type": "定投"
+    "type": "投弹"
   },
   {
     "date": "2026-02-02",
     "symbol": "BOXX",
     "action": "卖出",
     "price": 115.47,
-    "shares": 11,
+    "shares": 11.0,
     "commission": 0.38,
-    "type": "定投"
+    "type": "现金管理"
   },
   {
     "date": "2026-02-04",
     "symbol": "QQQM",
     "action": "买入",
     "price": 252.6,
-    "shares": 5,
+    "shares": 5.0,
     "commission": 0.34,
-    "type": "定投"
+    "type": "投弹"
   },
   {
     "date": "2026-02-06",
     "symbol": "QQQM",
     "action": "买入",
     "price": 244.39,
-    "shares": 6,
+    "shares": 6.0,
     "commission": 0.37,
-    "type": "定投"
+    "type": "投弹"
   },
   {
     "date": "2026-02-13",
@@ -238,18 +238,18 @@
     "symbol": "BOXX",
     "action": "买入",
     "price": 115.69,
-    "shares": 21,
+    "shares": 21.0,
     "commission": 0.42,
-    "type": "定投"
+    "type": "现金管理"
   },
   {
     "date": "2026-02-26",
     "symbol": "BOXX",
     "action": "买入",
     "price": 115.79,
-    "shares": 370,
+    "shares": 370.0,
     "commission": 0.78,
-    "type": "定投"
+    "type": "现金管理"
   },
   {
     "date": "2026-02-27",
@@ -283,9 +283,9 @@
     "symbol": "BOXX",
     "action": "卖出",
     "price": 115.81,
-    "shares": 29,
+    "shares": 29.0,
     "commission": 0.42,
-    "type": "定投"
+    "type": "现金管理"
   },
   {
     "date": "2026-02-27",
@@ -294,70 +294,70 @@
     "price": 115.79,
     "shares": 305.0,
     "commission": 0.7,
-    "type": "定投"
+    "type": "现金管理"
   },
   {
     "date": "2026-03-03",
     "symbol": "IAU",
     "action": "买入",
     "price": 95.35,
-    "shares": 12,
+    "shares": 12.0,
     "commission": 0.33,
-    "type": "定投"
+    "type": "投弹"
   },
   {
     "date": "2026-03-03",
     "symbol": "QQQM",
     "action": "买入",
     "price": 245.5,
-    "shares": 20,
+    "shares": 20.0,
     "commission": 0.31,
-    "type": "定投"
+    "type": "投弹"
   },
   {
     "date": "2026-03-04",
     "symbol": "BOXX",
     "action": "卖出",
     "price": 115.85,
-    "shares": 57,
+    "shares": 57.0,
     "commission": 0.19,
-    "type": "定投"
+    "type": "现金管理"
   },
   {
     "date": "2026-03-09",
     "symbol": "BOXX",
     "action": "买入",
     "price": 115.82,
-    "shares": 65,
+    "shares": 65.0,
     "commission": 0.49,
-    "type": "定投"
+    "type": "现金管理"
   },
   {
     "date": "2026-03-09",
     "symbol": "QQQM",
     "action": "买入",
     "price": 241.78,
-    "shares": 24,
+    "shares": 24.0,
     "commission": 0.38,
-    "type": "定投"
+    "type": "投弹"
   },
   {
     "date": "2026-03-11",
     "symbol": "BOXX",
     "action": "买入",
     "price": 115.9,
-    "shares": 111,
+    "shares": 111.0,
     "commission": 0.23,
-    "type": "定投"
+    "type": "现金管理"
   },
   {
     "date": "2026-03-12",
     "symbol": "BOXX",
     "action": "买入",
     "price": 115.95,
-    "shares": 110,
+    "shares": 110.0,
     "commission": 0.06,
-    "type": "定投"
+    "type": "现金管理"
   },
   {
     "date": "2026-03-13",
@@ -366,6 +366,6 @@
     "price": 115.99,
     "shares": 44.0,
     "commission": 0.22,
-    "type": "投机"
+    "type": "现金管理"
   }
 ]
