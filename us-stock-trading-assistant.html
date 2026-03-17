@@ -44,6 +44,7 @@
         <button type="button" class="nav-btn px-4 py-2 rounded transition hover:bg-white/10" style="color: rgba(255,255,255,0.85);" data-section="history" onclick="if(window.__navClick)window.__navClick('history')">交易历史</button>
         <button type="button" class="nav-btn px-4 py-2 rounded transition hover:bg-white/10" style="color: rgba(255,255,255,0.85);" data-section="signals" onclick="if(window.__navClick)window.__navClick('signals')">模型信号</button>
         <button type="button" class="nav-btn px-4 py-2 rounded transition hover:bg-white/10" style="color: rgba(255,255,255,0.85);" data-section="stress" onclick="if(window.__navClick)window.__navClick('stress')">压力测试</button>
+        <button type="button" class="nav-btn px-4 py-2 rounded transition hover:bg-white/10" style="color: rgba(255,255,255,0.85);" data-section="review" onclick="if(window.__navClick)window.__navClick('review')">策略复盘</button>
       </nav>
     </div>
   </header>
@@ -381,6 +382,30 @@
         </div>
       </div>
     </section>
+
+    <!-- ========== 7. 策略复盘 ========== -->
+    <section id="section-review" class="section-content hidden">
+      <h2 class="text-lg font-semibold mb-4" style="color: var(--deep-purple);">策略复盘</h2>
+      <div class="flex gap-2 mb-6">
+        <button type="button" class="review-period-btn px-3 py-1 rounded text-xs" data-rp="1m" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">最近 1 月</button>
+        <button type="button" class="review-period-btn px-3 py-1 rounded text-xs" data-rp="3m" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">最近 1 季</button>
+        <button type="button" class="review-period-btn px-3 py-1 rounded text-xs" data-rp="all" style="background:var(--deep-purple);color:#fff;">全部</button>
+      </div>
+      <!-- 指标卡片（5 格：纪律分 + 合规分 + 超额收益 + 投弹效率 + 资金安全系数）-->
+      <div class="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6" id="reviewCards"></div>
+      <!-- AI 反思结论 -->
+      <div class="rounded-xl p-5 shadow-sm mb-6" id="reviewConclusionBlock" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
+        <h3 class="text-md font-medium mb-2" style="color: var(--deep-purple);"><i class="fas fa-robot mr-1" style="color: var(--champagne-gold);"></i>AI 反思助手</h3>
+        <p id="reviewConclusion" class="text-sm" style="color: #2d2a3e;">加载中…</p>
+      </div>
+      <!-- 参数调整建议 -->
+      <div class="rounded-xl p-5 shadow-sm mb-6" id="settingsBlock" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
+        <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">参数调整建议</h3>
+        <div id="settingsWarning" class="hidden mb-3 p-3 rounded-xl text-sm" style="background:#fffbeb;border:1px solid #fbbf24;color:#92400e;"></div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4" id="settingsDisplay"></div>
+        <div class="flex gap-2" id="settingsActions"></div>
+      </div>
+    </section>
   </main>
 
   <!-- 弹窗：批量添加入出金 / 编辑出入金 -->
@@ -548,6 +573,7 @@
     let chartAllocation = null;
     let chartRiskAllocation = null;
     let chartStrategyDriver = null;
+    var _get_settings_cache = null;
     let fundRecords = [];
     let trades = [];
     let fundEditIndex = null;  // 编辑时为存储索引，新增时为 null
@@ -666,10 +692,11 @@
           data: { labels: data.labels || [], datasets: datasets },
           options: {
             responsive: true, maintainAspectRatio: false,
-            interaction: { intersect: false, mode: 'nearest' },
+            interaction: { intersect: false, mode: 'index' },
             plugins: {
               legend: { position: 'top', labels: { color: '#2d2a3e', usePointStyle: true } },
               tooltip: {
+                mode: 'index', intersect: false,
                 filter: function(item) { return item.raw != null; },
                 callbacks: {
                   label: function (c) {
@@ -1581,6 +1608,65 @@
     }
     window.__loadStressTest = loadStressTest;
 
+    // ========== 策略复盘 ==========
+    async function loadStrategyReview(period) {
+      var data = await apiGet('/api/strategy-review?period=' + (period || 'all'));
+      if (!data) return;
+      // 指标卡片（含合规分 + 小字定义）
+      var cards = document.getElementById('reviewCards');
+      if (cards) {
+        var items = [
+          {label:'纪律分', val: data.discipline_score + '%', color: data.discipline_score >= 90 ? '#0d9488' : '#f59e0b',
+           sub: '投弹 ' + data.total_bombs + ' 次', def: '(1 - 漏单率)%，衡量信号执行的完整度'},
+          {label:'合规分', val: data.compliance_score + '%', color: data.compliance_score >= 80 ? '#0d9488' : '#f59e0b',
+           sub: '最大偏离 ' + data.max_drift + '%', def: '100 - 最大风险资产偏离×2，衡量配置是否在目标轨道内'},
+          {label:'超额收益', val: (data.excess_return >= 0 ? '+' : '') + data.excess_return + '%', color: data.excess_return >= 0 ? '#0d9488' : '#dc2626',
+           sub: 'TWR ' + data.real_twr + '% / DCA ' + data.dca_return + '%', def: '实际组合 TWR 减去等额定投 DCA 收益，正值=策略有效'},
+          {label:'投弹效率', val: data.bomb_efficiency != null ? data.bomb_efficiency + '%' : '--', color: data.bomb_efficiency != null && data.bomb_efficiency < 5 ? '#0d9488' : '#f59e0b',
+           sub: '偏离最低价', def: '投弹均价 / 投弹期间最低价 - 1，越接近 0 越精准'},
+          {label:'安全系数', val: data.safety_ratio != null ? data.safety_ratio + '×' : '--', color: data.safety_ratio != null && data.safety_ratio > 2 ? '#0d9488' : '#dc2626',
+           sub: '备弹池/压力回撤', def: '备弹池余额 / 极端情景（-15%）回撤金额，>2× 为安全'},
+        ];
+        cards.innerHTML = items.map(function(it) {
+          return '<div class="rounded-xl p-4" style="background:#fff;box-shadow:0 2px 12px rgba(74,61,124,0.06);">'
+            + '<div class="text-xs font-medium" style="color:var(--benchmark-gray);">' + it.label + '</div>'
+            + '<div class="text-2xl font-bold mt-1" style="color:' + it.color + ';">' + it.val + '</div>'
+            + '<div class="text-xs mt-1" style="color:var(--benchmark-gray);">' + it.sub + '</div>'
+            + '<div class="text-xs mt-1" style="color:rgba(138,145,153,0.7);font-style:italic;">' + it.def + '</div>'
+            + '</div>';
+        }).join('');
+      }
+      // AI 结论
+      var ce = document.getElementById('reviewConclusion');
+      if (ce) ce.textContent = data.conclusion || '暂无数据';
+      // 参数建议（根据后端 suggestions 动态生成）
+      var sd = document.getElementById('settingsDisplay');
+      var sw = document.getElementById('settingsWarning');
+      var sa = document.getElementById('settingsActions');
+      var st = data.settings || {};
+      _get_settings_cache = st;
+      if (sd) {
+        sd.innerHTML = '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">K 封顶值</div><div class="text-lg font-bold mt-1" style="color:var(--deep-purple);">' + st.K_MAX_CAP + '</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">投弹比例 K 的最大值，防止单次过度投入</div></div>'
+          + '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">月投基数</div><div class="text-lg font-bold mt-1" style="color:var(--deep-purple);">$' + st.MONTHLY_BASE_OVERRIDE + '</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">每月定投基础金额，乘以倍率 M 后为实际月投</div></div>'
+          + '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">备弹池消耗率</div><div class="text-lg font-bold mt-1" style="color:' + (data.burn_rate > 70 ? '#dc2626' : data.burn_rate > 50 ? '#f59e0b' : 'var(--deep-purple)') + ';">' + data.burn_rate + '%</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">期间投弹总额 / 备弹池总额，>70% 为过快</div></div>';
+      }
+      // 动态建议
+      var sugs = data.suggestions || [];
+      if (sw) {
+        if (sugs.length > 0) {
+          sw.innerHTML = sugs.map(function(s) {
+            var icon = s.priority === 'high' ? '<i class="fas fa-exclamation-triangle mr-1"></i>' : '<i class="fas fa-info-circle mr-1"></i>';
+            return '<div class="mb-1">' + icon + s.text + '</div>';
+          }).join('');
+          sw.classList.remove('hidden');
+        } else { sw.classList.add('hidden'); }
+      }
+      if (sa) {
+        sa.innerHTML = '<button type="button" class="btn-adjust-k px-4 py-2 rounded text-sm transition" style="background:var(--champagne-gold);color:#2d2a3e;">下调 K 封顶（' + st.K_MAX_CAP + ' → ' + (st.K_MAX_CAP / 2).toFixed(2) + '）</button>'
+          + '<button type="button" class="btn-adjust-m px-4 py-2 rounded text-sm transition" style="background:var(--deep-purple);color:#fff;">提高月投 20%（$' + st.MONTHLY_BASE_OVERRIDE + ' → $' + Math.round(st.MONTHLY_BASE_OVERRIDE * 1.2) + '）</button>';
+      }
+    }
+
     // ========== 智能粘贴解析 ==========
     var _parsedSmartTrades = [];
     function parseSmartPaste() {
@@ -1661,6 +1747,31 @@
           var btn = e.target.closest && e.target.closest('.nav-btn[data-section]');
           if (btn) { e.preventDefault(); e.stopPropagation(); showSection(btn.dataset.section); return; }
           if (e.target.id === 'btnParseSmartPaste') { e.preventDefault(); e.stopPropagation(); parseSmartPaste(); return; }
+          var rpBtn = e.target.closest && e.target.closest('.review-period-btn[data-rp]');
+          if (rpBtn) {
+            e.preventDefault(); e.stopPropagation();
+            var rp = rpBtn.dataset.rp;
+            document.querySelectorAll('.review-period-btn').forEach(function(b) {
+              if (b.dataset.rp === rp) { b.style.background = 'var(--deep-purple)'; b.style.color = '#fff'; }
+              else { b.style.background = '#fff'; b.style.color = 'var(--deep-purple)'; }
+            });
+            loadStrategyReview(rp);
+            return;
+          }
+          var adjK = e.target.closest && e.target.closest('.btn-adjust-k');
+          if (adjK) {
+            e.preventDefault(); e.stopPropagation();
+            var curK = _get_settings_cache ? _get_settings_cache.K_MAX_CAP : 0.2;
+            apiPost('/api/update-settings', {K_MAX_CAP: curK / 2}).then(function() { loadStrategyReview('all'); loadSignals(); });
+            return;
+          }
+          var adjM = e.target.closest && e.target.closest('.btn-adjust-m');
+          if (adjM) {
+            e.preventDefault(); e.stopPropagation();
+            var curM = _get_settings_cache ? _get_settings_cache.MONTHLY_BASE_OVERRIDE : 2000;
+            apiPost('/api/update-settings', {MONTHLY_BASE_OVERRIDE: Math.round(curM * 1.2)}).then(function() { loadStrategyReview('all'); loadSignals(); });
+            return;
+          }
           if (e.target.id === 'btnSubmitSmartPaste') { e.preventDefault(); e.stopPropagation(); submitSmartPaste(); return; }
           var sumPBtn = e.target.closest && e.target.closest('.sum-period-btn[data-period]');
           if (sumPBtn) {
@@ -1872,6 +1983,7 @@
       loadTrades();
       loadTradeSummary('all');
       loadSignals();
+      loadStrategyReview('all');
     }
 
     bindEvents();
