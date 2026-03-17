@@ -538,17 +538,19 @@ def compute_twr(trades_list, history_cache, period_start, period_end, all_tradin
 
     返回 TWR 百分比（float），如 3.25 表示 +3.25%。
     """
-    # 确定期初锚定日：period_start 之前最近有行情数据的交易日
-    dates_before = [d for d in all_trading_dates if d < period_start]
-    anchor = dates_before[-1] if dates_before else None
-
     # 期间内所有有行情数据的交易日
     dates_in_range = [d for d in all_trading_dates if period_start <= d <= period_end]
     if not dates_in_range:
         return 0.0
 
-    # 构建子区间链：[anchor, d1, d2, ..., period_end]
-    chain = ([anchor] if anchor else []) + dates_in_range
+    # 若 period_start 本身是交易日（如 1D 的 prev_trading_date），直接从它开始，不回溯 anchor
+    # 仅当 period_start 不在交易日列表中（如 YTD 的 01-01 为非交易日）时，才用前一个交易日作为锚定
+    if period_start in all_trading_dates:
+        chain = dates_in_range
+    else:
+        dates_before = [d for d in all_trading_dates if d < period_start]
+        anchor = dates_before[-1] if dates_before else None
+        chain = ([anchor] if anchor else []) + dates_in_range
     if len(chain) < 2:
         return 0.0
 
@@ -577,14 +579,16 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
     my：组合累计 TWR（%）；bench：纳指涨跌幅（%）；dca：等额定投收益（%）。
     DCA 模拟：将时段内实际总买入金额均匀分配到每个交易日，按组合加权价格买入。
     """
-    dates_before = [d for d in all_trading_dates if d < period_start]
-    anchor = dates_before[-1] if dates_before else None
-
     dates_in_range = [d for d in all_trading_dates if period_start <= d <= period_end]
     if not dates_in_range:
         return {"labels": [], "my": [], "bench": [], "dca": []}
 
-    chain = ([anchor] if anchor else []) + dates_in_range
+    if period_start in all_trading_dates:
+        chain = dates_in_range
+    else:
+        dates_before = [d for d in all_trading_dates if d < period_start]
+        anchor = dates_before[-1] if dates_before else None
+        chain = ([anchor] if anchor else []) + dates_in_range
 
     b_base = get_price_on_date(BENCHMARK_SYMBOL, period_start, bench_cache) or 1.0
 
@@ -632,19 +636,23 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
             else:
                 dca_series.append(0)
 
-    # 收集时段内的买入事件（用于走势图散点标记）
+    # 收集时段内的买入事件（仅风险资产，排除 BOXX 等现金管理标的）
+    CASH_TICKERS_CHART = {"BOXX"}
     buy_markers = []
     for t in trades_list:
         td = (t.get("date") or "")[:10]
+        sym = (t.get("symbol") or "").upper()
         if (t.get("action") or "") != "买入" or td < period_start or td > period_end:
             continue
-        label_key = td[5:]  # MM-DD
+        if sym in CASH_TICKERS_CHART:
+            continue
+        label_key = td[5:]
         if label_key in labels:
             idx = labels.index(label_key)
             buy_markers.append({
                 "idx": idx, "label": label_key,
                 "type": t.get("type") or "定投",
-                "symbol": (t.get("symbol") or "").upper(),
+                "symbol": sym,
                 "price_shares": round(float(t.get("price", 0)) * float(t.get("shares", 0)), 0),
             })
 
@@ -1729,11 +1737,23 @@ def compute_quantile_engine():
 
 # ---------- 1.2 风险预算 R → RR → K → T ----------
 
+def _get_settings():
+    """从 model_state 读取可调参数，不存在时返回默认值。"""
+    state = load_json(MODEL_STATE_FILE, {})
+    s = state.get("settings", {})
+    return {
+        "K_MAX_CAP": s.get("K_MAX_CAP", 0.2),
+        "MONTHLY_BASE_OVERRIDE": s.get("MONTHLY_BASE_OVERRIDE", MONTHLY_BASE),
+    }
+
+
 def compute_risk_budget(qe, reserve_pool, trigger_level=None):
     """
     按天府 v1.0 公式计算投弹比例 K 和额度 T。
     trigger_level: "M1"/"M2"/"M3"/None，M1 时 K 固定 0.05。
+    K 受 settings.K_MAX_CAP 封顶。
     """
+    settings = _get_settings()
     qqqm_drop_pctile = qe.get("qqqm_drop_3y_pctile") or 0
     vix_pctile = qe.get("vix_3y_pctile") or 0
 
@@ -1742,7 +1762,6 @@ def compute_risk_budget(qe, reserve_pool, trigger_level=None):
     S_ema = 1.1 if qe.get("qqqm_above_ema200") else 0.9
     RR = max(0, min(1, R * S_ema))
 
-    # M1 固定 K=0.05
     if trigger_level == "M1":
         K = 0.05
     elif RR < 0.25:
@@ -1752,6 +1771,9 @@ def compute_risk_budget(qe, reserve_pool, trigger_level=None):
     else:
         q = max(0.5, min(1.0, 0.5 + 0.5 * vix_pctile))
         K = (0.1 + 0.1 * RR) * q
+
+    # K_MAX_CAP 封顶
+    K = min(K, settings["K_MAX_CAP"])
 
     T = min(reserve_pool * K, 10000)
 
@@ -1939,13 +1961,15 @@ def compute_monthly_multiplier(qe, reserve_pool, has_toundan_this_month):
     median_s_3y = qe.get("vix_3y_median_s", 0.5)
     M = max(0.25, min(1.25, 1 + 2 * (S * RRF - median_s_3y)))
 
-    monthly_amount = round(MONTHLY_BASE * M, 2)
+    settings = _get_settings()
+    base = settings["MONTHLY_BASE_OVERRIDE"]
+    monthly_amount = round(base * M, 2)
 
-    # 备弹池倍投：当月无投弹时翻倍，翻倍部分（最多 2000）从备弹池支取
+    # 备弹池倍投：当月无投弹时翻倍，翻倍部分（最多 base）从备弹池支取
     double_up_amount = 0.0
     double_up_from_reserve = False
     if not has_toundan_this_month:
-        extra = min(monthly_amount, MONTHLY_BASE)
+        extra = min(monthly_amount, base)
         if reserve_pool >= extra:
             double_up_amount = round(extra, 2)
             double_up_from_reserve = True
@@ -2177,6 +2201,227 @@ def api_signals():
         "position_alerts": position_alerts,
         "history_7d": h7,
     })
+
+
+@app.route("/api/strategy-review", methods=["GET"])
+def api_strategy_review():
+    """
+    策略复盘：纪律分、Alpha、投弹效率、资金安全系数、备弹池消耗率、AI 反思结论。
+    ?period=1m|3m|all
+    """
+    period = request.args.get("period", "all")
+    dt = datetime.now()
+    if period == "1m":
+        cutoff = (dt - timedelta(days=30)).strftime("%Y-%m-%d")
+    elif period == "3m":
+        cutoff = (dt - timedelta(days=90)).strftime("%Y-%m-%d")
+    else:
+        cutoff = "2000-01-01"
+    period_label = {"1m": "最近 1 个月", "3m": "最近 1 个季度", "all": "全部"}.get(period, period)
+
+    trades_list = get_trades()
+    # 期间内投弹记录
+    period_bombs = [
+        t for t in trades_list
+        if (t.get("type") or "") == "投弹" and (t.get("date") or "")[:10] >= cutoff
+    ]
+    total_bombs = len(period_bombs)
+
+    # 纪律分：当前无触发日志，以实际执行率 100% 为默认
+    discipline_score = 100
+
+    # Alpha：实际 TWR vs DCA（从 returns-overview 缓存复用）
+    # 直接调用 compute_twr 和 compute_twr_chart 获取 since 数据
+    symbols = get_all_symbols(trades_list)
+    excess_return = 0
+    dca_return = 0
+    real_twr = 0
+    avg_cost_delta = 0
+    bomb_efficiency = None
+    safety_ratio = None
+    burn_rate = 0
+
+    if symbols and trades_list:
+        since_date = min(t["date"][:10] for t in trades_list)
+        start_f = min(since_date, (dt - timedelta(days=395)).strftime("%Y-%m-%d"))
+        end_f = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
+        hc, bc, td = fetch_histories_with_bench(symbols, start_f, end_f)
+        eff_end = td[-1] if td else dt.strftime("%Y-%m-%d")
+
+        chart_start = max(cutoff, since_date)
+        chart_data = compute_twr_chart(trades_list, hc, bc, chart_start, eff_end, td)
+        if chart_data["my"]:
+            real_twr = chart_data["my"][-1]
+        if chart_data.get("dca"):
+            dca_return = chart_data["dca"][-1]
+        excess_return = round(real_twr - dca_return, 2)
+
+        # 投弹效率：QQQM 投弹均价 vs 期间 QQQM 最低价
+        qqqm_bombs = [t for t in period_bombs if (t.get("symbol") or "").upper() == "QQQM"]
+        if qqqm_bombs:
+            avg_bomb_price = sum(float(t.get("price", 0)) for t in qqqm_bombs) / len(qqqm_bombs)
+            # 最低价范围取投弹交易日区间（首笔到末笔），而非整个筛选期间
+            bomb_dates = sorted((t.get("date") or "")[:10] for t in qqqm_bombs)
+            bomb_start = bomb_dates[0]
+            bomb_end = bomb_dates[-1]
+            dates_in = [d for d in td if bomb_start <= d <= bomb_end]
+            if dates_in:
+                lows = [get_price_on_date("QQQM", d, hc) for d in dates_in]
+                lows = [p for p in lows if p and p > 0]
+                period_low = min(lows) if lows else avg_bomb_price
+                bomb_efficiency = round((avg_bomb_price / period_low - 1) * 100, 2) if period_low > 0 else None
+
+        # 资金安全系数：备弹池 / 压力情景回撤金额（假设 -20% 回撤）
+        total_toundan_used = sum(
+            float(t.get("price", 0)) * float(t.get("shares", 0))
+            for t in trades_list if (t.get("type") or "") == "投弹"
+        )
+        reserve_pool = max(0, TOUNDAN_TOTAL_BUDGET - total_toundan_used)
+        pos = positions_at_date(trades_list, eff_end)
+        tv = sum((get_price_on_date(s, eff_end, hc) or 0) * q for s, q in pos.items())
+        max_dd_amount = tv * 0.15 if tv > 0 else 1
+        safety_ratio = round(reserve_pool / max_dd_amount, 2) if max_dd_amount > 0 else None
+
+        # 备弹池消耗率
+        period_toundan_amount = sum(
+            float(t.get("price", 0)) * float(t.get("shares", 0)) for t in period_bombs
+        )
+        burn_rate = round(period_toundan_amount / TOUNDAN_TOTAL_BUDGET * 100, 1) if TOUNDAN_TOTAL_BUDGET > 0 else 0
+
+    # ===== 配置一致性 / 合规分（Drift）=====
+    compliance_score = 100
+    max_drift = 0
+    avg_drift = 0
+    CASH_TICKERS = {"BOXX"}
+    TARGET_PCT = {"QQQM": 50, "BRK.B": 35, "IAU": 15}
+    qqqm_max_pct = 0
+    if symbols and trades_list:
+        pos_now = positions_at_date(trades_list, eff_end)
+        risk_val = sum((get_price_on_date(s, eff_end, hc) or 0) * q for s, q in pos_now.items() if s.upper() not in CASH_TICKERS)
+        if risk_val > 0:
+            drifts = []
+            for sym in TARGET_PCT:
+                qty = pos_now.get(sym, 0)
+                p = get_price_on_date(sym, eff_end, hc) or 0
+                eff_pct = qty * p / risk_val * 100 if risk_val > 0 else 0
+                drift = abs(eff_pct - TARGET_PCT[sym])
+                drifts.append(drift)
+                if sym == "QQQM":
+                    qqqm_max_pct = round(eff_pct, 1)
+            max_drift = round(max(drifts) if drifts else 0, 1)
+            avg_drift = round(sum(drifts) / len(drifts) if drifts else 0, 1)
+            compliance_score = max(0, round(100 - max_drift * 2))
+
+    # VIX 环境
+    qe_data = compute_quantile_engine()
+    vix_now = qe_data.get("vix_price") or 0
+    vix_env = "低波动" if vix_now < 18 else ("中等波动" if vix_now < 25 else "高波动")
+
+    # ===== AI 反思结论（归因分析风格）=====
+    parts = []
+    # 纪律维度
+    if discipline_score >= 100:
+        parts.append("执行纪律完美")
+    elif discipline_score >= 90:
+        parts.append(f"执行纪律良好（{discipline_score}%）")
+    else:
+        parts.append(f"执行力偏差（{discipline_score}%），建议启用强提醒或自动化脚本")
+
+    # 超额收益归因
+    if excess_return > 0.5:
+        parts.append(f"策略跑赢纯定投 +{excess_return}%")
+        if total_bombs > 0 and bomb_efficiency is not None and bomb_efficiency < 5:
+            parts.append("超额收益主要由投弹策略在{}环境下精准出击贡献".format(vix_env))
+    elif excess_return < -0.5:
+        parts.append(f"策略暂落后纯定投 {excess_return}%，投弹成本优化空间较大")
+    else:
+        parts.append("策略与纯定投收益接近，投弹尚未产生显著差异")
+
+    # 投弹效率
+    if bomb_efficiency is not None:
+        if bomb_efficiency < 3:
+            parts.append("投弹精准（偏离最低价仅 {:.1f}%）".format(bomb_efficiency))
+        elif bomb_efficiency < 8:
+            parts.append("投弹效率良好（偏离 {:.1f}%）".format(bomb_efficiency))
+        else:
+            parts.append("投弹偏离较大（{:.1f}%），可优化入场时机".format(bomb_efficiency))
+
+    # 弹药消耗
+    if burn_rate > 70:
+        parts.append("弹药消耗过快（{:.0f}%），建议下调 K 值或增加备弹".format(burn_rate))
+    elif burn_rate > 40:
+        parts.append("弹药消耗适中（{:.0f}%）".format(burn_rate))
+
+    # 合规与集中度
+    if qqqm_max_pct > 55:
+        parts.append(f"注意：QQQM 风险敞口达 {qqqm_max_pct}%，逼近 65% 熔断线，关注组合集中度风险")
+    if max_drift > 15:
+        parts.append(f"配置偏离较大（最大偏离 {max_drift}%），建议适时再平衡")
+
+    # 资金安全
+    if safety_ratio is not None and safety_ratio < 1.5:
+        parts.append("资金安全系数偏低（{:.1f}×），需提高月投基数或减少高阶投弹额度".format(safety_ratio))
+
+    conclusion = "。".join(parts) + "。"
+
+    # ===== 参数建议（指令 A 增强逻辑）=====
+    suggestions = []
+    if discipline_score < 90:
+        suggestions.append({"type": "discipline", "priority": "high",
+            "text": "执行力偏差是当前最大的风险点，建议启用「自动投弹脚本」或设置「强提醒」"})
+    if burn_rate > 50 and bomb_efficiency is not None and bomb_efficiency < 0.5:
+        suggestions.append({"type": "k_force_down", "priority": "high",
+            "text": "投弹过于频繁且未能有效拉低均价，建议强制下调 K 封顶值"})
+    elif burn_rate > 50:
+        suggestions.append({"type": "k_down", "priority": "medium",
+            "text": f"备弹消耗率 {burn_rate}%，建议适度下调 K 封顶值"})
+    if safety_ratio is not None and safety_ratio < 1.5:
+        suggestions.append({"type": "safety", "priority": "high",
+            "text": f"资金安全系数仅 {safety_ratio}×，需提高月投基数或减少 M3 等高阶投弹额度"})
+
+    settings = _get_settings()
+
+    return jsonify({
+        "period": period,
+        "period_label": period_label,
+        "discipline_score": discipline_score,
+        "total_bombs": total_bombs,
+        "excess_return": excess_return,
+        "real_twr": round(real_twr, 2),
+        "dca_return": round(dca_return, 2),
+        "bomb_efficiency": bomb_efficiency,
+        "safety_ratio": safety_ratio,
+        "burn_rate": burn_rate,
+        "compliance_score": compliance_score,
+        "max_drift": max_drift,
+        "avg_drift": avg_drift,
+        "qqqm_risk_pct": qqqm_max_pct,
+        "vix_env": vix_env,
+        "conclusion": conclusion,
+        "suggestions": suggestions,
+        "settings": settings,
+    })
+
+
+@app.route("/api/update-settings", methods=["POST"])
+def api_update_settings():
+    """更新可调参数（K_MAX_CAP / MONTHLY_BASE_OVERRIDE），写入 model_state.json。"""
+    data = request.get_json() or {}
+    state = load_model_state()
+    s = state.get("settings", {})
+    if "K_MAX_CAP" in data:
+        try:
+            s["K_MAX_CAP"] = max(0.01, min(0.5, float(data["K_MAX_CAP"])))
+        except (TypeError, ValueError):
+            pass
+    if "MONTHLY_BASE_OVERRIDE" in data:
+        try:
+            s["MONTHLY_BASE_OVERRIDE"] = max(500, min(10000, float(data["MONTHLY_BASE_OVERRIDE"])))
+        except (TypeError, ValueError):
+            pass
+    state["settings"] = s
+    save_model_state(state)
+    return jsonify({"ok": True, "settings": s})
 
 
 @app.route("/api/stress-test", methods=["GET"])
