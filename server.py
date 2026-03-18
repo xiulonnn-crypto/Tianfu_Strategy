@@ -194,7 +194,7 @@ def _fetch_histories_raw(symbols, start_date, end_date):
     """
     拉取多标的从 start_date 到 end_date 的日线，返回 {symbol: DataFrame}，DataFrame 含 Close 列、日期索引。
     使用 Ticker(symbol).history() 逐标的拉取，避免 yf.download 多标的下可能的数据串扰/错位。
-    有 scipy 时使用 repair=True 尝试修正 Yahoo 的漏调/错调。
+    若 Ticker.history() 失败（Yahoo API 间歇性返回 None），回退到 yf.download。
     """
     if not symbols:
         return {}
@@ -202,6 +202,7 @@ def _fetch_histories_raw(symbols, start_date, end_date):
     out = {}
     for s in symbols:
         sy = yf_symbol(s)
+        data = None
         try:
             ticker = yf.Ticker(sy)
             data = ticker.history(
@@ -210,9 +211,15 @@ def _fetch_histories_raw(symbols, start_date, end_date):
                 auto_adjust=False,
                 repair=use_repair,
             )
-            out[s] = _extract_close_series(data)
         except Exception:
-            out[s] = None
+            data = None
+        if data is None or data.empty:
+            try:
+                data = yf.download(sy, start=start_date, end=end_date,
+                                   progress=False, auto_adjust=False)
+            except Exception:
+                data = None
+        out[s] = _extract_close_series(data)
     return out
 
 
@@ -623,8 +630,7 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
             my_series.append(round((cumulative_factor - 1) * 100, 2))
             bench_series.append(round((b_curr / b_base - 1) * 100, 2) if b_base > 0 else 0.0)
 
-            # DCA：每日等额买入，用组合中占比最大的标的价格模拟
-            # 简化为用 QQQM 价格（主力标的），无 QQQM 时用基准
+            # DCA：每日等额买入，用 QQQM 价格模拟
             qqqm_p = get_price_on_date("QQQM", curr_d, history_cache)
             dca_price = qqqm_p if qqqm_p and qqqm_p > 0 else (b_curr if b_curr > 0 else 1)
             if daily_dca_amount > 0 and dca_price > 0:
@@ -826,8 +832,16 @@ def compute_risk_metrics(trades_list, history_cache, bench_cache,
                 alpha_period = R_period - beta * R_bench_period_val
                 alpha_pct = round(alpha_period * 100, 1)
 
+    bench_max_drawdown_pct = None
+    if len(dates_in_period) >= 2:
+        _, r_bench_dd = _twr_daily_returns(trades_list, history_cache, bench_cache, dates_in_period)
+        if r_bench_dd:
+            bench_dd_series, _ = _build_drawdown_series(r_bench_dd, dates_in_period)
+            bench_max_drawdown_pct = round(min(bench_dd_series) * -1, 1) if bench_dd_series else None
+
     return {
         "max_drawdown_pct": max_drawdown_pct,
+        "bench_max_drawdown_pct": bench_max_drawdown_pct,
         "sharpe_ratio": sharpe_ratio,
         "alpha_pct": alpha_pct,
         "beta": beta,
@@ -1192,16 +1206,17 @@ def api_returns_overview():
             ) if pos_start else 0.0
             usd = round(v_start * twr_pct / 100, 2) if v_start > 1e-6 else round(v_end - total_cost, 2)
 
-        cards[key] = {"pct": twr_pct, "usd": usd, "mwrr_pct": mwrr_pct}
+        cards[key] = {"pct": twr_pct, "mwr_pct": mwrr_pct, "usd": usd}
 
         # 走势图
         if key == "1d":
             b0 = get_price_on_date(BENCHMARK_SYMBOL, prev_trading_date, bench_cache) or 1.0
             b1 = get_price_on_date(BENCHMARK_SYMBOL, effective_end_date, bench_cache) or b0
             bench_1d = round((b1 / b0 - 1) * 100, 2) if b0 > 0 else 0.0
+            twr_1d = twr_pct if twr_pct is not None else 0.0
             chart[key] = {
                 "labels": [prev_trading_date[5:], effective_end_date[5:]],
-                "my": [0, twr_pct],
+                "my": [0, twr_1d],
                 "bench": [0, bench_1d],
                 "dca": [0, 0],
                 "buy_markers": [],
@@ -1220,52 +1235,115 @@ def api_returns_overview():
             p_start, effective_end_date, trading_dates,
         )
 
-    # ===== 策略驱动力归因（Since Inception）=====
-    strategy_driver = None
-    since_risk = risk_metrics.get("since", {})
+    # ===== 策略驱动力归因（Since Inception）— PnL 贡献法 =====
     since_card = cards.get("since", {})
     total_return_pct = since_card.get("pct", 0) or 0
-    beta_val = since_risk.get("beta")
-    # 纳指同期涨跌幅
-    b_start = get_price_on_date(BENCHMARK_SYMBOL, periods["since"], bench_cache) or 1
-    b_end_val = get_price_on_date(BENCHMARK_SYMBOL, effective_end_date, bench_cache) or b_start
-    bench_return_pct = round((b_end_val / b_start - 1) * 100, 2) if b_start > 0 else 0
-    # Beta 贡献 = Beta × 基准收益
-    if beta_val is not None:
-        beta_contrib = round(beta_val * bench_return_pct, 2)
-    else:
-        beta_contrib = bench_return_pct
 
-    # 投弹 Alpha：type=="投弹" 的交易产生的盈亏 / 组合总市值
-    toundan_pnl = 0.0
+    # 按交易类型汇总实际盈亏
+    def _collect_pnl(trade_type):
+        pnl_total = 0.0
+        details = []
+        for t in trades_list:
+            if (t.get("type") or "") != trade_type or (t.get("action") or "") != "买入":
+                continue
+            sym = (t.get("symbol") or "").upper()
+            bp = float(t.get("price") or 0)
+            bs = float(t.get("shares") or 0)
+            if bp <= 0 or bs <= 0:
+                continue
+            cur_p = get_price_on_date(sym, effective_end_date, history_cache)
+            if cur_p:
+                pnl = (cur_p - bp) * bs
+                pnl_total += pnl
+                details.append({
+                    "symbol": sym,
+                    "date": t.get("date", ""),
+                    "buy_price": round(bp, 2),
+                    "current_price": round(cur_p, 2),
+                    "shares": bs,
+                    "pnl": round(pnl, 2),
+                    "return_pct": round((cur_p / bp - 1) * 100, 2),
+                })
+        return pnl_total, details
+
+    toundan_pnl, toundan_details = _collect_pnl("投弹")
+    dingtou_pnl, dingtou_details = _collect_pnl("定投")
+
+    # 现金管理（BOXX）：需同时计算已实现盈亏（买卖配对）和未实现盈亏（仍持有）
+    cash_pnl = 0.0
+    cash_details = []
+    cash_buys = []
     for t in trades_list:
-        if (t.get("type") or "") != "投弹" or (t.get("action") or "") != "买入":
+        if (t.get("type") or "") != "现金管理":
             continue
         sym = (t.get("symbol") or "").upper()
         bp = float(t.get("price") or 0)
         bs = float(t.get("shares") or 0)
+        action = t.get("action") or ""
         if bp <= 0 or bs <= 0:
             continue
-        cur_p = get_price_on_date(sym, effective_end_date, history_cache)
+        if action == "买入":
+            cash_buys.append({"sym": sym, "date": t.get("date", ""), "price": bp, "shares": bs})
+        elif action == "卖出":
+            remaining = bs
+            while remaining > 0 and cash_buys:
+                lot = cash_buys[0]
+                matched = min(remaining, lot["shares"])
+                pnl = (bp - lot["price"]) * matched
+                cash_pnl += pnl
+                cash_details.append({
+                    "symbol": lot["sym"], "date": lot["date"] + " → " + t.get("date", ""),
+                    "buy_price": round(lot["price"], 2), "current_price": round(bp, 2),
+                    "shares": matched, "pnl": round(pnl, 2),
+                    "return_pct": round((bp / lot["price"] - 1) * 100, 2),
+                    "status": "已卖出",
+                })
+                lot["shares"] -= matched
+                remaining -= matched
+                if lot["shares"] <= 1e-9:
+                    cash_buys.pop(0)
+    for lot in cash_buys:
+        if lot["shares"] <= 1e-9:
+            continue
+        cur_p = get_price_on_date(lot["sym"], effective_end_date, history_cache)
         if cur_p:
-            toundan_pnl += (cur_p - bp) * bs
-    toundan_alpha_pct = round(toundan_pnl / v_end * 100, 2) if v_end > 1e-6 else 0
-    # 月投贡献 = 残差
-    dingtou_pct = round(total_return_pct - beta_contrib - toundan_alpha_pct, 2)
+            pnl = (cur_p - lot["price"]) * lot["shares"]
+            cash_pnl += pnl
+            cash_details.append({
+                "symbol": lot["sym"], "date": lot["date"],
+                "buy_price": round(lot["price"], 2), "current_price": round(cur_p, 2),
+                "shares": lot["shares"], "pnl": round(pnl, 2),
+                "return_pct": round((cur_p / lot["price"] - 1) * 100, 2),
+                "status": "持有中",
+            })
+
+    toundan_pct = round(toundan_pnl / v_end * 100, 2) if v_end > 1e-6 else 0
+    dingtou_pct = round(dingtou_pnl / v_end * 100, 2) if v_end > 1e-6 else 0
+    cash_pct = round(cash_pnl / v_end * 100, 2) if v_end > 1e-6 else 0
+    known_pnl_pct = round((toundan_pnl + dingtou_pnl + cash_pnl) / v_end * 100, 2) if v_end > 1e-6 else 0
+    other_pct = round(total_return_pct - known_pnl_pct, 2)
 
     strategy_driver = {
         "total_pct": total_return_pct,
-        "beta_pct": beta_contrib,
-        "toundan_alpha_pct": toundan_alpha_pct,
         "dingtou_pct": dingtou_pct,
-        "bench_return_pct": bench_return_pct,
+        "toundan_pct": toundan_pct,
+        "cash_pct": cash_pct,
+        "other_pct": other_pct,
+        "total_pnl_pct": known_pnl_pct,
+        "toundan_details": toundan_details,
+        "toundan_total_pnl": round(toundan_pnl, 2),
+        "dingtou_details": dingtou_details,
+        "dingtou_total_pnl": round(dingtou_pnl, 2),
+        "cash_details": cash_details,
+        "cash_total_pnl": round(cash_pnl, 2),
+        "v_end": round(v_end, 2),
     }
 
     return jsonify({
         "cards": cards,
         "chart": chart,
         "data_as_of": effective_end_date,
-        "method": "TWR",
+        "method": "MWRR",
         "risk_metrics": risk_metrics,
         "strategy_driver": strategy_driver,
     })
@@ -1383,9 +1461,11 @@ def api_asset_analysis(symbol):
     alloc_avg_cost = alloc_cb.get("avg_cost", 0.0)
     alloc_shares = alloc_cb.get("shares", 0.0)
 
-    # 图表用的历史序列单独拉（可能范围更广）
+    # 图表用的历史序列单独拉（可能范围更广）；若 Yahoo API 间歇性失败则回退用 alloc_cache
     raw = _fetch_histories_raw([symbol], start_fetch_buffered, end_fetch)
     df = raw.get(symbol)
+    if df is None or df.empty:
+        df = alloc_cache.get(symbol)
     if df is None or df.empty:
         return jsonify({"error": f"无法获取 {symbol} 的历史数据"}), 404
 
@@ -1490,12 +1570,34 @@ def api_asset_analysis(symbol):
                 if not max_dd_start:
                     max_dd_start = dates[0]
 
+    # --- 按交易类型的盈亏归因明细 ---
+    trade_attribution = []
+    for t in sym_trades:
+        if (t.get("action") or "") != "买入":
+            continue
+        tp = t.get("type") or "定投"
+        bp_val = float(t.get("price") or 0)
+        bs_val = float(t.get("shares") or 0)
+        if bp_val <= 0 or bs_val <= 0:
+            continue
+        trade_attribution.append({
+            "date": (t.get("date") or "")[:10],
+            "type": tp,
+            "type_label": "投弹" if tp == "投弹" else ("现金管理" if tp == "现金管理" else "月投"),
+            "buy_price": round(bp_val, 2),
+            "current_price": current_price,
+            "shares": bs_val,
+            "pnl": round((current_price - bp_val) * bs_val, 2),
+            "return_pct": round((current_price / bp_val - 1) * 100, 2),
+        })
+
     return jsonify({
         "symbol": symbol,
         "data_as_of": alloc_end_date,
         "price_series": [{"date": d, "close": p} for d, p in zip(dates, prices)],
         "cost_series": [{"date": d, "vwac": c} for d, c in zip(dates, cost_series)],
         "buy_points": buy_points,
+        "trade_attribution": trade_attribution,
         "metrics": {
             "current_price": current_price,
             "avg_cost": avg_cost,
@@ -2230,11 +2332,11 @@ def api_strategy_review():
     # 纪律分：当前无触发日志，以实际执行率 100% 为默认
     discipline_score = 100
 
-    # Alpha：实际 TWR vs DCA（从 returns-overview 缓存复用）
-    # 直接调用 compute_twr 和 compute_twr_chart 获取 since 数据
+    # Alpha：实际 MWRR vs DCA
     symbols = get_all_symbols(trades_list)
     excess_return = 0
     dca_return = 0
+    real_mwrr = 0
     real_twr = 0
     avg_cost_delta = 0
     bomb_efficiency = None
@@ -2254,7 +2356,11 @@ def api_strategy_review():
             real_twr = chart_data["my"][-1]
         if chart_data.get("dca"):
             dca_return = chart_data["dca"][-1]
-        excess_return = round(real_twr - dca_return, 2)
+        # 使用 MWRR 作为主指标
+        fund_records = get_fund_records()
+        mwrr_val = compute_mwr(trades_list, fund_records, hc, chart_start, eff_end, td)
+        real_mwrr = mwrr_val if mwrr_val is not None else real_twr
+        excess_return = round(real_mwrr - dca_return, 2)
 
         # 投弹效率：QQQM 投弹均价 vs 期间 QQQM 最低价
         qqqm_bombs = [t for t in period_bombs if (t.get("symbol") or "").upper() == "QQQM"]
@@ -2387,6 +2493,7 @@ def api_strategy_review():
         "discipline_score": discipline_score,
         "total_bombs": total_bombs,
         "excess_return": excess_return,
+        "real_mwrr": round(real_mwrr, 2),
         "real_twr": round(real_twr, 2),
         "dca_return": round(dca_return, 2),
         "bomb_efficiency": bomb_efficiency,

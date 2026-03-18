@@ -32,6 +32,10 @@
     .returns-card.card-highlight > div:nth-child(1),
     .returns-card.card-highlight > div:nth-child(2) { color: var(--deep-purple) !important; }
     thead th { color: var(--deep-purple); font-weight: 600; }
+    .info-tip { position: relative; display: inline-block; cursor: help; margin-left: 4px; color: var(--benchmark-gray); font-size: 11px; }
+    .info-tip .info-tip-text { visibility: hidden; opacity: 0; position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: #2d2a3e; color: #fff; font-size: 11px; line-height: 1.5; padding: 6px 10px; border-radius: 6px; white-space: nowrap; z-index: 50; pointer-events: none; transition: opacity .15s; }
+    .info-tip .info-tip-text::after { content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 4px solid transparent; border-top-color: #2d2a3e; }
+    .info-tip:hover .info-tip-text { visibility: visible; opacity: 1; }
   </style>
 </head>
 <body class="min-h-screen">
@@ -58,7 +62,7 @@
         <p class="text-xs mt-1" style="color: var(--benchmark-gray);">核心优势：极端回撤下的成本修复能力 · 备弹池的防御边界 · 系统化消除情绪干扰</p>
       </div>
       <!-- 5 张收益卡片 -->
-      <div class="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-8" id="returnsCards">
+      <div class="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-8" id="returnsCards" title="时间加权收益率（TWR），排除出入金影响，与走势图口径一致">
         <div class="returns-card p-5 cursor-pointer transition hover:shadow-lg" data-period="1d" onclick="if(window.__setPeriod)window.__setPeriod('1d')">
           <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">1D</div>
           <div class="text-sm mt-0.5" style="color: var(--benchmark-gray);">日涨跌</div>
@@ -85,39 +89,39 @@
           <div class="text-xl font-bold mt-2" data-value="since-pct" style="color: #2d2a3e;">暂无数据</div>
         </div>
       </div>
-      <!-- MWRR vs TWR 对比行 -->
+      <!-- 收益率对比行 -->
       <div class="flex items-center gap-6 mb-4 px-1" id="mwrrCompareRow">
-        <div class="text-sm" style="color: var(--benchmark-gray);">
-          <span class="font-medium" style="color: var(--deep-purple);">TWR</span>（时间加权）
+        <div class="text-sm" style="color: var(--benchmark-gray);" title="排除出入金影响，纯粹反映投资策略表现">
+          <span class="font-medium" style="color: var(--deep-purple);">收益率</span>（时间加权）
           <span class="font-bold ml-1" id="mwrrTwrValue" style="color: #2d2a3e;">--</span>
         </div>
-        <div class="text-sm" style="color: var(--benchmark-gray);">
-          <span class="font-medium" style="color: var(--champagne-gold);">MWRR</span>（金额加权）
-          <span class="font-bold ml-1" id="mwrrMwrrValue" style="color: #2d2a3e;">--</span>
+        <div class="text-xs" style="color: var(--benchmark-gray);" title="考虑出入金时机，反映实际资金回报">
+          <span class="font-medium">实际盈亏率</span>（资金加权）
+          <span class="font-medium ml-1" id="mwrrMwrrValue" style="color: var(--benchmark-gray);">--</span>
         </div>
       </div>
       <!-- 风险指标 -->
       <p class="text-xs mb-2" style="color: var(--benchmark-gray);">以下指标随上方所选时段计算</p>
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
         <div class="rounded-xl shadow-sm p-4" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">最大回撤（Max Drawdown）</div>
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">最大回撤（Max Drawdown）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">从峰值到谷底的最大跌幅<br>衡量最坏情况下的亏损风险</span></span></div>
           <div class="text-lg font-bold mt-1" id="riskMaxDrawdown" style="color: #2d2a3e;">--</div>
-          <div class="text-xs mt-0.5" style="color: var(--benchmark-gray);">单位 %</div>
+          <div class="text-xs mt-0.5" id="riskDDCompare" style="color: var(--benchmark-gray);">--</div>
         </div>
         <div class="rounded-xl shadow-sm p-4" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">夏普比（Sharpe Ratio）</div>
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">夏普比（Sharpe Ratio）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">每承担一单位风险获得的超额回报<br>&gt;1 优秀 · 0.5~1 良好 · &lt;0 亏损</span></span></div>
           <div class="text-lg font-bold mt-1" id="riskSharpe" style="color: #2d2a3e;">--</div>
-          <div class="text-xs mt-0.5" style="color: var(--benchmark-gray);">无风险 2.1%</div>
+          <div class="text-xs mt-0.5" id="riskSharpeNote" style="color: var(--benchmark-gray);">无风险 2.1%</div>
         </div>
         <div class="rounded-xl shadow-sm p-4" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">Alpha（阿尔法）</div>
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">Alpha（阿尔法）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">相对基准的超额收益<br>&gt;0 跑赢基准 · &lt;0 跑输基准</span></span></div>
           <div class="text-lg font-bold mt-1" id="riskAlpha" style="color: #2d2a3e;">--</div>
-          <div class="text-xs mt-0.5" style="color: var(--benchmark-gray);">CAPM 相对纳指，%</div>
+          <div class="text-xs mt-0.5" id="riskAlphaNote" style="color: var(--benchmark-gray);">CAPM 相对纳指，%</div>
         </div>
         <div class="rounded-xl shadow-sm p-4" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">Beta（贝塔）</div>
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">Beta（贝塔）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">组合相对市场的波动敏感度<br>=1 同步 · &lt;1 低波动 · &gt;1 高波动</span></span></div>
           <div class="text-lg font-bold mt-1" id="riskBeta" style="color: #2d2a3e;">--</div>
-          <div class="text-xs mt-0.5" style="color: var(--benchmark-gray);">相对纳指</div>
+          <div class="text-xs mt-0.5" id="riskBetaNote" style="color: var(--benchmark-gray);">相对纳指</div>
         </div>
       </div>
       <!-- 走势图 -->
@@ -136,11 +140,12 @@
       <!-- 策略驱动力归因（走势图下方）-->
       <div class="rounded-xl p-5 shadow-sm mt-6" id="strategyDriverBlock" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
         <h3 class="text-md font-medium" style="color: var(--deep-purple);">策略驱动力归因 (Since Inception)</h3>
-        <p class="text-xs mb-3" style="color: var(--benchmark-gray);">将组合总收益拆解为三大驱动力：Beta（纳指同期涨跌 × 组合 Beta 系数）、投弹 Alpha（M1-M4 触发买入的盈亏贡献）、月投贡献（底仓残差归因）。</p>
+        <p class="text-xs mb-3" style="color: var(--benchmark-gray);">按交易类型拆解组合盈亏贡献：各类型交易的浮动盈亏合计 / 组合总市值。点击各板块查看交易明细。</p>
         <div class="grid grid-cols-1 sm:grid-cols-4 gap-4 items-center">
           <div class="flex justify-center"><canvas id="chartStrategyDriver" width="140" height="140"></canvas></div>
           <div class="sm:col-span-3" id="driverLabels"></div>
         </div>
+        <div id="driverDetailPanel" class="mt-4 hidden"></div>
       </div>
       <!-- Drawdown Series 图表 -->
       <div class="rounded-xl p-6 shadow-sm mt-6" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
@@ -179,21 +184,21 @@
       </div>
       <!-- 持仓明细表 -->
       <div class="overflow-x-auto rounded-xl shadow-sm mb-6" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-        <table class="w-full text-sm">
-          <thead style="background: var(--light-purple-bg);">
-            <tr>
-              <th class="text-left p-3">标的代码</th>
-              <th class="text-right p-3 col-shares">持仓股数</th>
-              <th class="text-right p-3 col-avg">均价</th>
-              <th class="text-right p-3">最新价</th>
-              <th class="text-right p-3 col-amount">持仓金额(USD)</th>
-              <th class="text-right p-3">盈亏(%)</th>
+          <table class="w-full text-sm">
+            <thead style="background: var(--light-purple-bg);">
+              <tr>
+                <th class="text-left p-3">标的代码</th>
+                <th class="text-right p-3 col-shares">持仓股数</th>
+                <th class="text-right p-3 col-avg">均价</th>
+                <th class="text-right p-3">最新价</th>
+                <th class="text-right p-3 col-amount">持仓金额(USD)</th>
+                <th class="text-right p-3">盈亏(%)</th>
               <th class="text-right p-3" style="min-width:140px;">比例 vs 目标</th>
-            </tr>
-          </thead>
-          <tbody id="allocationTableBody"><tr><td colspan="7" class="p-3 text-center" style="color: var(--benchmark-gray);">暂无持仓</td></tr></tbody>
-        </table>
-      </div>
+              </tr>
+            </thead>
+            <tbody id="allocationTableBody"><tr><td colspan="7" class="p-3 text-center" style="color: var(--benchmark-gray);">暂无持仓</td></tr></tbody>
+          </table>
+        </div>
       <!-- 单标的盈亏归因分析面板 -->
       <div id="assetAnalysisPanel" class="hidden mt-6 transition-all" style="overflow:hidden;">
         <div class="rounded-xl shadow-sm p-6" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
@@ -208,6 +213,7 @@
             </div>
             <div id="analysisMetrics" class="flex flex-col gap-3"></div>
           </div>
+          <div id="analysisTradeTable" class="mt-5"></div>
         </div>
       </div>
     </section>
@@ -223,7 +229,7 @@
         <div class="rounded-xl p-3" style="background:#fff;box-shadow:0 2px 12px rgba(74,61,124,0.06);"><div class="text-xs" style="color:var(--benchmark-gray);">总入金</div><div class="text-lg font-bold mt-1" id="sumInflow" style="color:var(--deep-purple);">--</div></div>
         <div class="rounded-xl p-3" style="background:#fff;box-shadow:0 2px 12px rgba(74,61,124,0.06);"><div class="text-xs" style="color:var(--benchmark-gray);">总出金</div><div class="text-lg font-bold mt-1" id="sumOutflow" style="color:#dc2626;">--</div></div>
         <div class="rounded-xl p-3" style="background:#fff;box-shadow:0 2px 12px rgba(74,61,124,0.06);"><div class="text-xs" style="color:var(--benchmark-gray);">总佣金</div><div class="text-lg font-bold mt-1" id="sumCommission" style="color:#2d2a3e;">--</div></div>
-        <div class="rounded-xl p-3" style="background:#fff;box-shadow:0 2px 12px rgba(74,61,124,0.06);"><div class="text-xs" style="color:var(--benchmark-gray);">资金利用率</div><div class="text-lg font-bold mt-1" id="sumCashUtil" style="color:var(--champagne-gold);">--</div></div>
+        <div class="rounded-xl p-3" style="background:#fff;box-shadow:0 2px 12px rgba(74,61,124,0.06);"><div class="text-xs" style="color:var(--benchmark-gray);">资金利用率</div><div class="text-lg font-bold mt-1" id="sumCashUtil" style="color:var(--champagne-gold);">--</div><div class="text-xs mt-0.5" style="color:rgba(138,145,153,0.7);font-style:italic;">(1 - BOXX/总资产) × 100%</div></div>
         <div class="rounded-xl p-3 flex items-center justify-center gap-1" style="background:#fff;box-shadow:0 2px 12px rgba(74,61,124,0.06);">
           <button type="button" class="sum-period-btn px-2 py-1 rounded text-xs" data-period="all" style="background:var(--deep-purple);color:#fff;">全部</button>
           <button type="button" class="sum-period-btn px-2 py-1 rounded text-xs" data-period="year" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">本年</button>
@@ -656,7 +662,7 @@
         if (dcaNote) dcaNote.classList.toggle('hidden', mode === 'bench');
 
         var datasets = [
-          { label: 'Portfolio', data: data.my || [], borderColor: '#4A3D7C', backgroundColor: 'rgba(74,61,124,0.06)', fill: true, tension: 0.3, borderWidth: 2, pointRadius: 0 },
+          { label: 'Portfolio (TWR)', data: data.my || [], borderColor: '#4A3D7C', backgroundColor: 'rgba(74,61,124,0.06)', fill: true, tension: 0.3, borderWidth: 2, pointRadius: 0 },
         ];
         if (mode === 'bench' || mode === 'all') {
           datasets.push({ label: 'Nasdaq (Benchmark)', data: data.bench || [], borderColor: '#8A9199', backgroundColor: 'rgba(138,145,153,0.04)', fill: true, tension: 0.3, borderWidth: 1.5, pointRadius: 0 });
@@ -688,17 +694,17 @@
         }
 
         chartReturns = new Chart(ctx, {
-          type: 'line',
+        type: 'line',
           data: { labels: data.labels || [], datasets: datasets },
-          options: {
+        options: {
             responsive: true, maintainAspectRatio: false,
-            interaction: { intersect: false, mode: 'index' },
-            plugins: {
-              legend: { position: 'top', labels: { color: '#2d2a3e', usePointStyle: true } },
-              tooltip: {
+          interaction: { intersect: false, mode: 'index' },
+          plugins: {
+            legend: { position: 'top', labels: { color: '#2d2a3e', usePointStyle: true } },
+            tooltip: {
                 mode: 'index', intersect: false,
                 filter: function(item) { return item.raw != null; },
-                callbacks: {
+              callbacks: {
                   label: function (c) {
                     if (c.dataset._meta && c.dataset._meta[c.dataIndex]) {
                       var m = c.dataset._meta[c.dataIndex];
@@ -706,15 +712,15 @@
                     }
                     return c.dataset.label + ': ' + (c.parsed.y != null ? c.parsed.y : '--') + '%';
                   }
-                }
               }
-            },
-            scales: {
-              x: { grid: { display: false }, ticks: { color: '#8A9199', maxTicksLimit: 10 } },
-              y: { grid: { color: 'rgba(138,145,153,0.15)' }, ticks: { color: '#8A9199' }, beginAtZero: true }
             }
+          },
+          scales: {
+              x: { grid: { display: false }, ticks: { color: '#8A9199', maxTicksLimit: 10 } },
+            y: { grid: { color: 'rgba(138,145,153,0.15)' }, ticks: { color: '#8A9199' }, beginAtZero: true }
           }
-        });
+        }
+      });
       } catch (err) {}
     }
     function setReturnsCardsNoData() {
@@ -770,13 +776,19 @@
       }).join('');
     }
 
-    // ===== MWRR 对比 =====
+    // ===== 收益率对比行 =====
     function updateMwrrCompare(cards, periodKey) {
       var c = cards && cards[periodKey];
       var twrEl = document.getElementById('mwrrTwrValue');
       var mwrrEl = document.getElementById('mwrrMwrrValue');
-      if (twrEl) twrEl.textContent = (c && c.pct != null) ? formatPct(c.pct) : '--';
-      if (mwrrEl) mwrrEl.textContent = (c && c.mwrr_pct != null) ? formatPct(c.mwrr_pct) : '--';
+      if (twrEl) {
+        twrEl.textContent = (c && c.pct != null) ? formatPct(c.pct) : '--';
+        twrEl.style.color = (c && c.pct != null && c.pct < 0) ? '#D64545' : '#2d2a3e';
+      }
+      if (mwrrEl) {
+        mwrrEl.textContent = (c && c.mwr_pct != null) ? formatPct(c.mwr_pct) : '--';
+        mwrrEl.style.color = (c && c.mwr_pct != null && c.mwr_pct < 0) ? '#D64545' : 'var(--benchmark-gray)';
+      }
     }
 
     function updateRiskMetrics(risk) {
@@ -784,15 +796,48 @@
       var elSharpe = document.getElementById('riskSharpe');
       var elAlpha = document.getElementById('riskAlpha');
       var elBeta = document.getElementById('riskBeta');
+      var elDDCompare = document.getElementById('riskDDCompare');
+      var elSharpeNote = document.getElementById('riskSharpeNote');
+      var elAlphaNote = document.getElementById('riskAlphaNote');
+      var elBetaNote = document.getElementById('riskBetaNote');
+
       if (elDD) elDD.textContent = (risk && risk.max_drawdown_pct != null) ? '−' + risk.max_drawdown_pct + '%' : '--';
+      if (elDDCompare) {
+        if (risk && risk.bench_max_drawdown_pct != null) {
+          elDDCompare.textContent = '同期纳指回撤 −' + risk.bench_max_drawdown_pct + '%';
+        } else { elDDCompare.textContent = '--'; }
+      }
+
       if (elSharpe) elSharpe.textContent = (risk && risk.sharpe_ratio != null) ? risk.sharpe_ratio : '--';
+      if (elSharpeNote) {
+        if (risk && risk.sharpe_ratio != null) {
+          var s = risk.sharpe_ratio;
+          var label = s >= 1 ? '优秀' : s >= 0.5 ? '良好' : s >= 0 ? '一般' : '亏损';
+          elSharpeNote.textContent = label + ' · 无风险 2.1%';
+        } else { elSharpeNote.textContent = '无风险 2.1%'; }
+      }
+
       if (elAlpha) {
         if (risk && risk.alpha_pct != null) {
           elAlpha.textContent = (risk.alpha_pct >= 0 ? '+' : '') + risk.alpha_pct + '%';
           elAlpha.style.color = risk.alpha_pct >= 0 ? '#0d9488' : '#dc2626';
         } else { elAlpha.textContent = '--'; elAlpha.style.color = '#2d2a3e'; }
       }
+      if (elAlphaNote) {
+        if (risk && risk.alpha_pct != null) {
+          elAlphaNote.textContent = (risk.alpha_pct > 0 ? '跑赢基准' : risk.alpha_pct < 0 ? '跑输基准' : '持平基准') + ' · CAPM 相对纳指';
+        } else { elAlphaNote.textContent = 'CAPM 相对纳指，%'; }
+      }
+
       if (elBeta) elBeta.textContent = (risk && risk.beta != null) ? risk.beta : '--';
+      if (elBetaNote) {
+        if (risk && risk.beta != null) {
+          var b = risk.beta;
+          var bLabel = b > 1.2 ? '高波动' : b >= 0.8 ? '同步市场' : b >= 0 ? '低波动' : '反向';
+          elBetaNote.textContent = bLabel + ' · 相对纳指';
+        } else { elBetaNote.textContent = '相对纳指'; }
+      }
+
       buildDrawdownChart(risk);
       renderTop3Drawdowns(risk && risk.top3_drawdowns);
     }
@@ -816,44 +861,184 @@
       renderStrategyDriver(data.strategy_driver);
     }
 
-    // ===== 策略驱动力饼图 =====
+    // ===== 策略驱动力饼图（PnL 贡献法）=====
+    var _driverData = null;
+    var _driverActiveKey = null;
+
+    function _fmtPnl(v) { return (v >= 0 ? '+$' : '−$') + Math.abs(v).toFixed(2); }
+    function _fmtPct(v) { return (v >= 0 ? '+' : '') + v + '%'; }
+
     function renderStrategyDriver(sd) {
       var labelsEl = document.getElementById('driverLabels');
       var ctx = document.getElementById('chartStrategyDriver');
+      var detailPanel = document.getElementById('driverDetailPanel');
+      if (detailPanel) { detailPanel.classList.add('hidden'); detailPanel.innerHTML = ''; }
+      _driverData = sd;
+      _driverActiveKey = null;
       if (!sd || !ctx || typeof Chart === 'undefined') {
         if (labelsEl) labelsEl.innerHTML = '<p class="text-xs" style="color:var(--benchmark-gray);">暂无数据</p>';
         return;
       }
       if (chartStrategyDriver) chartStrategyDriver.destroy();
-      var vals = [Math.abs(sd.dingtou_pct || 0), Math.abs(sd.toundan_alpha_pct || 0), Math.abs(sd.beta_pct || 0)];
-      var total = vals[0] + vals[1] + vals[2] || 1;
+
+      var chartLabels = ['月投（压舱石）', '投弹（加速器）', '现金管理（BOXX）'];
+      var chartVals = [Math.abs(sd.dingtou_pct || 0), Math.abs(sd.toundan_pct || 0), Math.abs(sd.cash_pct || 0)];
+      var chartColors = ['#4A3D7C', '#BFA960', '#2d8a5e'];
+      if (sd.other_pct && Math.abs(sd.other_pct) >= 0.01) {
+        chartLabels.push('其他/差异');
+        chartVals.push(Math.abs(sd.other_pct));
+        chartColors.push('#8A9199');
+      }
+      var total = chartVals.reduce(function(a, b) { return a + b; }, 0) || 1;
+
       chartStrategyDriver = new Chart(ctx, {
         type: 'doughnut',
         data: {
-          labels: ['月投（压舱石）', '投弹（加速器）', 'Beta（市场）'],
-          datasets: [{ data: vals, backgroundColor: ['#4A3D7C', '#BFA960', '#8A9199'], borderWidth: 0 }]
+          labels: chartLabels,
+          datasets: [{ data: chartVals, backgroundColor: chartColors, borderWidth: 0 }]
         },
         options: {
           responsive: true, maintainAspectRatio: true,
           plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(c) { return c.label + ': ' + c.raw.toFixed(2) + '%'; } } } }
         }
       });
+
       if (labelsEl) {
         var items = [
-          {name: '月投（系统压舱石）', val: sd.dingtou_pct, color: '#4A3D7C'},
-          {name: '投弹（利润加速器）', val: sd.toundan_alpha_pct, color: '#BFA960'},
-          {name: 'Beta（市场贝塔）', val: sd.beta_pct, color: '#8A9199'},
+          {key: 'dingtou', name: '月投（系统压舱石）', val: sd.dingtou_pct, pnl: sd.dingtou_total_pnl, color: '#4A3D7C', clickable: true},
+          {key: 'toundan', name: '投弹（利润加速器）', val: sd.toundan_pct, pnl: sd.toundan_total_pnl, color: '#BFA960', clickable: true},
+          {key: 'cash', name: '现金管理（BOXX）', val: sd.cash_pct, pnl: sd.cash_total_pnl, color: '#2d8a5e', clickable: true},
         ];
-        labelsEl.innerHTML = '<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">' + items.map(function(it) {
+        if (sd.other_pct && Math.abs(sd.other_pct) >= 0.01) {
+          items.push({key: 'other', name: '其他/差异', val: sd.other_pct, pnl: null, color: '#8A9199', clickable: false});
+        }
+        var cols = items.length <= 3 ? 'sm:grid-cols-3' : 'sm:grid-cols-4';
+        labelsEl.innerHTML = '<div class="grid grid-cols-1 '+cols+' gap-3">' + items.map(function(it) {
           var vc = it.val >= 0 ? '#0d9488' : '#dc2626';
-          return '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);">'
+          var sub = it.clickable ? '点击查看详情' : (it.key === 'other' ? '含佣金、口径差异等' : '');
+          return '<div class="rounded-lg p-3 transition' + (it.clickable ? ' cursor-pointer hover:shadow-md' : '') + '" style="background:var(--light-purple-bg);border:2px solid transparent;" data-driver-key="'+it.key+'"' + (it.clickable ? ' onclick="window.__toggleDriverDetail(\''+it.key+'\')"' : '') + '>'
             + '<div class="flex items-center gap-2"><div style="width:10px;height:10px;border-radius:50%;background:'+it.color+';"></div><span class="text-xs" style="color:var(--benchmark-gray);">'+it.name+'</span></div>'
-            + '<div class="text-lg font-bold mt-1" style="color:'+vc+';">'+(it.val>=0?'+':'')+it.val+'%</div>'
-            + '<div class="text-xs" style="color:var(--benchmark-gray);">占比 '+(vals.length?Math.round(Math.abs(it.val)/total*100):0)+'%</div>'
+            + '<div class="text-lg font-bold mt-1" style="color:'+vc+';">'+_fmtPct(it.val)+'</div>'
+            + '<div class="text-xs" style="color:var(--benchmark-gray);">'+sub+'</div>'
             + '</div>';
         }).join('') + '</div>';
       }
     }
+
+    function _renderTradeTable(rows, totalPnl, pctVal, borderColor, title) {
+      var html = '<div class="rounded-lg p-4" style="background:var(--light-purple-bg);border-left:3px solid '+borderColor+';">'
+        + '<h4 class="text-sm font-semibold mb-2" style="color:#2d2a3e;">'+title+'</h4>'
+        + '<p class="text-xs mb-2" style="color:var(--benchmark-gray);">公式：交易盈亏合计 / 组合总市值 = 贡献%</p>';
+      if (rows.length) {
+        html += '<div style="overflow-x:auto;"><table class="w-full text-xs"><thead><tr style="border-bottom:1px solid rgba(138,145,153,0.2);">'
+          + '<th class="py-1 text-left" style="color:var(--benchmark-gray);">标的</th>'
+          + '<th class="py-1 text-left" style="color:var(--benchmark-gray);">日期</th>'
+          + '<th class="py-1 text-right" style="color:var(--benchmark-gray);">买入价</th>'
+          + '<th class="py-1 text-right" style="color:var(--benchmark-gray);">现价</th>'
+          + '<th class="py-1 text-right" style="color:var(--benchmark-gray);">股数</th>'
+          + '<th class="py-1 text-right" style="color:var(--benchmark-gray);">盈亏</th>'
+          + '<th class="py-1 text-right" style="color:var(--benchmark-gray);">收益率</th>'
+          + '</tr></thead><tbody>';
+        rows.forEach(function(r) {
+          var pc = r.pnl >= 0 ? '#0d9488' : '#dc2626';
+          html += '<tr style="border-bottom:1px solid rgba(138,145,153,0.1);">'
+            + '<td class="py-1 font-medium">'+r.symbol+'</td>'
+            + '<td class="py-1">'+r.date+'</td>'
+            + '<td class="py-1 text-right">$'+r.buy_price.toFixed(2)+'</td>'
+            + '<td class="py-1 text-right">$'+r.current_price.toFixed(2)+'</td>'
+            + '<td class="py-1 text-right">'+r.shares+'</td>'
+            + '<td class="py-1 text-right font-medium" style="color:'+pc+';">'+_fmtPnl(r.pnl)+'</td>'
+            + '<td class="py-1 text-right" style="color:'+pc+';">'+_fmtPct(r.return_pct)+'</td>'
+            + '</tr>';
+        });
+        html += '</tbody></table></div>';
+        var tc = totalPnl >= 0 ? '#0d9488' : '#dc2626';
+        var sd = _driverData;
+        html += '<div class="flex justify-between items-center mt-2 pt-2" style="border-top:1px solid rgba(138,145,153,0.2);">'
+          + '<span class="text-xs" style="color:var(--benchmark-gray);">盈亏合计 '+_fmtPnl(totalPnl)+' / 总市值 $'+(sd.v_end||0).toFixed(0)+'</span>'
+          + '<span class="text-sm font-bold" style="color:'+tc+';">= '+_fmtPct(pctVal)+'</span>'
+          + '</div>';
+      } else {
+        html += '<p class="text-xs" style="color:var(--benchmark-gray);">暂无交易记录</p>';
+      }
+      html += '</div>';
+      return html;
+    }
+
+    function _renderCashTable(rows, totalPnl, pctVal) {
+      var sd = _driverData;
+      var html = '<div class="rounded-lg p-4" style="background:var(--light-purple-bg);border-left:3px solid #2d8a5e;">'
+        + '<h4 class="text-sm font-semibold mb-2" style="color:#2d2a3e;">现金管理盈亏贡献详情</h4>'
+        + '<p class="text-xs mb-2" style="color:var(--benchmark-gray);">公式：（已实现 + 未实现）盈亏合计 / 组合总市值 = 贡献%</p>';
+      if (rows.length) {
+        html += '<div style="overflow-x:auto;"><table class="w-full text-xs"><thead><tr style="border-bottom:1px solid rgba(138,145,153,0.2);">'
+          + '<th class="py-1 text-left" style="color:var(--benchmark-gray);">标的</th>'
+          + '<th class="py-1 text-left" style="color:var(--benchmark-gray);">日期</th>'
+          + '<th class="py-1 text-right" style="color:var(--benchmark-gray);">买入价</th>'
+          + '<th class="py-1 text-right" style="color:var(--benchmark-gray);">卖出/现价</th>'
+          + '<th class="py-1 text-right" style="color:var(--benchmark-gray);">股数</th>'
+          + '<th class="py-1 text-right" style="color:var(--benchmark-gray);">盈亏</th>'
+          + '<th class="py-1 text-center" style="color:var(--benchmark-gray);">状态</th>'
+          + '</tr></thead><tbody>';
+        rows.forEach(function(r) {
+          var pc = r.pnl >= 0 ? '#0d9488' : '#dc2626';
+          var st = r.status || '持有中';
+          var stColor = st === '已卖出' ? 'var(--benchmark-gray)' : '#4A3D7C';
+          html += '<tr style="border-bottom:1px solid rgba(138,145,153,0.1);">'
+            + '<td class="py-1 font-medium">'+r.symbol+'</td>'
+            + '<td class="py-1">'+r.date+'</td>'
+            + '<td class="py-1 text-right">$'+r.buy_price.toFixed(2)+'</td>'
+            + '<td class="py-1 text-right">$'+r.current_price.toFixed(2)+'</td>'
+            + '<td class="py-1 text-right">'+r.shares+'</td>'
+            + '<td class="py-1 text-right font-medium" style="color:'+pc+';">'+_fmtPnl(r.pnl)+'</td>'
+            + '<td class="py-1 text-center" style="color:'+stColor+';font-size:10px;">'+st+'</td>'
+            + '</tr>';
+        });
+        html += '</tbody></table></div>';
+        var tc = totalPnl >= 0 ? '#0d9488' : '#dc2626';
+        html += '<div class="flex justify-between items-center mt-2 pt-2" style="border-top:1px solid rgba(138,145,153,0.2);">'
+          + '<span class="text-xs" style="color:var(--benchmark-gray);">盈亏合计 '+_fmtPnl(totalPnl)+' / 总市值 $'+(sd.v_end||0).toFixed(0)+'</span>'
+          + '<span class="text-sm font-bold" style="color:'+tc+';">= '+_fmtPct(pctVal)+'</span>'
+          + '</div>';
+      } else {
+        html += '<p class="text-xs" style="color:var(--benchmark-gray);">暂无现金管理交易记录</p>';
+      }
+      html += '</div>';
+      return html;
+    }
+
+    function _renderDriverDetail(key) {
+      var panel = document.getElementById('driverDetailPanel');
+      if (!panel || !_driverData) return;
+      var sd = _driverData;
+      var html = '';
+      if (key === 'dingtou') {
+        html = _renderTradeTable(sd.dingtou_details || [], sd.dingtou_total_pnl, sd.dingtou_pct, '#4A3D7C', '月投盈亏贡献详情');
+      }
+      if (key === 'toundan') {
+        html = _renderTradeTable(sd.toundan_details || [], sd.toundan_total_pnl, sd.toundan_pct, '#BFA960', '投弹盈亏贡献详情');
+      }
+      if (key === 'cash') {
+        html = _renderCashTable(sd.cash_details || [], sd.cash_total_pnl, sd.cash_pct);
+      }
+      panel.innerHTML = html;
+      panel.classList.remove('hidden');
+    }
+
+    window.__toggleDriverDetail = function(key) {
+      if (key === 'other') return;
+      var panel = document.getElementById('driverDetailPanel');
+      document.querySelectorAll('[data-driver-key]').forEach(function(el) {
+        el.style.borderColor = el.dataset.driverKey === key && _driverActiveKey !== key ? 'var(--deep-purple)' : 'transparent';
+      });
+      if (_driverActiveKey === key) {
+        _driverActiveKey = null;
+        if (panel) { panel.classList.add('hidden'); panel.innerHTML = ''; }
+        return;
+      }
+      _driverActiveKey = key;
+      _renderDriverDetail(key);
+    };
 
     // ========== 收益卡片与周期按钮联动 ==========
     function setPeriod(p) {
@@ -984,11 +1169,65 @@
       const btn = document.getElementById('toggleSensitive');
       if (btn) btn.textContent = window.__allocationHideSensitive ? '显示敏感信息' : '一键隐藏';
       renderAllocation();
+      if (_analysisTradeData) _renderAnalysisTradeTable(_analysisTradeData);
     }
 
     // ========== 资产盈亏归因分析 ==========
     var chartAssetAnalysis = null;
     var _analysisOpenSymbol = null;
+    var _analysisTradeData = null;
+
+    function _renderAnalysisTradeTable(rows) {
+      var tableEl = document.getElementById('analysisTradeTable');
+      if (!tableEl || !rows || !rows.length) { if (tableEl) tableEl.innerHTML = ''; return; }
+      var hide = window.__allocationHideSensitive;
+      var totalPnl = rows.reduce(function(s, r) { return s + r.pnl; }, 0);
+      var typeColors = {'投弹': '#BFA960', '月投': '#4A3D7C', '现金管理': '#2d8a5e'};
+      var typeOrder = ['月投', '投弹', '现金管理'];
+      var byType = {};
+      rows.forEach(function(r) {
+        var k = r.type_label;
+        if (!byType[k]) byType[k] = {pnl: 0, count: 0};
+        byType[k].pnl += r.pnl;
+        byType[k].count++;
+      });
+      var summaryHtml = '<div class="flex flex-wrap gap-3 mb-3">';
+      typeOrder.forEach(function(k) {
+        if (!byType[k]) return;
+        var v = byType[k];
+        var pc = v.pnl >= 0 ? '#0d9488' : '#dc2626';
+        var pnlStr = hide ? '***' : (v.pnl>=0?'+$':'−$')+Math.abs(v.pnl).toFixed(2);
+        summaryHtml += '<div class="flex items-center gap-2 text-xs"><div style="width:8px;height:8px;border-radius:50%;background:'+(typeColors[k]||'#8A9199')+';"></div><span style="color:var(--benchmark-gray);">'+k+' '+v.count+'笔</span><span style="font-weight:600;color:'+pc+';">'+pnlStr+'</span></div>';
+      });
+      var tpc = totalPnl >= 0 ? '#0d9488' : '#dc2626';
+      var totalStr = hide ? '***' : (totalPnl>=0?'+$':'−$')+Math.abs(totalPnl).toFixed(2);
+      summaryHtml += '<div class="flex items-center gap-1 text-xs ml-auto"><span style="color:var(--benchmark-gray);">合计</span><span style="font-weight:700;color:'+tpc+';">'+totalStr+'</span></div>';
+      summaryHtml += '</div>';
+      var tblHtml = summaryHtml + '<div style="overflow-x:auto;"><table class="w-full text-xs"><thead><tr style="border-bottom:1px solid rgba(138,145,153,0.2);">'
+        + '<th class="py-1.5 text-left" style="color:var(--benchmark-gray);">日期</th>'
+        + '<th class="py-1.5 text-center" style="color:var(--benchmark-gray);">类型</th>'
+        + '<th class="py-1.5 text-right" style="color:var(--benchmark-gray);">买入价</th>'
+        + '<th class="py-1.5 text-right" style="color:var(--benchmark-gray);">现价</th>'
+        + '<th class="py-1.5 text-right" style="color:var(--benchmark-gray);">股数</th>'
+        + '<th class="py-1.5 text-right" style="color:var(--benchmark-gray);">盈亏</th>'
+        + '<th class="py-1.5 text-right" style="color:var(--benchmark-gray);">收益率</th>'
+        + '</tr></thead><tbody>';
+      rows.forEach(function(r) {
+        var pc = r.pnl >= 0 ? '#0d9488' : '#dc2626';
+        var tc = typeColors[r.type_label] || '#8A9199';
+        tblHtml += '<tr style="border-bottom:1px solid rgba(138,145,153,0.08);">'
+          + '<td class="py-1.5">'+r.date+'</td>'
+          + '<td class="py-1.5 text-center"><span class="px-1.5 py-0.5 rounded text-xs" style="background:'+tc+'22;color:'+tc+';">'+r.type_label+'</span></td>'
+          + '<td class="py-1.5 text-right">$'+r.buy_price.toFixed(2)+'</td>'
+          + '<td class="py-1.5 text-right">$'+r.current_price.toFixed(2)+'</td>'
+          + '<td class="py-1.5 text-right">'+(hide ? '***' : r.shares)+'</td>'
+          + '<td class="py-1.5 text-right font-medium" style="color:'+pc+';">'+(hide ? '***' : (r.pnl>=0?'+$':'−$')+Math.abs(r.pnl).toFixed(2))+'</td>'
+          + '<td class="py-1.5 text-right" style="color:'+pc+';">'+(r.return_pct>=0?'+':'')+r.return_pct+'%</td>'
+          + '</tr>';
+      });
+      tblHtml += '</tbody></table></div>';
+      tableEl.innerHTML = tblHtml;
+    }
 
     async function loadAssetAnalysis(symbol) {
       var panel = document.getElementById('assetAnalysisPanel');
@@ -1141,6 +1380,10 @@
           + '<div class="rounded-xl p-4" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">策略贡献度 (Alpha)</div><div class="mt-2">' + alphaHtml + '</div><div class="text-xs mt-2" style="color:var(--benchmark-gray);">买入价 vs 后30日均价</div></div>'
           + '<div class="rounded-xl p-4" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">最大持仓压力</div><div class="text-2xl font-bold mt-1" style="color:'+ddColor+';">' + m.max_drawdown_pct + '%</div><div class="text-xs mt-1" style="color:var(--benchmark-gray);">' + ddPeriod + '</div></div>';
       }
+
+      // --- 交易归因明细表格 ---
+      _analysisTradeData = data.trade_attribution || null;
+      _renderAnalysisTradeTable(_analysisTradeData);
     }
 
     window.__loadAssetAnalysis = loadAssetAnalysis;
@@ -1415,7 +1658,7 @@
           // M 值
           + '<div class="text-center">'
           + '<div class="text-xs" style="color:var(--benchmark-gray);">月投倍率 M</div>'
-          + '<div class="text-4xl font-bold" style="color:var(--deep-purple);">' + ms.M + '×</div>'
+          + '<div class="text-4xl font-bold" style="color:var(--deep-purple);">' + Number(ms.M).toFixed(2) + '×</div>'
           + '<div class="text-sm mt-1" style="color:#2d2a3e;">月投金额 ' + _usd(ms.monthly_amount) + '</div>'
           + '</div>'
           // 翻倍
@@ -1461,7 +1704,7 @@
           if (fc.days_remaining != null) {
             var fcColor = fc.days_remaining < 30 ? 'color:#dc2626;' : 'color:var(--benchmark-gray);';
             warnParts.push('<span style="'+fcColor+'">按近 90 天投弹频率，备弹池预计可支撑约 ' + fc.days_remaining + ' 个交易日（中性预测）</span>');
-          } else {
+        } else {
             warnParts.push('<span style="color:var(--benchmark-gray);">暂无足够历史投弹数据预测消耗速率</span>');
           }
         }
@@ -1561,7 +1804,7 @@
             survEl.style.background = 'rgba(13,148,136,0.08)';
             survEl.style.color = '#0d9488';
             survEl.innerHTML = '资金链安全：压力后备弹池仍余 $' + Number(rem).toLocaleString('en-US',{minimumFractionDigits:2}) + '（现金占用 $' + Number(s.total_cash_deployed||0).toLocaleString('en-US',{minimumFractionDigits:2}) + '）';
-          } else {
+        } else {
             survEl.style.background = 'rgba(220,38,38,0.08)';
             survEl.style.color = '#dc2626';
             survEl.innerHTML = '风险：资金链断裂，备弹池缺口 $' + Number(Math.abs(rem)).toLocaleString('en-US',{minimumFractionDigits:2}) + '。需调低 K 值或增加备弹池额度。';
@@ -1621,7 +1864,7 @@
           {label:'合规分', val: data.compliance_score + '%', color: data.compliance_score >= 80 ? '#0d9488' : '#f59e0b',
            sub: '最大偏离 ' + data.max_drift + '%', def: '100 - 最大风险资产偏离×2，衡量配置是否在目标轨道内'},
           {label:'超额收益', val: (data.excess_return >= 0 ? '+' : '') + data.excess_return + '%', color: data.excess_return >= 0 ? '#0d9488' : '#dc2626',
-           sub: 'TWR ' + data.real_twr + '% / DCA ' + data.dca_return + '%', def: '实际组合 TWR 减去等额定投 DCA 收益，正值=策略有效'},
+           sub: 'MWRR ' + (data.real_mwrr||data.real_twr) + '% / DCA ' + data.dca_return + '%', def: '实际组合 MWRR 减去等额定投 DCA 收益，正值=策略有效'},
           {label:'投弹效率', val: data.bomb_efficiency != null ? data.bomb_efficiency + '%' : '--', color: data.bomb_efficiency != null && data.bomb_efficiency < 5 ? '#0d9488' : '#f59e0b',
            sub: '偏离最低价', def: '投弹均价 / 投弹期间最低价 - 1，越接近 0 越精准'},
           {label:'安全系数', val: data.safety_ratio != null ? data.safety_ratio + '×' : '--', color: data.safety_ratio != null && data.safety_ratio > 2 ? '#0d9488' : '#dc2626',
@@ -1997,7 +2240,7 @@
   2. 启动后端：python server.py（默认 http://localhost:5001）
   3. 浏览器访问：http://localhost:5001 或 直接打开本 HTML 文件（会自动请求 localhost:5001 接口）
 
-  数据说明：收益概览采用时间加权收益率（TWR），由【交易历史】与 Yahoo 股价计算，排除入金/出金对收益率的影响；资产配置同上；模型信号仅展示下次定投与投弹预估。
+  数据说明：收益概览采用资金加权收益率（MWRR），反映实际出入金择时影响；资产配置同上；模型信号仅展示下次定投与投弹预估。
 
   核心交互：切换收益时间维度、隐藏/显示资产列、添加入出金与交易后会自动刷新收益与配置。
   -->
