@@ -367,5 +367,32 @@
     "shares": 44.0,
     "commission": 0.22,
     "type": "现金管理"
+  },
+  {
+    "date": "2026-03-27",
+    "symbol": "QQQM",
+    "action": "买入",
+    "price": 233.4,
+    "shares": 5.0,
+    "commission": 0.34,
+    "type": "定投"
+  },
+  {
+    "date": "2026-03-27",
+    "symbol": "BRK.B",
+    "action": "买入",
+    "price": 472.35,
+    "shares": 1.0,
+    "commission": 0.35,
+    "type": "定投"
+  },
+  {
+    "date": "2026-03-27",
+    "symbol": "IAU",
+    "action": "买入",
+    "price": 83.85,
+    "shares": 4.0,
+    "commission": 0.35,
+    "type": "定投"
   }
 ]
