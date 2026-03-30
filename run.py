@@ -20,7 +20,7 @@ def main():
         cwd=base,
     )
 
-    print("正在启动服务（端口 5001）...")
+    print("正在启动服务（端口 1001）...")
     proc = subprocess.Popen(
         [sys.executable, "-u", "server.py"],
         cwd=base,
@@ -29,7 +29,7 @@ def main():
     )
 
     time.sleep(2)
-    url = "http://localhost:5001"
+    url = "http://localhost:1001"
     print("正在打开浏览器:", url)
     webbrowser.open(url)
 

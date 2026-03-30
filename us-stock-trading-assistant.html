@@ -569,7 +569,7 @@
   </script>
   <script>
     // ========== API 基地址 ==========
-    const API_BASE = (window.location.protocol === 'file:' || window.location.port === '') ? 'http://localhost:5001' : '';
+    const API_BASE = (window.location.protocol === 'file:' || window.location.port === '') ? 'http://localhost:1001' : '';
     function debugLog() {}  // 已移除 debug 面板，保留空函数避免报错
 
     // ========== 状态 ==========
@@ -2237,8 +2237,8 @@
   <!--
   运行方式（需先启动后端）：
   1. 安装依赖：pip install -r requirements.txt
-  2. 启动后端：python server.py（默认 http://localhost:5001）
-  3. 浏览器访问：http://localhost:5001 或 直接打开本 HTML 文件（会自动请求 localhost:5001 接口）
+  2. 启动后端：python server.py（默认 http://localhost:1001）
+  3. 浏览器访问：http://localhost:1001 或 直接打开本 HTML 文件（会自动请求 localhost:1001 接口）
 
   数据说明：收益概览采用资金加权收益率（MWRR），反映实际出入金择时影响；资产配置同上；模型信号仅展示下次定投与投弹预估。
 
