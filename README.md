@@ -33,7 +33,7 @@ python server.py
 | `run.sh`      | Mac/Linux 启动脚本 |
 | `run.bat`     | Windows 启动脚本 |
 | `server.py`   | 后端服务 |
-| `us-stock-trading-assistant.html` | 前端页面 |
+| `index.html` | 前端页面 |
 | `data/`       | 出入金与交易明细数据（JSON） |
 | `requirements.txt` | Python 依赖 |
 
