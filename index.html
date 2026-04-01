@@ -168,9 +168,6 @@
     <section id="section-allocation" class="section-content hidden">
       <h2 class="text-lg font-semibold mb-6" style="color: var(--deep-purple);">资产配置 <span id="allocationDataAsOf" class="text-sm font-normal" style="color: var(--benchmark-gray);"></span></h2>
       <div id="allocWarningBanner" class="hidden mb-4 p-3 rounded-xl text-sm font-medium" style="background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;"></div>
-      <div class="flex flex-wrap gap-2 mb-4">
-        <button type="button" id="toggleSensitive" class="px-4 py-2 rounded text-sm transition" style="background: #fff; color: var(--deep-purple); border: 1px solid var(--deep-purple);" onclick="if(window.__toggleSensitive)window.__toggleSensitive()">一键隐藏</button>
-      </div>
       <!-- 双饼图：左右并排 -->
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
         <div class="rounded-xl shadow-sm p-4 flex flex-col items-center" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
@@ -223,7 +220,10 @@
       <div id="bannerRestartBackend" class="hidden mb-4 p-3 rounded text-sm" style="background: #fff8e6; border: 1px solid var(--champagne-gold); color: #5c4a00;">
         <strong>编辑/删除需要新版后端。</strong>请在本项目目录打开终端，先按 <kbd class="px-1 rounded" style="background: rgba(191,169,96,0.3);">Ctrl+C</kbd> 停止当前服务，再执行：<code class="px-1 rounded" style="background: rgba(191,169,96,0.3);">python3 run.py</code>，然后刷新本页。
       </div>
-      <h2 class="text-lg font-semibold mb-4" style="color: var(--deep-purple);">交易历史</h2>
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold" style="color: var(--deep-purple);">交易历史</h2>
+        <button type="button" class="btn-toggle-sensitive px-4 py-2 rounded text-sm transition" style="background: #fff; color: var(--deep-purple); border: 1px solid var(--deep-purple);">一键隐藏</button>
+      </div>
       <!-- 交易汇总统计 -->
       <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4" id="tradeSummaryBar">
         <div class="rounded-xl p-3" style="background:#fff;box-shadow:0 2px 12px rgba(74,61,124,0.06);"><div class="text-xs" style="color:var(--benchmark-gray);">总入金</div><div class="text-lg font-bold mt-1" id="sumInflow" style="color:var(--deep-purple);">--</div></div>
@@ -541,13 +541,18 @@
         }
         if (window.__setPeriodChart) window.__setPeriodChart(p);
       };
-      window.__allocationHideSensitive = false;
+      window.__isCloudMode = window.location.hostname.indexOf('github.io') !== -1;
+      window.__sensitiveHidden = window.__isCloudMode;
       window.__toggleSensitive = function() {
-        window.__allocationHideSensitive = !window.__allocationHideSensitive;
-        var btn = document.getElementById('toggleSensitive');
-        if (btn) btn.textContent = window.__allocationHideSensitive ? '显示敏感信息' : '一键隐藏';
-        if (window.__renderAllocation) window.__renderAllocation();
+        if (window.__isCloudMode) return;
+        window.__sensitiveHidden = !window.__sensitiveHidden;
+        var label = window.__sensitiveHidden ? '显示敏感信息' : '一键隐藏';
+        document.querySelectorAll('.btn-toggle-sensitive').forEach(function(b) { b.textContent = label; });
+        if (window.__refreshAllViews) window.__refreshAllViews();
       };
+      if (window.__isCloudMode) {
+        document.querySelectorAll('.btn-toggle-sensitive').forEach(function(b) { b.style.display = 'none'; });
+      }
       window.__historyTab = function(tab) {
         var tabs = document.querySelectorAll('.history-tab');
         for (var i = 0; i < (tabs && tabs.length); i++) { removeClass(tabs[i], 'tab-active'); addClass(tabs[i], 'text-slate-600'); }
@@ -592,7 +597,10 @@
     let returnsOverview = null; // { cards, chart }
     let allocationList = [];   // 资产配置列表，由 /api/allocation 拉取
     let allocationDataAsOf = '';  // 价格基准日
-    if (typeof window.__allocationHideSensitive === 'undefined') window.__allocationHideSensitive = false;
+    if (typeof window.__sensitiveHidden === 'undefined') {
+      window.__isCloudMode = window.location.hostname.indexOf('github.io') !== -1;
+      window.__sensitiveHidden = window.__isCloudMode;
+    }
 
     // ========== 请求封装（带错误处理）==========
     async function apiGet(path) {
@@ -710,10 +718,10 @@
                 mode: 'index', intersect: false,
                 filter: function(item) { return item.raw != null; },
               callbacks: {
-                  label: function (c) {
+                label: function (c) {
                     if (c.dataset._meta && c.dataset._meta[c.dataIndex]) {
                       var m = c.dataset._meta[c.dataIndex];
-                      return m.type + ' ' + m.symbol + ' $' + m.price_shares;
+                      return m.type + ' ' + m.symbol + ' ' + _m('$' + m.price_shares);
                     }
                     return c.dataset.label + ': ' + (c.parsed.y != null ? c.parsed.y : '--') + '%';
                   }
@@ -870,7 +878,7 @@
     var _driverData = null;
     var _driverActiveKey = null;
 
-    function _fmtPnl(v) { return (v >= 0 ? '+$' : '−$') + Math.abs(v).toFixed(2); }
+    function _fmtPnl(v) { if (window.__sensitiveHidden) return '***'; return (v >= 0 ? '+$' : '−$') + Math.abs(v).toFixed(2); }
     function _fmtPct(v) { return (v >= 0 ? '+' : '') + v + '%'; }
 
     function renderStrategyDriver(sd) {
@@ -949,9 +957,9 @@
           html += '<tr style="border-bottom:1px solid rgba(138,145,153,0.1);">'
             + '<td class="py-1 font-medium">'+r.symbol+'</td>'
             + '<td class="py-1">'+r.date+'</td>'
-            + '<td class="py-1 text-right">$'+r.buy_price.toFixed(2)+'</td>'
-            + '<td class="py-1 text-right">$'+r.current_price.toFixed(2)+'</td>'
-            + '<td class="py-1 text-right">'+r.shares+'</td>'
+            + '<td class="py-1 text-right">'+_m('$'+r.buy_price.toFixed(2))+'</td>'
+            + '<td class="py-1 text-right">'+_m('$'+r.current_price.toFixed(2))+'</td>'
+            + '<td class="py-1 text-right">'+_m(r.shares)+'</td>'
             + '<td class="py-1 text-right font-medium" style="color:'+pc+';">'+_fmtPnl(r.pnl)+'</td>'
             + '<td class="py-1 text-right" style="color:'+pc+';">'+_fmtPct(r.return_pct)+'</td>'
             + '</tr>';
@@ -960,7 +968,7 @@
         var tc = totalPnl >= 0 ? '#0d9488' : '#dc2626';
         var sd = _driverData;
         html += '<div class="flex justify-between items-center mt-2 pt-2" style="border-top:1px solid rgba(138,145,153,0.2);">'
-          + '<span class="text-xs" style="color:var(--benchmark-gray);">盈亏合计 '+_fmtPnl(totalPnl)+' / 总市值 $'+(sd.v_end||0).toFixed(0)+'</span>'
+          + '<span class="text-xs" style="color:var(--benchmark-gray);">盈亏合计 '+_fmtPnl(totalPnl)+' / 总市值 '+_m('$'+(sd.v_end||0).toFixed(0))+'</span>'
           + '<span class="text-sm font-bold" style="color:'+tc+';">= '+_fmtPct(pctVal)+'</span>'
           + '</div>';
       } else {
@@ -992,9 +1000,9 @@
           html += '<tr style="border-bottom:1px solid rgba(138,145,153,0.1);">'
             + '<td class="py-1 font-medium">'+r.symbol+'</td>'
             + '<td class="py-1">'+r.date+'</td>'
-            + '<td class="py-1 text-right">$'+r.buy_price.toFixed(2)+'</td>'
-            + '<td class="py-1 text-right">$'+r.current_price.toFixed(2)+'</td>'
-            + '<td class="py-1 text-right">'+r.shares+'</td>'
+            + '<td class="py-1 text-right">'+_m('$'+r.buy_price.toFixed(2))+'</td>'
+            + '<td class="py-1 text-right">'+_m('$'+r.current_price.toFixed(2))+'</td>'
+            + '<td class="py-1 text-right">'+_m(r.shares)+'</td>'
             + '<td class="py-1 text-right font-medium" style="color:'+pc+';">'+_fmtPnl(r.pnl)+'</td>'
             + '<td class="py-1 text-center" style="color:'+stColor+';font-size:10px;">'+st+'</td>'
             + '</tr>';
@@ -1002,7 +1010,7 @@
         html += '</tbody></table></div>';
         var tc = totalPnl >= 0 ? '#0d9488' : '#dc2626';
         html += '<div class="flex justify-between items-center mt-2 pt-2" style="border-top:1px solid rgba(138,145,153,0.2);">'
-          + '<span class="text-xs" style="color:var(--benchmark-gray);">盈亏合计 '+_fmtPnl(totalPnl)+' / 总市值 $'+(sd.v_end||0).toFixed(0)+'</span>'
+          + '<span class="text-xs" style="color:var(--benchmark-gray);">盈亏合计 '+_fmtPnl(totalPnl)+' / 总市值 '+_m('$'+(sd.v_end||0).toFixed(0))+'</span>'
           + '<span class="text-sm font-bold" style="color:'+tc+';">= '+_fmtPct(pctVal)+'</span>'
           + '</div>';
       } else {
@@ -1081,7 +1089,7 @@
         const gainPct = row.gain_pct != null ? row.gain_pct : 0;
         const gainStyle = gainPct > 0 ? 'color:#2d8a5e' : gainPct < 0 ? 'color:#D64545' : 'color:#8A9199';
         const gainStr = gainPct > 0 ? '+' + gainPct.toFixed(2) + '%' : gainPct.toFixed(2) + '%';
-        const hide = window.__allocationHideSensitive;
+        const hide = window.__sensitiveHidden;
         // 偏离进度条：仅风险资产显示，现金类标的只显示总占比
         var pctCell;
         if (row.is_cash) {
@@ -1169,12 +1177,28 @@
       }
     }
 
-    function toggleAllocationSensitive() {
-      window.__allocationHideSensitive = !window.__allocationHideSensitive;
-      const btn = document.getElementById('toggleSensitive');
-      if (btn) btn.textContent = window.__allocationHideSensitive ? '显示敏感信息' : '一键隐藏';
+    function toggleSensitive() {
+      if (window.__isCloudMode) return;
+      window.__sensitiveHidden = !window.__sensitiveHidden;
+      var label = window.__sensitiveHidden ? '显示敏感信息' : '一键隐藏';
+      document.querySelectorAll('.btn-toggle-sensitive').forEach(function(b) { b.textContent = label; });
+      refreshAllViews();
+    }
+    function refreshAllViews() {
       renderAllocation();
       if (_analysisTradeData) _renderAnalysisTradeTable(_analysisTradeData);
+      renderFundTable();
+      renderTradesTable();
+      buildReturnsChart(currentPeriod);
+      if (_driverData) renderStrategyDriver(_driverData);
+      if (_driverActiveKey) _renderDriverDetail(_driverActiveKey);
+      var activeSumBtn = document.querySelector('.sum-period-btn[style*="var(--deep-purple)"]');
+      loadTradeSummary(activeSumBtn ? activeSumBtn.dataset.period : 'all');
+      loadSignals();
+      var stressBlock = document.getElementById('stressResultBlock');
+      if (stressBlock && !stressBlock.classList.contains('hidden')) loadStressTest();
+      var activeRevBtn = document.querySelector('.review-period-btn[style*="var(--deep-purple)"]');
+      loadStrategyReview(activeRevBtn ? activeRevBtn.dataset.rp : 'all');
     }
 
     // ========== 资产盈亏归因分析 ==========
@@ -1185,7 +1209,7 @@
     function _renderAnalysisTradeTable(rows) {
       var tableEl = document.getElementById('analysisTradeTable');
       if (!tableEl || !rows || !rows.length) { if (tableEl) tableEl.innerHTML = ''; return; }
-      var hide = window.__allocationHideSensitive;
+      var hide = window.__sensitiveHidden;
       var totalPnl = rows.reduce(function(s, r) { return s + r.pnl; }, 0);
       var typeColors = {'投弹': '#BFA960', '月投': '#4A3D7C', '现金管理': '#2d8a5e'};
       var typeOrder = ['月投', '投弹', '现金管理'];
@@ -1347,9 +1371,9 @@
                 label: function(ctx) {
                   if (ctx.datasetIndex >= 2) {
                     var m = ctx.dataset._meta && ctx.dataset._meta[ctx.dataIndex];
-                    if (m) return m.label + ': ' + m.shares + '股 @ $' + m.price + ' (' + m.date + ')';
+                    if (m) return m.label + ': ' + _m(m.shares + '股 @ $' + m.price) + ' (' + m.date + ')';
                   }
-                  return ctx.dataset.label + ': $' + (ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) : '--');
+                  return ctx.dataset.label + ': ' + (ctx.datasetIndex === 1 ? _m('$' + (ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) : '--')) : '$' + (ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) : '--'));
                 }
               }
             }
@@ -1381,7 +1405,7 @@
         }
 
         metricsEl.innerHTML =
-          '<div class="rounded-xl p-4" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">Yield on Cost</div><div class="text-2xl font-bold mt-1" style="color:'+yocColor+';">' + (m.yoc_pct>=0?'+':'') + m.yoc_pct + '%</div><div class="text-xs mt-1" style="color:var(--benchmark-gray);">均价 $'+m.avg_cost+' → 现价 $'+m.current_price+'</div></div>'
+          '<div class="rounded-xl p-4" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">Yield on Cost</div><div class="text-2xl font-bold mt-1" style="color:'+yocColor+';">' + (m.yoc_pct>=0?'+':'') + m.yoc_pct + '%</div><div class="text-xs mt-1" style="color:var(--benchmark-gray);">均价 '+_m('$'+m.avg_cost)+' → 现价 $'+m.current_price+'</div></div>'
           + '<div class="rounded-xl p-4" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">策略贡献度 (Alpha)</div><div class="mt-2">' + alphaHtml + '</div><div class="text-xs mt-2" style="color:var(--benchmark-gray);">买入价 vs 后30日均价</div></div>'
           + '<div class="rounded-xl p-4" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">最大持仓压力</div><div class="text-2xl font-bold mt-1" style="color:'+ddColor+';">' + m.max_drawdown_pct + '%</div><div class="text-xs mt-1" style="color:var(--benchmark-gray);">' + ddPeriod + '</div></div>';
       }
@@ -1412,9 +1436,11 @@
         tbody.innerHTML = '<tr><td colspan="4" class="p-3 text-center text-slate-500">暂无出入金记录</td></tr>';
         return;
       }
+      var hide = window.__sensitiveHidden;
       tbody.innerHTML = sorted.map(function (r) {
         const amt = Number(r.amount);
-        return '<tr data-index="' + r._i + '"><td class="p-3">' + r.date + '</td><td class="p-3 text-right">' + (amt >= 0 ? '+' : '') + '$' + amt.toLocaleString() + '</td><td class="p-3">' + (r.note || '-') + '</td><td class="p-3"><div class="flex justify-between items-center gap-2 whitespace-nowrap"><button type="button" class="btn-fund-edit px-2 py-1 rounded bg-slate-200 hover:bg-slate-300 text-sm whitespace-nowrap" data-index="' + r._i + '">编辑</button><button type="button" class="btn-fund-delete px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-sm whitespace-nowrap" data-index="' + r._i + '">删除</button></div></td></tr>';
+        var amtStr = hide ? '***' : ((amt >= 0 ? '+' : '') + '$' + amt.toLocaleString());
+        return '<tr data-index="' + r._i + '"><td class="p-3">' + r.date + '</td><td class="p-3 text-right">' + amtStr + '</td><td class="p-3">' + (r.note || '-') + '</td><td class="p-3"><div class="flex justify-between items-center gap-2 whitespace-nowrap"><button type="button" class="btn-fund-edit px-2 py-1 rounded bg-slate-200 hover:bg-slate-300 text-sm whitespace-nowrap" data-index="' + r._i + '">编辑</button><button type="button" class="btn-fund-delete px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-sm whitespace-nowrap" data-index="' + r._i + '">删除</button></div></td></tr>';
       }).join('');
     }
 
@@ -1436,8 +1462,9 @@
         tbody.innerHTML = '<tr><td colspan="8" class="p-3 text-center text-slate-500">暂无交易明细</td></tr>';
         return;
       }
+      var hide = window.__sensitiveHidden;
       tbody.innerHTML = sorted.map(function (r) {
-        return '<tr data-index="' + r._i + '"><td class="p-3">' + r.date + '</td><td class="p-3">' + r.symbol + '</td><td class="p-3">' + r.action + '</td><td class="p-3 text-right">$' + Number(r.price).toFixed(2) + '</td><td class="p-3 text-right">' + r.shares + '</td><td class="p-3 text-right">$' + Number(r.commission || 0).toFixed(2) + '</td><td class="p-3">' + _typeTag(r.type) + '</td><td class="p-3"><div class="flex justify-between items-center gap-2 whitespace-nowrap"><button type="button" class="btn-trade-edit px-2 py-1 rounded bg-slate-200 hover:bg-slate-300 text-sm whitespace-nowrap" data-index="' + r._i + '">编辑</button><button type="button" class="btn-trade-delete px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-sm whitespace-nowrap" data-index="' + r._i + '">删除</button></div></td></tr>';
+        return '<tr data-index="' + r._i + '"><td class="p-3">' + r.date + '</td><td class="p-3">' + r.symbol + '</td><td class="p-3">' + r.action + '</td><td class="p-3 text-right">' + _m('$' + Number(r.price).toFixed(2)) + '</td><td class="p-3 text-right">' + _m(r.shares) + '</td><td class="p-3 text-right">' + _m('$' + Number(r.commission || 0).toFixed(2)) + '</td><td class="p-3">' + _typeTag(r.type) + '</td><td class="p-3"><div class="flex justify-between items-center gap-2 whitespace-nowrap"><button type="button" class="btn-trade-edit px-2 py-1 rounded bg-slate-200 hover:bg-slate-300 text-sm whitespace-nowrap" data-index="' + r._i + '">编辑</button><button type="button" class="btn-trade-delete px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-sm whitespace-nowrap" data-index="' + r._i + '">删除</button></div></td></tr>';
       }).join('');
     }
     async function loadTradeSummary(period) {
@@ -1497,7 +1524,8 @@
 
     // ========== 天府 v1.0 决策中心渲染 ==========
     function _$(id) { return document.getElementById(id); }
-    function _usd(v) { return v != null ? '$' + Number(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : '--'; }
+    function _usd(v) { if (window.__sensitiveHidden) return '***'; return v != null ? '$' + Number(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : '--'; }
+    function _m(v) { return window.__sensitiveHidden ? '***' : v; }
     function _pct(v) { return v != null ? (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%' : '--'; }
     function _pctColor(v) { return v != null && v < 0 ? 'color:#dc2626;' : v != null && v > 0 ? 'color:#0d9488;' : ''; }
 
@@ -1731,7 +1759,7 @@
           var s = _sm[st] || _sm['idle'];
           var bc = 'border-left:4px solid '+s.bl+';';
           var badge = s.t ? '<span class="text-xs px-2 py-0.5 rounded" style="background:'+s.bg+';color:'+s.c+';">'+s.t+'</span>' : '';
-          var sharesLine = t.shares_to_buy ? '<div class="text-xs mt-1" style="color:#2d2a3e;">应买入 <b>' + t.shares_to_buy + '股</b> @ $' + t.latest_price + '</div>' : '';
+          var sharesLine = t.shares_to_buy ? '<div class="text-xs mt-1" style="color:#2d2a3e;">应买入 <b>' + _m(t.shares_to_buy + '股') + '</b> @ $' + t.latest_price + '</div>' : '';
           var copyBtn = t.order_text ? '<button type="button" class="btn-copy-order mt-2 px-3 py-1 rounded text-xs transition" style="border:1px solid var(--deep-purple);color:var(--deep-purple);background:transparent;" data-order="'+t.order_text.replace(/"/g,'&quot;')+'"><i class="fas fa-copy mr-1"></i>复制交易指令</button>' : '';
           var actionLine = st === 'can_fire' ? '<div class="text-xs mt-1 font-bold" style="color:#dc2626;">请立即执行交易</div>' : '';
           return '<div class="rounded-xl shadow-sm p-4" style="background:#fff;box-shadow:0 2px 16px rgba(74,61,124,0.06);'+bc+'">'
@@ -1796,8 +1824,11 @@
       var loadEl = document.getElementById('stressLoading');
       var resultEl = document.getElementById('stressResultBlock');
       var btnEl = document.getElementById('btnRunStress');
-      if (loadEl) loadEl.textContent = '正在运行压力测试，请稍候…';
-      if (btnEl) btnEl.disabled = true;
+      var isRefresh = resultEl && !resultEl.classList.contains('hidden');
+      if (!isRefresh) {
+        if (loadEl) loadEl.textContent = '正在运行压力测试，请稍候…';
+        if (btnEl) btnEl.disabled = true;
+      }
       var data = await apiGet('/api/stress-test');
       if (btnEl) btnEl.disabled = false;
       if (!data) { if (loadEl) loadEl.textContent = '请求失败，请检查后端。'; return; }
@@ -1809,26 +1840,26 @@
         var scEl = document.getElementById('stressScenario');
         if (scEl) scEl.textContent = s.scenario || '';
         var sbEl = document.getElementById('stressBefore');
-        if (sbEl) sbEl.textContent = '$' + Number(s.portfolio_value_before || 0).toLocaleString('en-US', {minimumFractionDigits:2});
+        if (sbEl) sbEl.textContent = _usd(s.portfolio_value_before);
         var saEl = document.getElementById('stressAfter');
-        if (saEl) saEl.textContent = '$' + Number(s.portfolio_value_after || 0).toLocaleString('en-US', {minimumFractionDigits:2});
+        if (saEl) saEl.textContent = _usd(s.portfolio_value_after);
         var sdEl = document.getElementById('stressDrawdown');
         if (sdEl) sdEl.textContent = '−' + (s.portfolio_drawdown_pct || 0) + '%';
         var cdEl = document.getElementById('stressCashDeploy');
-        if (cdEl) cdEl.textContent = '$' + Number(s.total_cash_deployed || 0).toLocaleString('en-US', {minimumFractionDigits:2});
+        if (cdEl) cdEl.textContent = _usd(s.total_cash_deployed);
 
         var dtBody = document.getElementById('stressDetailBody');
         if (dtBody && s.detail) {
           dtBody.innerHTML = s.detail.map(function(d) {
             var shockColor = d.shock_pct < 0 ? 'color:var(--down-red);' : d.shock_pct > 0 ? 'color:#0d9488;' : '';
-            return '<tr><td class="p-2">' + d.symbol + '</td><td class="p-2 text-right" style="' + shockColor + '">' + (d.shock_pct >= 0 ? '+' : '') + d.shock_pct + '%</td><td class="p-2 text-right">$' + Number(d.value_before).toLocaleString('en-US',{minimumFractionDigits:2}) + '</td><td class="p-2 text-right">$' + Number(d.value_after).toLocaleString('en-US',{minimumFractionDigits:2}) + '</td></tr>';
+            return '<tr><td class="p-2">' + d.symbol + '</td><td class="p-2 text-right" style="' + shockColor + '">' + (d.shock_pct >= 0 ? '+' : '') + d.shock_pct + '%</td><td class="p-2 text-right">' + _usd(d.value_before) + '</td><td class="p-2 text-right">' + _usd(d.value_after) + '</td></tr>';
           }).join('');
         }
 
         var tsEl = document.getElementById('stressToundanSim');
         if (tsEl && s.toundan_simulation) {
           tsEl.innerHTML = s.toundan_simulation.map(function(t) {
-            return '<div class="rounded-xl p-3 text-sm" style="background:var(--light-purple-bg);"><span class="font-medium" style="color:var(--deep-purple);">' + t.level + '</span> K=' + t.k + '<div class="font-bold mt-1">$' + Number(t.deployed_usd).toLocaleString('en-US',{minimumFractionDigits:2}) + '</div></div>';
+            return '<div class="rounded-xl p-3 text-sm" style="background:var(--light-purple-bg);"><span class="font-medium" style="color:var(--deep-purple);">' + t.level + '</span> K=' + t.k + '<div class="font-bold mt-1">' + _usd(t.deployed_usd) + '</div></div>';
           }).join('');
         }
 
@@ -1838,11 +1869,11 @@
           if (rem > 0) {
             survEl.style.background = 'rgba(13,148,136,0.08)';
             survEl.style.color = '#0d9488';
-            survEl.innerHTML = '资金链安全：压力后备弹池仍余 $' + Number(rem).toLocaleString('en-US',{minimumFractionDigits:2}) + '（现金占用 $' + Number(s.total_cash_deployed||0).toLocaleString('en-US',{minimumFractionDigits:2}) + '）';
+            survEl.innerHTML = '资金链安全：压力后备弹池仍余 ' + _usd(rem) + '（现金占用 ' + _usd(s.total_cash_deployed) + '）';
         } else {
             survEl.style.background = 'rgba(220,38,38,0.08)';
             survEl.style.color = '#dc2626';
-            survEl.innerHTML = '风险：资金链断裂，备弹池缺口 $' + Number(Math.abs(rem)).toLocaleString('en-US',{minimumFractionDigits:2}) + '。需调低 K 值或增加备弹池额度。';
+            survEl.innerHTML = '风险：资金链断裂，备弹池缺口 ' + _usd(Math.abs(rem)) + '。需调低 K 值或增加备弹池额度。';
           }
         }
       }
@@ -1925,7 +1956,7 @@
       _get_settings_cache = st;
       if (sd) {
         sd.innerHTML = '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">K 封顶值</div><div class="text-lg font-bold mt-1" style="color:var(--deep-purple);">' + st.K_MAX_CAP + '</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">投弹比例 K 的最大值（v1.3.1 默认 0.12）</div></div>'
-          + '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">月投基数</div><div class="text-lg font-bold mt-1" style="color:var(--deep-purple);">$' + st.MONTHLY_BASE_OVERRIDE + '</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">每月定投基础金额，乘以倍率 M 后为实际月投</div></div>'
+          + '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">月投基数</div><div class="text-lg font-bold mt-1" style="color:var(--deep-purple);">' + _usd(st.MONTHLY_BASE_OVERRIDE) + '</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">每月定投基础金额，乘以倍率 M 后为实际月投</div></div>'
           + '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">备弹池消耗率</div><div class="text-lg font-bold mt-1" style="color:' + (data.burn_rate > 70 ? '#dc2626' : data.burn_rate > 50 ? '#f59e0b' : 'var(--deep-purple)') + ';">' + data.burn_rate + '%</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">期间投弹总额 / 累计注入额，>70% 为过快</div></div>'
           + '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">渐进熔断</div><div class="text-sm font-bold mt-1" style="color:var(--deep-purple);">' + (st.qqqm_soft_pct||65) + '% ~ ' + (st.qqqm_hard_pct||80) + '%</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">QQQM 占比超 soft 线后渐进缩减，hard 线完全停投</div></div>';
       }
@@ -1942,7 +1973,7 @@
       }
       if (sa) {
         sa.innerHTML = '<button type="button" class="btn-adjust-k px-4 py-2 rounded text-sm transition" style="background:var(--champagne-gold);color:#2d2a3e;">下调 K 封顶（' + st.K_MAX_CAP + ' → ' + (st.K_MAX_CAP / 2).toFixed(2) + '）</button>'
-          + '<button type="button" class="btn-adjust-m px-4 py-2 rounded text-sm transition" style="background:var(--deep-purple);color:#fff;">提高月投 20%（$' + st.MONTHLY_BASE_OVERRIDE + ' → $' + Math.round(st.MONTHLY_BASE_OVERRIDE * 1.2) + '）</button>';
+          + '<button type="button" class="btn-adjust-m px-4 py-2 rounded text-sm transition" style="background:var(--deep-purple);color:#fff;">提高月投 20%（' + _m('$' + st.MONTHLY_BASE_OVERRIDE + ' → $' + Math.round(st.MONTHLY_BASE_OVERRIDE * 1.2)) + '）</button>';
       }
     }
 
@@ -2078,7 +2109,8 @@
           if (card) { e.preventDefault(); e.stopPropagation(); setPeriod(card.dataset.period); return; }
           var periodBtn = e.target.closest && e.target.closest('.period-btn[data-period]');
           if (periodBtn) { e.preventDefault(); e.stopPropagation(); setPeriod(periodBtn.dataset.period); return; }
-          if (e.target.id === 'toggleSensitive') { e.preventDefault(); e.stopPropagation(); toggleAllocationSensitive(); return; }
+          var toggleBtn = e.target.closest && e.target.closest('.btn-toggle-sensitive');
+          if (toggleBtn) { e.preventDefault(); e.stopPropagation(); toggleSensitive(); return; }
           var historyTab = e.target.closest && e.target.closest('.history-tab[data-tab]');
           if (historyTab) { e.preventDefault(); e.stopPropagation(); showHistoryTab(historyTab.dataset.tab); return; }
           if (e.target.id === 'btnAddFund') {
@@ -2251,10 +2283,14 @@
     function doInit() {
       window.__navClick = showSection;
       window.__setPeriod = setPeriod;
-      window.__toggleSensitive = toggleAllocationSensitive;
+      window.__toggleSensitive = toggleSensitive;
+      window.__refreshAllViews = refreshAllViews;
       window.__historyTab = showHistoryTab;
       window.__openModal = openModal;
       window.__closeModal = closeModal;
+      if (window.__isCloudMode) {
+        document.querySelectorAll('.btn-toggle-sensitive').forEach(function(b) { b.style.display = 'none'; });
+      }
       checkBackendVersion();
       loadReturnsOverview();
       loadAllocation();
