@@ -394,5 +394,14 @@
     "shares": 4.0,
     "commission": 0.35,
     "type": "定投"
+  },
+  {
+    "date": "2026-04-01",
+    "symbol": "QQQM",
+    "action": "买入",
+    "price": 239.63,
+    "shares": 24.0,
+    "commission": 0.36,
+    "type": "投弹"
   }
 ]

@@ -58,7 +58,7 @@
     <section id="section-returns" class="section-content">
       <h2 class="text-lg font-semibold mb-4" style="color: var(--deep-purple);">收益概览 <span id="returnsDataAsOf" class="text-sm font-normal" style="color: var(--benchmark-gray);"></span></h2>
       <div class="rounded-xl p-4 mb-6" style="background: rgba(74,61,124,0.04); border-left: 3px solid var(--deep-purple);">
-        <p class="text-sm" style="color: #2d2a3e;">天府计划基于<strong>「现金流折算」与「波动率套利」</strong>。通过月度现金流（M）建立基础敞口，并利用风险事件（M1-M4）在市场定价失灵时捕捉非对称获利机会。</p>
+        <p class="text-sm" style="color: #2d2a3e;">天府计划基于<strong>「现金流折算」与「波动率套利」</strong>。通过月度现金流（M）建立基础敞口，并利用风险事件（M1-M3）在市场定价失灵时捕捉非对称获利机会。</p>
         <p class="text-xs mt-1" style="color: var(--benchmark-gray);">核心优势：极端回撤下的成本修复能力 · 备弹池的防御边界 · 系统化消除情绪干扰</p>
       </div>
       <!-- 5 张收益卡片 -->
@@ -178,7 +178,7 @@
           <div class="w-48 h-48"><canvas id="chartAllocation"></canvas></div>
         </div>
         <div class="rounded-xl shadow-sm p-4 flex flex-col items-center" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-          <div class="text-xs mb-2" style="color: var(--deep-purple); font-weight: 600;">风险资产比例（目标 5:3.5:1.5）</div>
+          <div class="text-xs mb-2" style="color: var(--deep-purple); font-weight: 600;">风险资产比例（目标 6:2.5:1.5）</div>
           <div class="w-48 h-48"><canvas id="chartRiskAllocation"></canvas></div>
         </div>
       </div>
@@ -285,12 +285,12 @@
       </div>
     </section>
 
-    <!-- ========== 4. 天府 v1.0 决策中心 ========== -->
+    <!-- ========== 4. 天府 v1.3.1 决策中心 ========== -->
     <section id="section-signals" class="section-content hidden">
-      <!-- 顶部预警 banner（下行强补/QLD 平仓）-->
+      <!-- 顶部预警 banner（下行强补）-->
       <div id="alertBanner" class="hidden mb-4 p-3 rounded-xl text-sm font-medium" style="background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;"></div>
 
-      <h2 class="text-lg font-semibold mb-6" style="color: var(--deep-purple);">天府 v1.0 决策中心</h2>
+      <h2 class="text-lg font-semibold mb-6" style="color: var(--deep-purple);">天府 v1.3.1 决策中心</h2>
       <div class="rounded-xl shadow-sm p-5 mb-6" id="signalsModelInfo" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
           <div><span style="color: var(--benchmark-gray);">模型名称</span><div class="font-medium" id="sigModelName" style="color: #2d2a3e;">-</div></div>
@@ -326,9 +326,10 @@
       <!-- 2.3 备弹池健康度 -->
       <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">备弹池健康度</h3>
       <div class="rounded-xl shadow-sm p-5 mb-6" id="toundanCashflowBlock" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm mb-4">
+        <div class="grid grid-cols-2 sm:grid-cols-5 gap-4 text-sm mb-4">
           <div><span style="color: var(--benchmark-gray);">备弹池余额</span><div class="font-bold text-lg" id="reservePoolValue" style="color: var(--deep-purple);">--</div></div>
           <div><span style="color: var(--benchmark-gray);">已投弹总额</span><div class="font-bold text-lg" id="totalToundanUsed" style="color: #2d2a3e;">--</div></div>
+          <div><span style="color: var(--benchmark-gray);">年度投弹总额</span><div class="font-bold text-lg" id="totalInjected" style="color: #2d2a3e;">--</div></div>
           <div><span style="color: var(--benchmark-gray);">最大可投弹次数</span><div class="font-bold text-lg" id="maxToundanTimes" style="color: var(--champagne-gold);">--</div></div>
           <div><span style="color: var(--benchmark-gray);">备弹 / 总资产</span><div class="font-bold text-lg" id="reserveHealthPct" style="color: #2d2a3e;">--</div></div>
         </div>
@@ -343,6 +344,10 @@
       <!-- 仓位风控 -->
       <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">仓位风控</h3>
       <div class="rounded-xl shadow-sm p-5 mb-6" id="positionControlBlock" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);"></div>
+
+      <!-- Put 保险 -->
+      <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">Put 保险</h3>
+      <div class="rounded-xl shadow-sm p-5 mb-6" id="insuranceBlock" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);"></div>
     </section>
 
     <!-- ========== 5. 压力测试 & 收益预测 ========== -->
@@ -1148,11 +1153,11 @@
       allocationList = Array.isArray(data) ? data : (data && data.rows ? data.rows : []);
       allocationDataAsOf = (data && data.data_as_of) ? data.data_as_of : '';
       renderAllocation();
-      // QQQM < 35% 警告 Banner
+      // QQQM < 45% 警告 Banner（v1.3.1 目标 60%）
       var banner = document.getElementById('allocWarningBanner');
       if (banner) {
         if (data && data.qqqm_warning) {
-          banner.innerHTML = 'QQQM 风险敞口 ' + (data.qqqm_pct || 0) + '% 低于 35%（基于风险资产归一化，排除 BOXX 现金），触发下行强补规则：建议调整至 50:35:15 目标比例';
+          banner.innerHTML = 'QQQM 风险敞口 ' + (data.qqqm_pct || 0) + '% 低于 45%（基于风险资产归一化，排除 BOXX 现金），触发下行强补规则：建议调整至 60:25:15 目标比例';
           banner.classList.remove('hidden');
         } else {
           banner.classList.add('hidden');
@@ -1537,13 +1542,12 @@
       _signalsComputedAt = data.computed_at;
       _startFreshnessTimer();
 
-      // --- 顶部预警 banner（3.2 下行强补 + 3.3 QLD 平仓）---
+      // --- 顶部预警 banner（3.2 下行强补）---
       var banner = _$('alertBanner');
       if (banner) {
         var alerts = [];
         var pa = data.position_alerts || {};
         if (pa.rebalance_alert) alerts.push(pa.rebalance_alert.message);
-        if (pa.qld_exit_signal) alerts.push('QLD 平仓信号：' + (pa.qld_exit_reason || 'QQQM 已上穿 20 日均线，建议卖出 QLD 换为 QQQM'));
         if (alerts.length) { banner.innerHTML = alerts.join('<br>'); banner.classList.remove('hidden'); }
         else { banner.classList.add('hidden'); }
       }
@@ -1566,7 +1570,7 @@
       var tcEl = _$('triggerCards');
       if (tcEl && data.triggers) {
         var tr = data.triggers;
-        var levels = ['M1','M2','M3','IAU','M4'];
+        var levels = ['M1','M2','M3','IAU'];
         tcEl.innerHTML = levels.map(function(lv) {
           var t = tr[lv]; if (!t) return '';
           var st = t.status || 'idle';
@@ -1583,10 +1587,9 @@
           var distStr = t.distance_pct != null ? '距触发 ' + (t.distance_pct > 0 ? '+' : '') + t.distance_pct + '%' : '';
           var threshStr = t.threshold_price ? '临界价 $' + t.threshold_price : '';
           var liveTag = ' <span style="color:#0d9488;font-size:10px;font-weight:600;">(Live)</span>';
-          var ktStr = lv !== 'M4' ? 'K=' + t.K + '，额度 ' + _usd(t.T) + liveTag : (t.yearly_used ? '本年已用' : '本年可用');
+          var ktStr = (lv === 'M3' && t.yearly_used !== undefined) ? 'K=' + t.K + '，额度 ' + _usd(t.T) + (t.yearly_used ? ' (本年已用)' : '') + liveTag : 'K=' + t.K + '，额度 ' + _usd(t.T) + liveTag;
           var extra = '';
           if (st === 'can_fire') extra = '<div class="text-xs mt-2 font-bold" style="color:#dc2626;">请立即执行交易</div>';
-          if (lv === 'M4' && t.qld_exit_signal) extra += '<div class="text-xs mt-1 font-medium" style="color:#dc2626;">QLD 平仓信号！</div>';
           return '<div class="rounded-xl shadow-sm p-4 relative" style="background:'+si.bg+';border:2px solid '+si.border+';box-shadow:0 2px 16px rgba(74,61,124,0.06);">'
             + '<div class="absolute top-2 right-3 freshness-timer text-xs" style="color:var(--benchmark-gray);"></div>'
             + '<div class="flex justify-between items-center pr-16"><span class="font-bold" style="color:var(--deep-purple);">' + lv + '</span><span style="color:'+si.color+';'+(si.bold?'font-weight:700;':'')+'">' + si.text + '</span></div>'
@@ -1636,32 +1639,29 @@
           + '</div>';
       }
 
-      // --- 2.2 月投信号仪表盘 ---
+      // --- 2.2 月投信号仪表盘（v1.3.1: 去掉 RRF，显示 S_median）---
       var mdEl = _$('monthlyDashboard');
       if (mdEl && data.monthly_signal) {
         var ms = data.monthly_signal;
-        var sxrrf = (ms.S * ms.RRF);
-        var gaugeAngle = Math.max(0, Math.min(180, sxrrf * 180));
-        var sentiment = sxrrf > 0.6 ? '偏恐惧（利于加仓）' : sxrrf < 0.4 ? '偏贪婪（谨慎加仓）' : '中性';
-        var sentColor = sxrrf > 0.6 ? '#0d9488' : sxrrf < 0.4 ? '#dc2626' : 'var(--benchmark-gray)';
-        var doubleNote = ms.double_up_from_reserve ? '当月无投弹，备弹池倍投 +' + _usd(ms.double_up_amount) : '当月有投弹，不翻倍';
+        var sVal = ms.S || 0;
+        var gaugeAngle = Math.max(0, Math.min(180, sVal * 180));
+        var sentiment = sVal > 0.6 ? '偏恐惧（利于加仓）' : sVal < 0.4 ? '偏贪婪（谨慎加仓）' : '中性';
+        var sentColor = sVal > 0.6 ? '#0d9488' : sVal < 0.4 ? '#dc2626' : 'var(--benchmark-gray)';
+        var doubleNote = ms.double_up_from_reserve ? '当月无投弹，备弹池倍投 +' + _usd(ms.double_up_amount) + '（上限2000）' : '当月有投弹，不翻倍';
         mdEl.innerHTML = '<div class="grid grid-cols-1 sm:grid-cols-3 gap-6 items-center">'
-          // 仪表盘（CSS 半圆）
           + '<div class="flex flex-col items-center">'
           + '<div style="width:140px;height:70px;position:relative;overflow:hidden;">'
           + '<div style="width:140px;height:140px;border-radius:50%;border:12px solid rgba(74,61,124,0.1);border-top-color:var(--deep-purple);border-right-color:var(--champagne-gold);position:absolute;top:0;transform:rotate('+(-90+gaugeAngle)+'deg);transition:transform 0.8s;"></div>'
           + '</div>'
-          + '<div class="text-2xl font-bold mt-1" style="color:var(--deep-purple);">' + (sxrrf).toFixed(3) + '</div>'
+          + '<div class="text-2xl font-bold mt-1" style="color:var(--deep-purple);">' + sVal.toFixed(3) + '</div>'
           + '<div class="text-xs" style="color:'+sentColor+';">' + sentiment + '</div>'
-          + '<div class="text-xs mt-1" style="color:var(--benchmark-gray);">S=' + ms.S + _sparkSvg(data.history_7d && data.history_7d.S, 60, 24) + ' × RRF=' + ms.RRF + '</div>'
+          + '<div class="text-xs mt-1" style="color:var(--benchmark-gray);">S=' + ms.S + _sparkSvg(data.history_7d && data.history_7d.S, 60, 24) + '　S_median=' + (ms.S_median || '-') + '</div>'
           + '</div>'
-          // M 值
           + '<div class="text-center">'
-          + '<div class="text-xs" style="color:var(--benchmark-gray);">月投倍率 M</div>'
+          + '<div class="text-xs" style="color:var(--benchmark-gray);">月投倍率 M（范围 0.25~2.0）</div>'
           + '<div class="text-4xl font-bold" style="color:var(--deep-purple);">' + Number(ms.M).toFixed(2) + '×</div>'
           + '<div class="text-sm mt-1" style="color:#2d2a3e;">月投金额 ' + _usd(ms.monthly_amount) + '</div>'
           + '</div>'
-          // 翻倍
           + '<div class="text-center">'
           + '<div class="text-xs" style="color:var(--benchmark-gray);">备弹池倍投</div>'
           + '<div class="text-lg font-bold mt-1" style="color:' + (ms.double_up_from_reserve ? '#0d9488' : 'var(--benchmark-gray)') + ';">' + (ms.double_up_from_reserve ? '+' + _usd(ms.double_up_amount) : '不翻倍') + '</div>'
@@ -1670,21 +1670,24 @@
           + '</div></div>';
       }
 
-      // --- 下次定投 ---
+      // --- 下次定投（渐进熔断 v1.3.1）---
       var dingBlock = _$('nextDingtouBlock');
       if (dingBlock && data.next_dingtou) {
         var d = data.next_dingtou;
         var alloc = (d.allocation || []).map(function (a) { return a.symbol + ' ' + a.pct + '% ' + _usd(a.amount); }).join('；');
-        var fuseTag = d.fuse_active ? ' <span class="text-xs px-2 py-0.5 rounded" style="background:#fef2f2;color:#dc2626;">熔断生效</span>' : '';
+        var fadePct = d.fade ? (d.fade * 100).toFixed(0) : 0;
+        var fuseTag = d.fuse_active ? ' <span class="text-xs px-2 py-0.5 rounded" style="background:#fef2f2;color:#dc2626;">渐进缩减 ' + fadePct + '%</span>' : '';
         dingBlock.innerHTML = '<p class="text-sm" style="color:#2d2a3e;"><span class="font-medium">' + (d.date||'') + '</span> ' + (d.description||'') + ' 合计 ' + _usd(d.total_usd) + fuseTag + '</p><p class="text-sm mt-1" style="color:var(--benchmark-gray);">分配：' + alloc + '</p>';
       }
 
-      // --- 2.3 备弹池健康度 ---
+      // --- 2.3 备弹池健康度（年度注入模型）---
       var rpEl = _$('reservePoolValue');
       var tuEl = _$('totalToundanUsed');
+      var tiEl = _$('totalInjected');
       var mtEl = _$('maxToundanTimes');
       if (rpEl) rpEl.textContent = _usd(data.reserve_pool);
       if (tuEl) tuEl.textContent = _usd(data.total_toundan_used);
+      if (tiEl) tiEl.textContent = data.total_injected ? _usd(data.total_injected) : '--';
       if (mtEl) mtEl.textContent = data.max_toundan_times != null ? data.max_toundan_times + ' 次' : '--';
       var rhEl = _$('reserveHealthPct');
       var pa = data.position_alerts || {};
@@ -1701,10 +1704,10 @@
         if (pa.reserve_warning) warnParts.push('备弹池不足以支付下次投弹或月投翻倍');
         var fc = pa.reserve_forecast;
         if (fc) {
-          if (fc.days_remaining != null) {
-            var fcColor = fc.days_remaining < 30 ? 'color:#dc2626;' : 'color:var(--benchmark-gray);';
-            warnParts.push('<span style="'+fcColor+'">按近 90 天投弹频率，备弹池预计可支撑约 ' + fc.days_remaining + ' 个交易日（中性预测）</span>');
-        } else {
+          if (fc.forecast_date) {
+            var fcColor = fc.days_remaining != null && fc.days_remaining < 30 ? 'color:#dc2626;' : 'color:var(--benchmark-gray);';
+            warnParts.push('<span style="'+fcColor+'">按近 90 天投弹频率，备弹池预计可支撑至 ' + fc.forecast_date + '</span>');
+          } else {
             warnParts.push('<span style="color:var(--benchmark-gray);">暂无足够历史投弹数据预测消耗速率</span>');
           }
         }
@@ -1739,19 +1742,51 @@
         }).join('');
       }
 
-      // --- 仓位风控 ---
+      // --- 仓位风控（v1.3.1 渐进熔断可视化）---
       var pcEl = _$('positionControlBlock');
       if (pcEl && pa) {
         var qr = pa.qqqm_ratio || 0;
-        var fuseStr = pa.fuse_active ? '<span style="color:#dc2626;">熔断生效（>65%）：定投切换为 70%BRK.B + 30%IAU</span>' : '<span style="color:#0d9488;">正常（≤65%）：定投按 50/35/15 分配</span>';
+        var fadePct = pa.fade ? (pa.fade * 100).toFixed(0) : 0;
+        var softPct = pa.soft_pct || 65;
+        var hardPct = pa.hard_pct || 80;
+        var fuseStr;
+        if (!pa.fuse_active) {
+          fuseStr = '<span style="color:#0d9488;">正常（≤' + softPct + '%）：定投按 60/25/15 分配</span>';
+        } else if (pa.fade >= 1) {
+          fuseStr = '<span style="color:#dc2626;">硬停（≥' + hardPct + '%）：QQQM 暂停，BRK-B + IAU 按 2.5:1.5</span>';
+        } else {
+          fuseStr = '<span style="color:#f59e0b;">渐进缩减 ' + fadePct + '%：QQQM 占比逐步降低</span>';
+        }
+        // 渐进熔断进度条
+        var barPct = Math.min(100, Math.max(0, (qr - softPct) / (hardPct - softPct) * 100));
+        var barColor = barPct > 80 ? '#dc2626' : barPct > 0 ? '#f59e0b' : '#0d9488';
+        var progressBar = '<div class="mt-2" style="background:rgba(74,61,124,0.08);border-radius:4px;height:8px;position:relative;">'
+          + '<div style="width:' + barPct + '%;background:' + barColor + ';border-radius:4px;height:100%;transition:width 0.5s;"></div>'
+          + '</div>'
+          + '<div class="flex justify-between text-xs mt-1" style="color:var(--benchmark-gray);"><span>' + softPct + '%</span><span>' + hardPct + '%</span></div>';
         var rbAlert = pa.rebalance_alert;
         var rbStr = rbAlert ? '<div class="mt-2 p-2 rounded text-xs" style="background:#fef2f2;color:#dc2626;">' + rbAlert.message + '（已连续 ' + rbAlert.days_below + ' 天）</div>' : '';
-        var qldStr = '';
-        if (pa.qld_exit_signal) qldStr = '<div class="mt-2 p-2 rounded text-xs" style="background:#fef2f2;color:#dc2626;">QLD 平仓信号：' + (pa.qld_exit_reason||'') + '</div>';
         pcEl.innerHTML = '<div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">'
-          + '<div><span style="color:var(--benchmark-gray);">QQQM 占比</span><div class="text-2xl font-bold mt-1" style="color:' + (qr>65?'#dc2626':qr<35?'#f59e0b':'var(--deep-purple)') + ';">' + qr + '%</div></div>'
-          + '<div><span style="color:var(--benchmark-gray);">仓位熔断状态</span><div class="text-sm font-medium mt-1">' + fuseStr + '</div></div>'
-          + '</div>' + rbStr + qldStr;
+          + '<div><span style="color:var(--benchmark-gray);">QQQM 占比</span><div class="text-2xl font-bold mt-1" style="color:' + (qr>=hardPct?'#dc2626':qr>softPct?'#f59e0b':qr<35?'#f59e0b':'var(--deep-purple)') + ';">' + qr + '%</div></div>'
+          + '<div><span style="color:var(--benchmark-gray);">渐进熔断状态</span><div class="text-sm font-medium mt-1">' + fuseStr + '</div>' + progressBar + '</div>'
+          + '</div>' + rbStr;
+      }
+
+      // --- Put 保险状态卡片 ---
+      var insEl = _$('insuranceBlock');
+      if (insEl && data.insurance) {
+        var ins = data.insurance;
+        var posInfo = ins.has_position ? '<span style="color:#0d9488;">持仓中</span>' : '<span style="color:var(--benchmark-gray);">无持仓</span>';
+        var budgetBar = '<div style="background:rgba(74,61,124,0.08);border-radius:4px;height:6px;margin-top:4px;"><div style="width:' + Math.min(100,ins.budget_utilization) + '%;background:' + (ins.budget_utilization>80?'#dc2626':'var(--deep-purple)') + ';border-radius:4px;height:100%;"></div></div>';
+        var actionStr = '';
+        if (ins.action === 'open') actionStr = '<div class="mt-2 p-2 rounded text-xs" style="background:#ecfdf5;color:#0d9488;">' + ins.action_detail.reason + '</div>';
+        else if (ins.action === 'roll') actionStr = '<div class="mt-2 p-2 rounded text-xs" style="background:#fffbeb;color:#a16207;">' + ins.action_detail.reason + '</div>';
+        else if (ins.action && ins.action.startsWith('close')) actionStr = '<div class="mt-2 p-2 rounded text-xs" style="background:#fef2f2;color:#dc2626;">' + ins.action_detail.reason + '</div>';
+        insEl.innerHTML = '<div class="grid grid-cols-3 gap-4 text-sm">'
+          + '<div><span style="color:var(--benchmark-gray);">Put 保险</span><div class="font-medium mt-1">' + posInfo + '</div></div>'
+          + '<div><span style="color:var(--benchmark-gray);">年度预算</span><div class="font-medium mt-1">' + _usd(ins.annual_budget) + '</div>' + budgetBar + '<div class="text-xs" style="color:var(--benchmark-gray);">已用 ' + ins.budget_utilization + '%</div></div>'
+          + '<div><span style="color:var(--benchmark-gray);">已支出</span><div class="font-medium mt-1">' + _usd(ins.annual_spent) + '</div></div>'
+          + '</div>' + actionStr;
       }
     }
 
@@ -1889,9 +1924,10 @@
       var st = data.settings || {};
       _get_settings_cache = st;
       if (sd) {
-        sd.innerHTML = '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">K 封顶值</div><div class="text-lg font-bold mt-1" style="color:var(--deep-purple);">' + st.K_MAX_CAP + '</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">投弹比例 K 的最大值，防止单次过度投入</div></div>'
+        sd.innerHTML = '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">K 封顶值</div><div class="text-lg font-bold mt-1" style="color:var(--deep-purple);">' + st.K_MAX_CAP + '</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">投弹比例 K 的最大值（v1.3.1 默认 0.12）</div></div>'
           + '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">月投基数</div><div class="text-lg font-bold mt-1" style="color:var(--deep-purple);">$' + st.MONTHLY_BASE_OVERRIDE + '</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">每月定投基础金额，乘以倍率 M 后为实际月投</div></div>'
-          + '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">备弹池消耗率</div><div class="text-lg font-bold mt-1" style="color:' + (data.burn_rate > 70 ? '#dc2626' : data.burn_rate > 50 ? '#f59e0b' : 'var(--deep-purple)') + ';">' + data.burn_rate + '%</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">期间投弹总额 / 备弹池总额，>70% 为过快</div></div>';
+          + '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">备弹池消耗率</div><div class="text-lg font-bold mt-1" style="color:' + (data.burn_rate > 70 ? '#dc2626' : data.burn_rate > 50 ? '#f59e0b' : 'var(--deep-purple)') + ';">' + data.burn_rate + '%</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">期间投弹总额 / 累计注入额，>70% 为过快</div></div>'
+          + '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">渐进熔断</div><div class="text-sm font-bold mt-1" style="color:var(--deep-purple);">' + (st.qqqm_soft_pct||65) + '% ~ ' + (st.qqqm_hard_pct||80) + '%</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">QQQM 占比超 soft 线后渐进缩减，hard 线完全停投</div></div>';
       }
       // 动态建议
       var sugs = data.suggestions || [];

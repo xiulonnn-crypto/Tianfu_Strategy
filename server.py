@@ -28,8 +28,9 @@ BENCHMARK_SYMBOL = "^IXIC"
 # 无风险利率：美国3个月期国债年化收益率（用于夏普、Alpha），单位小数
 RISK_FREE_RATE = 0.021
 
-# ===== 天府 v1.0 常量 =====
-TOUNDAN_TOTAL_BUDGET = 50000   # 备弹池固定总额
+# ===== 天府 v1.3.1 常量 =====
+YEARLY_RESERVE_INJECT = 40000  # 每年 1 月 1 日注入备弹池
+INITIAL_CAPITAL = 50000        # 初始备弹池（首年，即 2025 年）
 MONTHLY_BASE = 2000            # 月定投基数
 MODEL_STATE_FILE = DATA_DIR / "model_state.json"
 
@@ -1393,7 +1394,7 @@ def api_allocation():
     total = sum(r["amount"] for r in rows)
     # 风险资产归一化：排除 BOXX 等现金类标的
     CASH_TICKERS = {"BOXX"}
-    TARGET_PCT = {"QQQM": 50, "BRK.B": 35, "IAU": 15}
+    TARGET_PCT = {"QQQM": 60, "BRK.B": 25, "IAU": 15}
     risk_total = sum(r["amount"] for r in rows if r["symbol"] not in CASH_TICKERS)
     qqqm_effective_pct = 0
     for r in rows:
@@ -1403,7 +1404,6 @@ def api_allocation():
             r["gain_pct"] = round((r["price"] - r["avg_cost"]) / r["avg_cost"] * 100, 2)
         else:
             r["gain_pct"] = 0.0
-        # 有效敞口比例（仅风险资产参与归一化）
         if r["is_cash"]:
             r["effective_pct"] = None
             r["target_pct"] = 0
@@ -1420,7 +1420,7 @@ def api_allocation():
         "data_as_of": effective_end_date,
         "total_value": round(total, 2),
         "risk_total": round(risk_total, 2),
-        "qqqm_warning": qqqm_effective_pct < 35,
+        "qqqm_warning": qqqm_effective_pct < 45,
         "qqqm_pct": round(qqqm_effective_pct, 1),
     })
 
@@ -1621,11 +1621,14 @@ def _default_model_state():
         "last_toundan_prices": {},
         "monthly_toundan_count": {"QQQM": 0, "IAU": 0},
         "daily_toundan": {},
-        "yearly_m4_used": False,
+        "yearly_m3_used": False,
         "qqqm_below_35pct_days": 0,
         "state_month": datetime.now().strftime("%Y-%m"),
         "state_year": datetime.now().strftime("%Y"),
         "last_updated": datetime.now().strftime("%Y-%m-%d"),
+        "s_history": [],
+        "put_position": None,
+        "annual_premium_spent": 0,
     }
 
 
@@ -1636,15 +1639,23 @@ def load_model_state():
     now = datetime.now()
     cur_month = now.strftime("%Y-%m")
     cur_year = now.strftime("%Y")
-    # 月初自动重置月计数与日计数
     if raw.get("state_month") != cur_month:
         raw["monthly_toundan_count"] = {"QQQM": 0, "IAU": 0}
         raw["daily_toundan"] = {}
         raw["state_month"] = cur_month
-    # 年初重置 M4
     if raw.get("state_year") != cur_year:
-        raw["yearly_m4_used"] = False
+        raw["yearly_m3_used"] = False
+        raw["annual_premium_spent"] = 0
         raw["state_year"] = cur_year
+    # v1.0 -> v1.3.1 迁移兼容
+    if "yearly_m4_used" in raw:
+        del raw["yearly_m4_used"]
+    if "s_history" not in raw:
+        raw["s_history"] = []
+    if "put_position" not in raw:
+        raw["put_position"] = None
+    if "annual_premium_spent" not in raw:
+        raw["annual_premium_spent"] = 0
     return raw
 
 
@@ -1653,14 +1664,36 @@ def save_model_state(state):
     save_json(MODEL_STATE_FILE, state)
 
 
+def compute_reserve_pool(trades_list, cash_position_value=0):
+    """
+    备弹池余额 = 现金仓位（BOXX）市值（投弹入金后优先买入 BOXX）。
+    total_injected = 备弹池余额 + 已投弹总额。
+    year_max_reserve = total_injected（用于 T 公式分母，受 reserve_pool 钳制）。
+    """
+    total_toundan_used = sum(
+        float(t.get("price", 0)) * float(t.get("shares", 0))
+        for t in trades_list if (t.get("type") or "") == "投弹"
+    )
+    reserve_pool = round(cash_position_value, 2)
+    total_injected = reserve_pool + total_toundan_used
+    year_max_reserve = total_injected
+
+    return {
+        "reserve_pool": reserve_pool,
+        "year_max_reserve": round(year_max_reserve, 2),
+        "total_injected": round(total_injected, 2),
+        "total_toundan_used": round(total_toundan_used, 2),
+    }
+
+
 def _toundan_stats_from_trades(trades_list):
     """
     直接从交易明细中统计投弹次数和最近投弹价格（权威数据源，不依赖 model_state 手动维护）。
     返回 {
-      "monthly_count": {"QQQM": n, "IAU": n},  -- 当月投弹次数
-      "daily_count":   {"QQQM": n, "IAU": n},  -- 今日投弹次数
-      "last_prices":   {"QQQM": price, "IAU": price},  -- 最近一次投弹价格
-      "yearly_m4_used": bool,  -- 本年是否已投弹 QLD
+      "monthly_count": {"QQQM": n, "IAU": n},
+      "daily_count":   {"QQQM": n, "IAU": n},
+      "last_prices":   {"QQQM": price, "IAU": price},
+      "yearly_m3_used": bool,  -- 本年是否已使用 M3（VIX>50 年度 QQQM）
     }
     """
     today_str = datetime.now().strftime("%Y-%m-%d")
@@ -1670,7 +1703,7 @@ def _toundan_stats_from_trades(trades_list):
     monthly_count = {"QQQM": 0, "IAU": 0}
     daily_count = {"QQQM": 0, "IAU": 0}
     last_prices = {}
-    yearly_m4 = False
+    yearly_m3 = False
 
     for t in trades_list:
         if (t.get("type") or "") != "投弹":
@@ -1679,27 +1712,24 @@ def _toundan_stats_from_trades(trades_list):
         d = (t.get("date") or "")[:10]
         price = float(t.get("price") or 0)
 
-        # 记录最近一次投弹价格（按日期升序，后者覆盖前者）
         if sym in ("QQQM", "IAU") and price > 0:
             last_prices[sym] = price
 
-        # 当月计数
         if d[:7] == cur_month and sym in ("QQQM", "IAU"):
             monthly_count[sym] = monthly_count.get(sym, 0) + 1
 
-        # 当日计数
         if d == today_str and sym in ("QQQM", "IAU"):
             daily_count[sym] = daily_count.get(sym, 0) + 1
 
-        # M4 年度 QLD
-        if d[:4] == cur_year and sym == "QLD":
-            yearly_m4 = True
+        # M3 年度 QQQM（v1.3.1: VIX>50 场景，标记为 M3 投弹的 QQQM）
+        if d[:4] == cur_year and sym == "QQQM" and (t.get("note") or "").startswith("M3"):
+            yearly_m3 = True
 
     return {
         "monthly_count": monthly_count,
         "daily_count": daily_count,
         "last_prices": last_prices,
-        "yearly_m4_used": yearly_m4,
+        "yearly_m3_used": yearly_m3,
     }
 
 
@@ -1844,16 +1874,21 @@ def _get_settings():
     state = load_json(MODEL_STATE_FILE, {})
     s = state.get("settings", {})
     return {
-        "K_MAX_CAP": s.get("K_MAX_CAP", 0.2),
+        "K_MAX_CAP": s.get("K_MAX_CAP", 0.12),
         "MONTHLY_BASE_OVERRIDE": s.get("MONTHLY_BASE_OVERRIDE", MONTHLY_BASE),
+        "m1_vix_threshold": s.get("m1_vix_threshold", 18),
+        "m2_vix_threshold": s.get("m2_vix_threshold", 22),
+        "m3_vix_threshold": s.get("m3_vix_threshold", 50),
+        "qqqm_soft_pct": s.get("qqqm_soft_pct", 65),
+        "qqqm_hard_pct": s.get("qqqm_hard_pct", 80),
+        "insurance_budget_pct": s.get("insurance_budget_pct", 0.02),
     }
 
 
-def compute_risk_budget(qe, reserve_pool, trigger_level=None):
+def compute_risk_budget(qe, reserve_pool, year_max_reserve, trigger_level=None):
     """
-    按天府 v1.0 公式计算投弹比例 K 和额度 T。
+    天府 v1.3.1 风险预算：T = year_max_reserve * min(K, 0.12)。
     trigger_level: "M1"/"M2"/"M3"/None，M1 时 K 固定 0.05。
-    K 受 settings.K_MAX_CAP 封顶。
     """
     settings = _get_settings()
     qqqm_drop_pctile = qe.get("qqqm_drop_3y_pctile") or 0
@@ -1874,10 +1909,10 @@ def compute_risk_budget(qe, reserve_pool, trigger_level=None):
         q = max(0.5, min(1.0, 0.5 + 0.5 * vix_pctile))
         K = (0.1 + 0.1 * RR) * q
 
-    # K_MAX_CAP 封顶
     K = min(K, settings["K_MAX_CAP"])
 
-    T = min(reserve_pool * K, 10000)
+    T = year_max_reserve * min(K, 0.12)
+    T = min(T, reserve_pool)
 
     return {
         "R": round(R, 4), "S_ema": S_ema, "RR": round(RR, 4),
@@ -1887,25 +1922,21 @@ def compute_risk_budget(qe, reserve_pool, trigger_level=None):
 
 # ---------- 1.3 触发判断引擎 ----------
 
-def evaluate_triggers(qe, model_state, reserve_pool, trades_list):
+def evaluate_triggers(qe, model_state, reserve_pool, year_max_reserve, trades_list):
     """
-    判断 M1/M2/M3/M4/IAU 的触发状态及临界价格。
-    投弹次数和最近投弹价格直接从 trades_list 统计（权威数据源）。
+    天府 v1.3.1 触发判断：M1/M2/M3/IAU（移除 M4/QLD）。
+    M1: VIX<18 且跌>=2%  M2: VIX>=22 立即触发  M3: VIX>50 年度1次QQQM
     """
+    settings = _get_settings()
     vix = qe.get("vix_price") or 0
     qqqm_price = qe.get("qqqm_price") or 0
     qqqm_chg = qe.get("qqqm_change_pct") or 0
     iau_chg = qe.get("iau_change_pct") or 0
-    qqqm_low20 = qe.get("qqqm_low20") or qqqm_price
 
-    # 从交易明细动态统计（不依赖 model_state 手动计数）
     stats = _toundan_stats_from_trades(trades_list)
     monthly = stats["monthly_count"]
     daily_count = stats["daily_count"]
-    last_prices = stats["last_prices"]
-    last_qqqm_toundan = last_prices.get("QQQM")
 
-    # 次数约束：QQQM 每日1次每月2次，IAU 每日1次每月1次
     qqqm_month_ok = monthly.get("QQQM", 0) < 2
     qqqm_day_ok = daily_count.get("QQQM", 0) < 1
     iau_month_ok = monthly.get("IAU", 0) < 1
@@ -1913,8 +1944,7 @@ def evaluate_triggers(qe, model_state, reserve_pool, trades_list):
 
     triggers = {}
 
-    # 状态文案辅助函数
-    def _qqqm_status(triggered, month_ok, day_ok):
+    def _status(triggered, month_ok, day_ok):
         if not month_ok:
             return "month_exhausted"
         if triggered and not day_ok:
@@ -1923,97 +1953,65 @@ def evaluate_triggers(qe, model_state, reserve_pool, trades_list):
             return "can_fire"
         return "idle"
 
-    def _iau_status(triggered, month_ok, day_ok):
-        if not month_ok:
-            return "month_exhausted"
-        if triggered and not day_ok:
-            return "day_exhausted"
-        if triggered and month_ok and day_ok:
-            return "can_fire"
-        return "idle"
-
-    # --- M1: VIX<20 且 QQQM 单日跌幅 ≤ -2% ---
+    # --- M1: VIX < 18 且 QQQM 单日跌幅 <= -2% ---
+    m1_vix = settings["m1_vix_threshold"]
     m1_threshold = qe.get("qqqm_prev_close", 0) * 0.98 if qe.get("qqqm_prev_close") else 0
-    m1_triggered = vix < 20 and qqqm_chg <= -2.0
-    m1_budget = compute_risk_budget(qe, reserve_pool, trigger_level="M1")
+    m1_triggered = vix < m1_vix and qqqm_chg <= -2.0
+    m1_budget = compute_risk_budget(qe, reserve_pool, year_max_reserve, trigger_level="M1")
     m1_can = m1_triggered and qqqm_month_ok and qqqm_day_ok
-    m1_status = _qqqm_status(m1_triggered, qqqm_month_ok, qqqm_day_ok)
+    m1_status = _status(m1_triggered, qqqm_month_ok, qqqm_day_ok)
     distance_m1 = round((qqqm_price / m1_threshold - 1) * 100, 2) if m1_threshold > 0 else None
     triggers["M1"] = {
         "triggered": m1_triggered, "can_fire": m1_can, "status": m1_status,
-        "condition": f"VIX<20（当前{vix}）且单日跌幅≤-2%（当前{qqqm_chg}%）",
+        "condition": f"VIX<{m1_vix}（当前{vix}）且单日跌幅≤-2%（当前{qqqm_chg}%）",
         "threshold_price": round(m1_threshold, 2),
         "distance_pct": distance_m1,
         "K": m1_budget["K"], "T": m1_budget["T"],
     }
 
-    # --- M2: 20<=VIX<25 且 QQQM < (low20 + last_toundan_price)/2 * 0.97 ---
-    if last_qqqm_toundan and qqqm_low20:
-        m2_threshold = round((qqqm_low20 + last_qqqm_toundan) / 2 * 0.97, 2)
-    else:
-        m2_threshold = round(qqqm_low20 * 0.97, 2) if qqqm_low20 else 0
-    m2_vix_ok = 20 <= vix < 25
-    m2_price_ok = qqqm_price < m2_threshold if m2_threshold > 0 else False
-    m2_triggered = m2_vix_ok and m2_price_ok
-    m2_budget = compute_risk_budget(qe, reserve_pool, trigger_level="M2")
+    # --- M2: VIX >= 22 立即触发（简化：不再依赖价格条件）---
+    m2_vix = settings["m2_vix_threshold"]
+    m2_triggered = vix >= m2_vix
+    m2_budget = compute_risk_budget(qe, reserve_pool, year_max_reserve, trigger_level="M2")
     m2_can = m2_triggered and qqqm_month_ok and qqqm_day_ok
-    m2_status = _qqqm_status(m2_triggered, qqqm_month_ok, qqqm_day_ok)
-    distance_m2 = round((qqqm_price / m2_threshold - 1) * 100, 2) if m2_threshold > 0 else None
+    m2_status = _status(m2_triggered, qqqm_month_ok, qqqm_day_ok)
     triggers["M2"] = {
         "triggered": m2_triggered, "can_fire": m2_can, "status": m2_status,
-        "condition": f"20≤VIX<25（当前{vix}）且价格<{m2_threshold}",
-        "threshold_price": m2_threshold,
-        "distance_pct": distance_m2,
+        "condition": f"VIX≥{m2_vix}（当前{vix}）",
+        "threshold_price": None,
+        "distance_pct": None,
         "K": m2_budget["K"], "T": m2_budget["T"],
-        "components": {"low20": qqqm_low20, "last_toundan": last_qqqm_toundan},
     }
 
-    # --- M3: VIX >= 25，立即触发 ---
-    m3_triggered = vix >= 25
-    m3_budget = compute_risk_budget(qe, reserve_pool, trigger_level="M3")
-    m3_can = m3_triggered and qqqm_month_ok and qqqm_day_ok
-    m3_status = _qqqm_status(m3_triggered, qqqm_month_ok, qqqm_day_ok)
+    # --- M3: VIX > 50，年度 1 次买 QQQM（不平仓、不占 M1/M2 月度次数）---
+    m3_vix = settings["m3_vix_threshold"]
+    m3_used = stats["yearly_m3_used"]
+    m3_triggered = vix > m3_vix
+    m3_budget = compute_risk_budget(qe, reserve_pool, year_max_reserve, trigger_level="M3")
+    m3_can = m3_triggered and not m3_used
+    m3_status = "year_exhausted" if m3_used else ("can_fire" if m3_triggered else "idle")
     triggers["M3"] = {
         "triggered": m3_triggered, "can_fire": m3_can, "status": m3_status,
-        "condition": f"VIX≥25（当前{vix}）",
+        "condition": f"VIX>{m3_vix}（当前{vix}），年度1次QQQM",
         "threshold_price": None,
         "distance_pct": None,
         "K": m3_budget["K"], "T": m3_budget["T"],
+        "yearly_used": m3_used,
     }
 
-    # --- IAU: 单日跌幅 ≤ -5%，K=0.05 ---
+    # --- IAU: 单日跌幅 <= -5% ---
     iau_threshold = qe.get("iau_prev_close", 0) * 0.95 if qe.get("iau_prev_close") else 0
     iau_triggered = iau_chg <= -5.0
-    iau_K = 0.05
-    iau_T = min(reserve_pool * iau_K, 10000)
+    iau_budget = compute_risk_budget(qe, reserve_pool, year_max_reserve, trigger_level="M1")
     iau_can = iau_triggered and iau_month_ok and iau_day_ok
-    iau_status = _iau_status(iau_triggered, iau_month_ok, iau_day_ok)
+    iau_status = _status(iau_triggered, iau_month_ok, iau_day_ok)
     distance_iau = round((qe.get("iau_price", 0) / iau_threshold - 1) * 100, 2) if iau_threshold > 0 else None
     triggers["IAU"] = {
         "triggered": iau_triggered, "can_fire": iau_can, "status": iau_status,
         "condition": f"IAU单日跌幅≤-5%（当前{iau_chg}%）",
         "threshold_price": round(iau_threshold, 2),
         "distance_pct": distance_iau,
-        "K": iau_K, "T": round(iau_T, 2),
-    }
-
-    # --- M4: VIX > 50，每年 1 次 QLD ---
-    m4_used = stats["yearly_m4_used"]
-    m4_triggered = vix > 50
-    qld_exit_signal = False
-    if qe.get("qqqm_above_ema20") and any(
-        (t.get("symbol") or "").upper() == "QLD" for t in trades_list
-        if (t.get("action") or "") == "买入"
-    ):
-        qld_exit_signal = True
-    m4_can = m4_triggered and not m4_used
-    m4_status = "year_exhausted" if m4_used else ("can_fire" if m4_triggered else "idle")
-    triggers["M4"] = {
-        "triggered": m4_triggered, "can_fire": m4_can, "status": m4_status,
-        "condition": f"VIX>50（当前{vix}），年度 QLD 投弹",
-        "yearly_used": m4_used,
-        "qld_exit_signal": qld_exit_signal,
-        "qld_exit_reason": "QQQM 已上穿 20 日均线" if qld_exit_signal else None,
+        "K": iau_budget["K"], "T": iau_budget["T"],
     }
 
     triggers["_constraints"] = {
@@ -2025,9 +2023,8 @@ def evaluate_triggers(qe, model_state, reserve_pool, trades_list):
         "iau_today_count": daily_count.get("IAU", 0),
     }
 
-    # 临界状态标记：距触发 ≤ 1% 时标记为 near_critical
     THRESHOLD_CRITICAL = 1.0
-    for lv in ["M1", "M2", "M3", "IAU", "M4"]:
+    for lv in ["M1", "M2", "M3", "IAU"]:
         t = triggers.get(lv, {})
         dist = t.get("distance_pct")
         is_near = (t.get("status") == "idle"
@@ -2038,19 +2035,19 @@ def evaluate_triggers(qe, model_state, reserve_pool, trades_list):
     return triggers
 
 
-# ---------- 1.4 月投倍率 S / RRF / M ----------
+# ---------- 1.4 月投倍率 S / M（v1.3.1: 去掉 RRF，S_median 滚动 36 月）----------
 
-def compute_monthly_multiplier(qe, reserve_pool, has_toundan_this_month):
+def compute_monthly_multiplier(qe, reserve_pool, has_toundan_this_month, model_state):
     """
-    计算合成信号 S、真实利率抑制因子 RRF、最终月投倍率 M。
-    返回 {S, RRF, M, monthly_amount, double_up_amount, double_up_from_reserve}。
+    v1.3.1: 计算合成信号 S、滚动 36 月 S_median、月投倍率 M。
+    移除 RRF（不再使用 ^TNX）。M 范围扩展至 [0.25, 2.0]。
+    倍投上限 2000。
     """
     pe_10y = qe.get("pe_10y_pctile") or 0.5
     pe_3y = qe.get("pe_3y_pctile") or 0.5
     vix_3y = qe.get("vix_3y_pctile") or 0.5
     ema200_dev = qe.get("ema200_deviation_3y_pctile") or 0.5
     ema20_dev = qe.get("ema20_deviation_3y_pctile") or 0.5
-    tips = qe.get("tnx_yield") or 4.0
 
     S = (0.20 * (1 - pe_10y)
          + 0.15 * (1 - pe_3y)
@@ -2058,26 +2055,32 @@ def compute_monthly_multiplier(qe, reserve_pool, has_toundan_this_month):
          + 0.10 * (1 - ema200_dev)
          + 0.10 * (1 - ema20_dev))
 
-    RRF = max(0.7, min(1.0, 1 - 0.2 * max(0, tips - 1.0)))
+    # 滚动 36 月 S 中位数（从 model_state.s_history 读取）
+    s_history = model_state.get("s_history", [])
+    if len(s_history) >= 2:
+        sorted_s = sorted(entry["value"] for entry in s_history)
+        mid = len(sorted_s) // 2
+        s_median = (sorted_s[mid] + sorted_s[mid - 1]) / 2 if len(sorted_s) % 2 == 0 else sorted_s[mid]
+    else:
+        s_median = 0.5
 
-    median_s_3y = qe.get("vix_3y_median_s", 0.5)
-    M = max(0.25, min(1.25, 1 + 2 * (S * RRF - median_s_3y)))
+    M = max(0.25, min(2.0, 1 + 2 * (S - s_median)))
 
     settings = _get_settings()
     base = settings["MONTHLY_BASE_OVERRIDE"]
     monthly_amount = round(base * M, 2)
 
-    # 备弹池倍投：当月无投弹时翻倍，翻倍部分（最多 base）从备弹池支取
+    # 备弹池倍投：当月无投弹时翻倍，翻倍部分最多 2000 且不超过备弹池
     double_up_amount = 0.0
     double_up_from_reserve = False
     if not has_toundan_this_month:
-        extra = min(monthly_amount, base)
-        if reserve_pool >= extra:
+        extra = min(monthly_amount, 2000, reserve_pool)
+        if extra > 0:
             double_up_amount = round(extra, 2)
             double_up_from_reserve = True
 
     return {
-        "S": round(S, 4), "RRF": round(RRF, 4), "M": round(M, 4),
+        "S": round(S, 4), "S_median": round(s_median, 4), "M": round(M, 4),
         "monthly_amount": monthly_amount,
         "double_up_amount": double_up_amount,
         "double_up_from_reserve": double_up_from_reserve,
@@ -2085,28 +2088,83 @@ def compute_monthly_multiplier(qe, reserve_pool, has_toundan_this_month):
     }
 
 
+# ---------- 1.5 Put 保险引擎（v1.3.1 新增）----------
+
+def _compute_insurance(qe, model_state, total_value):
+    """
+    Put 保险：VIX<12 时建议开仓，3 阶段止盈，DTE<30 天滚仓提醒。
+    返回当前保险状态（用于信号页展示），同时更新 model_state。
+    """
+    settings = _get_settings()
+    vix = qe.get("vix_price") or 0
+    put_pos = model_state.get("put_position")
+    annual_spent = model_state.get("annual_premium_spent", 0)
+    budget_pct = settings["insurance_budget_pct"]
+    annual_budget = total_value * budget_pct if total_value > 0 else 0
+
+    result = {
+        "has_position": put_pos is not None,
+        "position": put_pos,
+        "annual_budget": round(annual_budget, 2),
+        "annual_spent": round(annual_spent, 2),
+        "budget_utilization": round(annual_spent / annual_budget * 100, 1) if annual_budget > 0 else 0,
+        "action": None,
+        "action_detail": None,
+    }
+
+    if put_pos is None:
+        # 开仓条件：VIX < 12 且年度预算未超支
+        if vix < 12 and annual_spent < annual_budget:
+            remaining_budget = annual_budget - annual_spent
+            suggested_premium = min(remaining_budget * 0.25, total_value * 0.005)
+            result["action"] = "open"
+            result["action_detail"] = {
+                "reason": f"VIX={vix} < 12，低波动窗口适合买入 Put 保护",
+                "suggested_premium": round(suggested_premium, 2),
+                "suggested_strike": "SPY ATM -5%",
+                "suggested_dte": "90-120 天",
+            }
+    else:
+        dte = put_pos.get("dte", 0)
+        entry_cost = put_pos.get("entry_cost", 0)
+        current_value = put_pos.get("current_value", entry_cost)
+        pnl_pct = ((current_value / entry_cost) - 1) * 100 if entry_cost > 0 else 0
+
+        result["position_pnl_pct"] = round(pnl_pct, 1)
+
+        # 3 阶段止盈
+        if pnl_pct >= 100:
+            result["action"] = "close_full"
+            result["action_detail"] = {"reason": f"盈利 {pnl_pct:.0f}% >= 100%，建议全部平仓锁利"}
+        elif pnl_pct >= 75:
+            result["action"] = "close_75"
+            result["action_detail"] = {"reason": f"盈利 {pnl_pct:.0f}% >= 75%，建议平仓 75%"}
+        elif pnl_pct >= 50:
+            result["action"] = "close_50"
+            result["action_detail"] = {"reason": f"盈利 {pnl_pct:.0f}% >= 50%，建议平仓 50%"}
+        elif dte <= 30:
+            result["action"] = "roll"
+            result["action_detail"] = {"reason": f"DTE={dte} <= 30 天，建议滚仓至远月"}
+
+    return result
+
+
 # ---------- 1.6 重构 /api/signals ----------
 
 @app.route("/api/signals", methods=["GET"])
 def api_signals():
     """
-    天府 v1.0 决策信号中心。
-    合并分位数引擎、风险预算、触发判断、月投倍率、仓位风控。
-    完全向后兼容旧字段，新增 quantile_engine / risk_budget / triggers / monthly_signal / position_alerts。
+    天府 v1.3.1 决策信号中心。
+    合并分位数引擎、风险预算、触发判断、月投倍率、渐进熔断、仓位风控、Put 保险。
     """
     from calendar import monthrange
+    import math
 
     trades_list = get_trades()
     model_state = load_model_state()
+    settings = _get_settings()
 
-    # 已投弹总额 & 备弹池
-    total_toundan_used = sum(
-        float(t.get("price", 0)) * float(t.get("shares", 0))
-        for t in trades_list if (t.get("type") or "") == "投弹"
-    )
-    reserve_pool = max(0, TOUNDAN_TOTAL_BUDGET - total_toundan_used)
-
-    # 当前持仓与占比
+    # 当前持仓与占比（先算持仓，再用 BOXX 市值驱动备弹池）
     symbols = get_all_symbols(trades_list)
     if not symbols:
         history_cache = {}
@@ -2138,25 +2196,31 @@ def api_signals():
             risk_value += v
         if sym.upper() == "QQQM":
             qqqm_value += v
-    # 仓位熔断和强补基于风险资产有效敞口比例（排除现金类 BOXX）
+
+    # ===== 备弹池（BOXX 现金仓位驱动）=====
+    cash_val = sym_values.get("BOXX", 0)
+    rp_info = compute_reserve_pool(trades_list, cash_val)
+    reserve_pool = rp_info["reserve_pool"]
+    year_max_reserve = rp_info["year_max_reserve"]
+    total_toundan_used = rp_info["total_toundan_used"]
     qqqm_ratio = (qqqm_value / risk_value * 100) if risk_value > 0 else 0
 
     # ===== 分位数引擎 =====
     qe = compute_quantile_engine()
 
     # ===== 风险预算 =====
-    risk_budget = compute_risk_budget(qe, reserve_pool)
+    risk_budget = compute_risk_budget(qe, reserve_pool, year_max_reserve)
 
     # ===== 触发判断 =====
-    triggers = evaluate_triggers(qe, model_state, reserve_pool, trades_list)
+    triggers = evaluate_triggers(qe, model_state, reserve_pool, year_max_reserve, trades_list)
 
     # ===== 月投倍率 =====
     td_stats = _toundan_stats_from_trades(trades_list)
     has_toundan = td_stats["monthly_count"].get("QQQM", 0) > 0 or \
                   td_stats["monthly_count"].get("IAU", 0) > 0
-    monthly_signal = compute_monthly_multiplier(qe, reserve_pool, has_toundan)
+    monthly_signal = compute_monthly_multiplier(qe, reserve_pool, has_toundan, model_state)
 
-    # ===== 下次定投 =====
+    # ===== 下次定投（渐进熔断 v1.3.1）=====
     now = datetime.now()
     _, last_day = monthrange(now.year, now.month)
     next_ding_date = f"{now.year}-{now.month:02d}-{last_day}"
@@ -2167,18 +2231,30 @@ def api_signals():
         next_ding_date = f"{next_y}-{next_m:02d}-{last_day}"
 
     M_amount = monthly_signal["monthly_amount"]
-    fuse_active = qqqm_ratio > 65
-    if fuse_active:
-        ding_allocation = [
-            {"symbol": "BRK.B", "pct": 70, "amount": round(M_amount * 0.7, 2)},
-            {"symbol": "IAU", "pct": 30, "amount": round(M_amount * 0.3, 2)},
-        ]
+
+    # 渐进熔断：65%~80% 线性 fade
+    soft_pct = settings["qqqm_soft_pct"]
+    hard_pct = settings["qqqm_hard_pct"]
+    if qqqm_ratio <= soft_pct:
+        fade = 0.0
+    elif qqqm_ratio >= hard_pct:
+        fade = 1.0
     else:
-        ding_allocation = [
-            {"symbol": "QQQM", "pct": 50, "amount": round(M_amount * 0.5, 2)},
-            {"symbol": "BRK.B", "pct": 35, "amount": round(M_amount * 0.35, 2)},
-            {"symbol": "IAU", "pct": 15, "amount": round(M_amount * 0.15, 2)},
-        ]
+        fade = (qqqm_ratio - soft_pct) / (hard_pct - soft_pct)
+    fuse_active = fade > 0
+
+    # 线性混合：正常 60/25/15 <-> 熔断 BRK-B+IAU 按 2.5:1.5（即 62.5/37.5）
+    qqqm_pct = 60 * (1 - fade)
+    brk_pct = 25 * (1 - fade) + 62.5 * fade
+    iau_pct = 15 * (1 - fade) + 37.5 * fade
+    ding_allocation = []
+    if qqqm_pct > 0.5:
+        ding_allocation.append({"symbol": "QQQM", "pct": round(qqqm_pct, 1),
+                                "amount": round(M_amount * qqqm_pct / 100, 2)})
+    ding_allocation.append({"symbol": "BRK.B", "pct": round(brk_pct, 1),
+                            "amount": round(M_amount * brk_pct / 100, 2)})
+    ding_allocation.append({"symbol": "IAU", "pct": round(iau_pct, 1),
+                            "amount": round(M_amount * iau_pct / 100, 2)})
 
     next_dingtou = {
         "date": next_ding_date,
@@ -2186,10 +2262,10 @@ def api_signals():
         "description": f"每月定投（月末），倍率 M={monthly_signal['M']}",
         "allocation": ding_allocation,
         "fuse_active": fuse_active,
+        "fade": round(fade, 3),
     }
 
-    # ===== 投弹预估（兼容旧字段 + 动态 K/T + 交易指令）=====
-    import math
+    # ===== 投弹预估 =====
     toundan_estimate = []
     for lv, sym in [("M1", "QQQM"), ("M2", "QQQM"), ("M3", "QQQM"), ("IAU", "IAU")]:
         tr_item = triggers[lv]
@@ -2214,7 +2290,6 @@ def api_signals():
             market_overview.append(q)
 
     # ===== 仓位风控 =====
-    # 3.2 下行强补：QQQM 占比连续 < 35% 追踪
     if qqqm_ratio < 35:
         model_state["qqqm_below_35pct_days"] = model_state.get("qqqm_below_35pct_days", 0) + 1
     else:
@@ -2224,12 +2299,11 @@ def api_signals():
     if model_state.get("qqqm_below_35pct_days", 0) >= 3:
         rebalance_alert = {
             "type": "downside_rebalance",
-            "message": "QQQM 占比连续 3 日低于 35%，建议卖出 BRK.B/IAU 补足 QQQM 至 50:35:15",
+            "message": "QQQM 占比连续 3 日低于 35%，建议卖出 BRK.B/IAU 补足 QQQM 至 60:25:15",
             "days_below": model_state["qqqm_below_35pct_days"],
             "current_ratio": round(qqqm_ratio, 1),
         }
 
-    # 备弹池健康度
     reserve_health_pct = round(reserve_pool / total_value * 100, 1) if total_value > 0 else 0
     next_estimated_T = risk_budget["T"]
     reserve_warning = reserve_pool < next_estimated_T or reserve_pool < monthly_signal.get("double_up_amount", 0)
@@ -2237,14 +2311,15 @@ def api_signals():
     position_alerts = {
         "qqqm_ratio": round(qqqm_ratio, 1),
         "fuse_active": fuse_active,
+        "fade": round(fade, 3),
+        "soft_pct": soft_pct,
+        "hard_pct": hard_pct,
         "rebalance_alert": rebalance_alert,
-        "qld_exit_signal": triggers.get("M4", {}).get("qld_exit_signal", False),
-        "qld_exit_reason": triggers.get("M4", {}).get("qld_exit_reason"),
         "reserve_health_pct": reserve_health_pct,
         "reserve_warning": reserve_warning,
     }
 
-    # ===== B: history_7d 追踪 S 和 RR 的 7 日历史 =====
+    # ===== history_7d 追踪 S 和 RR =====
     today_str_h = datetime.now().strftime("%Y-%m-%d")
     h7 = model_state.get("history_7d", {"S": [], "RR": []})
     if not isinstance(h7, dict):
@@ -2258,50 +2333,69 @@ def api_signals():
         h7[key] = entries[-7:]
     model_state["history_7d"] = h7
 
-    # ===== D: 备弹池消耗速率预测 =====
-    cutoff_90d = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+    # ===== S 历史（滚动 36 月中位数）=====
+    cur_month_str = now.strftime("%Y-%m")
+    s_history = model_state.get("s_history", [])
+    if not s_history or s_history[-1].get("month") != cur_month_str:
+        s_history.append({"month": cur_month_str, "value": monthly_signal["S"]})
+    else:
+        s_history[-1]["value"] = monthly_signal["S"]
+    model_state["s_history"] = s_history[-36:]
+
+    # ===== 备弹池消耗速率预测（输出预计支撑至日期，最晚 12/31）=====
+    cutoff_90d = (now - timedelta(days=90)).strftime("%Y-%m-%d")
     recent_toundan_amount = sum(
         float(t.get("price", 0)) * float(t.get("shares", 0))
         for t in trades_list
         if (t.get("type") or "") == "投弹" and (t.get("date") or "") >= cutoff_90d
     )
+    forecast_date = None
     if recent_toundan_amount > 0:
         daily_burn = recent_toundan_amount / 90.0
         days_remaining = round(reserve_pool / daily_burn) if daily_burn > 0 else None
+        if days_remaining is not None:
+            raw_date = now + timedelta(days=days_remaining)
+            year_end = now.replace(month=12, day=31)
+            capped = min(raw_date, year_end)
+            forecast_date = f"{capped.month}月{capped.day}日"
     else:
         daily_burn = 0
         days_remaining = None
     position_alerts["reserve_forecast"] = {
         "daily_burn_rate": round(daily_burn, 2),
         "days_remaining": days_remaining,
+        "forecast_date": forecast_date,
     }
+
+    # ===== Put 保险 =====
+    insurance = _compute_insurance(qe, model_state, total_value)
 
     # 持久化状态
     save_model_state(model_state)
 
-    # 最大可投弹次数（按当前动态 K）
     single_T = risk_budget["T"] if risk_budget["T"] > 0 else 1
     max_toundan_times = int(reserve_pool / single_T) if single_T > 0 else 0
 
     return jsonify({
-        "model_name": "天府 v1.0",
-        "version": "1.0.0",
+        "model_name": "天府 v1.3.1",
+        "version": "1.3.1",
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "computed_at": datetime.now().isoformat(),
-        # 兼容旧字段
         "market_overview": market_overview,
         "next_dingtou": next_dingtou,
         "toundan_estimate": toundan_estimate,
         "reserve_pool": round(reserve_pool, 2),
+        "year_max_reserve": round(year_max_reserve, 2),
         "total_toundan_used": round(total_toundan_used, 2),
+        "total_injected": rp_info["total_injected"],
         "max_toundan_times": max_toundan_times,
-        # v1.0 决策字段
         "quantile_engine": qe,
         "risk_budget": risk_budget,
         "triggers": triggers,
         "monthly_signal": monthly_signal,
         "position_alerts": position_alerts,
         "history_7d": h7,
+        "insurance": insurance,
     })
 
 
@@ -2378,28 +2472,27 @@ def api_strategy_review():
                 bomb_efficiency = round((avg_bomb_price / period_low - 1) * 100, 2) if period_low > 0 else None
 
         # 资金安全系数：备弹池 / 压力情景回撤金额（假设 -20% 回撤）
-        total_toundan_used = sum(
-            float(t.get("price", 0)) * float(t.get("shares", 0))
-            for t in trades_list if (t.get("type") or "") == "投弹"
-        )
-        reserve_pool = max(0, TOUNDAN_TOTAL_BUDGET - total_toundan_used)
         pos = positions_at_date(trades_list, eff_end)
+        boxx_val = (get_price_on_date("BOXX", eff_end, hc) or 0) * pos.get("BOXX", 0)
+        rp_info = compute_reserve_pool(trades_list, boxx_val)
+        reserve_pool = rp_info["reserve_pool"]
         tv = sum((get_price_on_date(s, eff_end, hc) or 0) * q for s, q in pos.items())
         max_dd_amount = tv * 0.15 if tv > 0 else 1
         safety_ratio = round(reserve_pool / max_dd_amount, 2) if max_dd_amount > 0 else None
 
-        # 备弹池消耗率
+        # 备弹池消耗率（分母为年度注入累计）
         period_toundan_amount = sum(
             float(t.get("price", 0)) * float(t.get("shares", 0)) for t in period_bombs
         )
-        burn_rate = round(period_toundan_amount / TOUNDAN_TOTAL_BUDGET * 100, 1) if TOUNDAN_TOTAL_BUDGET > 0 else 0
+        total_injected = rp_info["total_injected"]
+        burn_rate = round(period_toundan_amount / total_injected * 100, 1) if total_injected > 0 else 0
 
     # ===== 配置一致性 / 合规分（Drift）=====
     compliance_score = 100
     max_drift = 0
     avg_drift = 0
     CASH_TICKERS = {"BOXX"}
-    TARGET_PCT = {"QQQM": 50, "BRK.B": 35, "IAU": 15}
+    TARGET_PCT = {"QQQM": 60, "BRK.B": 25, "IAU": 15}
     qqqm_max_pct = 0
     if symbols and trades_list:
         pos_now = positions_at_date(trades_list, eff_end)
@@ -2418,10 +2511,10 @@ def api_strategy_review():
             avg_drift = round(sum(drifts) / len(drifts) if drifts else 0, 1)
             compliance_score = max(0, round(100 - max_drift * 2))
 
-    # VIX 环境
+    # VIX 环境（v1.3.1: M2 阈值 22）
     qe_data = compute_quantile_engine()
     vix_now = qe_data.get("vix_price") or 0
-    vix_env = "低波动" if vix_now < 18 else ("中等波动" if vix_now < 25 else "高波动")
+    vix_env = "低波动" if vix_now < 18 else ("中等波动" if vix_now < 22 else "高波动")
 
     # ===== AI 反思结论（归因分析风格）=====
     parts = []
@@ -2460,7 +2553,7 @@ def api_strategy_review():
 
     # 合规与集中度
     if qqqm_max_pct > 55:
-        parts.append(f"注意：QQQM 风险敞口达 {qqqm_max_pct}%，逼近 65% 熔断线，关注组合集中度风险")
+        parts.append(f"注意：QQQM 风险敞口达 {qqqm_max_pct}%，逼近 65% 渐进缩减起始线 / 80% 硬停线，关注组合集中度风险")
     if max_drift > 15:
         parts.append(f"配置偏离较大（最大偏离 {max_drift}%），建议适时再平衡")
 
@@ -2512,20 +2605,26 @@ def api_strategy_review():
 
 @app.route("/api/update-settings", methods=["POST"])
 def api_update_settings():
-    """更新可调参数（K_MAX_CAP / MONTHLY_BASE_OVERRIDE），写入 model_state.json。"""
+    """更新可调参数，写入 model_state.json。"""
     data = request.get_json() or {}
     state = load_model_state()
     s = state.get("settings", {})
-    if "K_MAX_CAP" in data:
-        try:
-            s["K_MAX_CAP"] = max(0.01, min(0.5, float(data["K_MAX_CAP"])))
-        except (TypeError, ValueError):
-            pass
-    if "MONTHLY_BASE_OVERRIDE" in data:
-        try:
-            s["MONTHLY_BASE_OVERRIDE"] = max(500, min(10000, float(data["MONTHLY_BASE_OVERRIDE"])))
-        except (TypeError, ValueError):
-            pass
+    param_rules = {
+        "K_MAX_CAP":            (0.01, 0.5),
+        "MONTHLY_BASE_OVERRIDE": (500, 10000),
+        "m1_vix_threshold":     (10, 30),
+        "m2_vix_threshold":     (15, 40),
+        "m3_vix_threshold":     (30, 80),
+        "qqqm_soft_pct":        (40, 90),
+        "qqqm_hard_pct":        (50, 95),
+        "insurance_budget_pct": (0.005, 0.05),
+    }
+    for key, (lo, hi) in param_rules.items():
+        if key in data:
+            try:
+                s[key] = max(lo, min(hi, float(data[key])))
+            except (TypeError, ValueError):
+                pass
     state["settings"] = s
     save_model_state(state)
     return jsonify({"ok": True, "settings": s})
@@ -2546,13 +2645,6 @@ def api_stress_test():
     trades_list = get_trades()
     symbols = get_all_symbols(trades_list)
 
-    total_toundan_used = sum(
-        float(t.get("price", 0)) * float(t.get("shares", 0))
-        for t in trades_list if (t.get("type") or "") == "投弹"
-    )
-    TOUNDAN_TOTAL_BUDGET = 50000
-    reserve_pool = max(0, TOUNDAN_TOTAL_BUDGET - total_toundan_used)
-
     if not symbols:
         return jsonify({"stress": None, "monte_carlo": None})
 
@@ -2567,6 +2659,11 @@ def api_stress_test():
 
     pos = positions_at_date(trades_list, effective_end_date)
     prices_now = prices_at(list(pos.keys()), history_cache, effective_end_date)
+
+    boxx_val = (prices_now.get("BOXX") or 0) * pos.get("BOXX", 0)
+    rp_info = compute_reserve_pool(trades_list, boxx_val)
+    reserve_pool = rp_info["reserve_pool"]
+    year_max_reserve = rp_info["year_max_reserve"]
     v_now = portfolio_value_with_prices(pos, prices_now)
 
     # ===== 压力测试：QQQ -20%，VIX=40 =====
@@ -2594,17 +2691,17 @@ def api_stress_test():
 
     portfolio_drawdown_pct = round((1 - v_stressed / v_now) * 100, 1) if v_now > 1e-6 else 0.0
 
-    # 投弹逻辑模拟：M1(K=0.05) → M2(K=0.10) → M3(K=0.20) 连续触发
+    # 投弹逻辑模拟（v1.3.1）：T = year_max_reserve * min(K, 0.12)
     toundan_rounds = [
         {"level": "M1", "k": 0.05},
         {"level": "M2", "k": 0.10},
-        {"level": "M3", "k": 0.20},
+        {"level": "M3", "k": 0.12},
     ]
     remaining_pool = reserve_pool
     total_cash_deployed = 0.0
     toundan_sim = []
     for rd in toundan_rounds:
-        deploy = min(remaining_pool * rd["k"], 10000)
+        deploy = min(year_max_reserve * min(rd["k"], 0.12), remaining_pool)
         toundan_sim.append({"level": rd["level"], "k": rd["k"], "deployed_usd": round(deploy, 2)})
         total_cash_deployed += deploy
         remaining_pool -= deploy
