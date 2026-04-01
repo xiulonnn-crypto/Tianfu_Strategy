@@ -603,7 +603,43 @@
     }
 
     // ========== 请求封装（带错误处理）==========
+    function _mapApiToStatic(path) {
+      var base = './data/computed/';
+      var qIdx = path.indexOf('?');
+      var route = qIdx >= 0 ? path.substring(0, qIdx) : path;
+      var params = qIdx >= 0 ? path.substring(qIdx + 1) : '';
+      var simple = {
+        '/api/version': 'version.json',
+        '/api/fund-records': 'fund-records.json',
+        '/api/trades': 'trades.json',
+        '/api/returns-overview': 'returns-overview.json',
+        '/api/allocation': 'allocation.json',
+        '/api/signals': 'signals.json',
+        '/api/stress-test': 'stress-test.json',
+      };
+      if (simple[route]) return base + simple[route];
+      if (route === '/api/trade-summary') {
+        var p = (params.match(/period=([^&]+)/) || [])[1] || 'all';
+        return base + 'trade-summary-' + p + '.json';
+      }
+      if (route === '/api/strategy-review') {
+        var p = (params.match(/period=([^&]+)/) || [])[1] || 'all';
+        return base + 'strategy-review-' + p + '.json';
+      }
+      if (route.indexOf('/api/asset-analysis/') === 0) {
+        var sym = route.replace('/api/asset-analysis/', '');
+        return base + 'asset-analysis-' + sym + '.json';
+      }
+      return null;
+    }
     async function apiGet(path) {
+      if (window.__isCloudMode) {
+        var staticUrl = _mapApiToStatic(path);
+        if (!staticUrl) return null;
+        var res = await fetch(staticUrl).catch(function(err) { return null; });
+        if (!res || !res.ok) return null;
+        try { return await res.json(); } catch(e) { return null; }
+      }
       const url = API_BASE + path;
       const res = await fetch(url).catch(function (err) {
         return null;
