@@ -403,5 +403,14 @@
     "shares": 24.0,
     "commission": 0.36,
     "type": "投弹"
+  },
+  {
+    "date": "2026-04-01",
+    "symbol": "BOXX",
+    "action": "卖出",
+    "price": 116.21,
+    "shares": 49.0,
+    "commission": 0.19,
+    "type": "现金管理"
   }
 ]
