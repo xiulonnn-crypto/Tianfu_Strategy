@@ -2464,6 +2464,38 @@
 
     bindEvents();
     doInit();
+
+    // ========== URL 参数自动录入交易 ==========
+    (async function autoTradeFromURL() {
+      if (window.__isCloudMode) return;
+      var params = new URLSearchParams(window.location.search);
+      var date = params.get('date'), symbol = params.get('symbol'),
+          price = params.get('price'), shares = params.get('shares');
+      if (!date || !symbol || !price || !shares) return;
+      symbol = symbol.trim().toUpperCase();
+      var action = params.get('tradeAction') || '买入';
+      var commission = Number(params.get('commission')) || 0;
+      var type = params.get('type') || '定投';
+      if (symbol === 'BOXX') type = '现金管理';
+      var body = {
+        date: date.trim(), symbol: symbol, action: action,
+        price: Number(price), shares: Number(shares),
+        commission: commission, type: type
+      };
+      history.replaceState(null, '', window.location.pathname);
+      var result = await apiPost('/api/trades', body);
+      if (result.ok) {
+        showSection('history');
+        showHistoryTab('trades');
+        await loadTrades();
+        await loadReturnsOverview();
+        await loadAllocation();
+        await loadSignals();
+        loadTradeSummary('all');
+      } else {
+        alert('URL 自动录入失败，请检查后端是否运行');
+      }
+    })();
   </script>
 
   <!-- ========== 运行说明 ========== -->
