@@ -2500,24 +2500,45 @@
   (function(){
     var d = document.createElement('div');
     d.id = '_diagPanel';
-    d.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;font-size:16px;font-weight:bold;padding:20px;z-index:99999;text-align:center;';
+    d.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;font-size:14px;font-weight:bold;padding:15px;z-index:99999;text-align:left;max-height:50vh;overflow:auto;white-space:pre-wrap;';
     var info = [];
-    info.push('S2_defined=' + (typeof apiGet));
+    info.push('S2_apiGet=' + (typeof apiGet));
     info.push('cloudMode=' + window.__isCloudMode);
     info.push('host=' + location.hostname);
-    info.push('dbgLines=' + (typeof _dbgLines !== 'undefined' ? _dbgLines.length : 'UNDEF'));
-    if (typeof _dbgLines !== 'undefined' && _dbgLines.length > 0) {
-      info.push('LOGS: ' + _dbgLines.join(' | '));
-    }
-    d.textContent = info.join(' / ');
-    document.body.appendChild(d);
 
-    if (typeof apiGet === 'function' && window.__isCloudMode) {
-      fetch('./data/computed/version.json')
-        .then(function(r) { d.textContent += ' / FETCH_STATUS=' + r.status; return r.text(); })
-        .then(function(t) { d.textContent += ' / DATA_LEN=' + t.length; })
-        .catch(function(e) { d.textContent += ' / FETCH_ERR=' + e.message; });
+    var varTests = ['API_BASE','debugLog','currentPeriod','chartReturns','_get_settings_cache','fundRecords','_mapApiToStatic','_dbgLines','apiGet','doInit','bindEvents'];
+    varTests.forEach(function(v) {
+      try {
+        var val = eval('typeof ' + v);
+        info.push(v + '=' + val);
+      } catch(e) {
+        info.push(v + '=ERR:' + e.message);
+      }
+    });
+
+    var scriptBlocks = document.querySelectorAll('script:not([src])');
+    info.push('inline_scripts=' + scriptBlocks.length);
+
+    var s2 = scriptBlocks.length >= 2 ? scriptBlocks[1] : null;
+    if (s2) {
+      var code = s2.textContent;
+      info.push('S2_len=' + code.length);
+      info.push('S2_first50=' + JSON.stringify(code.substring(0,50)));
+      try {
+        new Function(code);
+        info.push('S2_syntax=OK');
+      } catch(e) {
+        info.push('S2_syntax=ERR:' + e.message);
+      }
     }
+
+    fetch('./data/computed/version.json')
+      .then(function(r) { info.push('FETCH=' + r.status); return r.text(); })
+      .then(function(t) { info.push('DATA=' + t.length + 'b'); d.textContent = info.join('\n'); })
+      .catch(function(e) { info.push('FETCH_ERR=' + e.message); d.textContent = info.join('\n'); });
+
+    d.textContent = info.join('\n');
+    document.body.appendChild(d);
   })();
   </script>
   <!-- #endregion -->
