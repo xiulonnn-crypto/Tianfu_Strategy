@@ -38,6 +38,49 @@
     .info-tip .info-tip-text::after { content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 4px solid transparent; border-top-color: #2d2a3e; }
     .info-tip:hover .info-tip-text { visibility: visible; opacity: 1; }
 
+    /* ===== Decision Center Zone Layout ===== */
+    .zone-group {
+      background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 20px;
+      box-shadow: 0 2px 16px rgba(74,61,124,0.06);
+    }
+    .zone-title {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 15px; font-weight: 600; margin-bottom: 16px; padding-left: 12px;
+      border-left: 4px solid var(--deep-purple);
+    }
+    .zone-title i { font-size: 14px; }
+    .zone-title.zone-c-red    { border-left-color: #dc2626; color: #dc2626; }
+    .zone-title.zone-c-teal   { border-left-color: #0d9488; color: #0d9488; }
+    .zone-title.zone-c-gold   { border-left-color: var(--champagne-gold); color: var(--champagne-gold); }
+    .zone-title.zone-c-purple { border-left-color: var(--deep-purple); color: var(--deep-purple); }
+    .zone-group .zone-inner-label { font-size: 13px; font-weight: 600; color: var(--deep-purple); margin-bottom: 8px; }
+
+    #decisionSummary {
+      background: linear-gradient(135deg, var(--deep-purple) 0%, #6B5CA5 100%);
+      border-radius: 12px; padding: 14px 24px; margin-bottom: 20px;
+      font-size: 15px; font-weight: 600; color: #fff; line-height: 1.6;
+      box-shadow: 0 4px 20px rgba(74,61,124,0.18);
+    }
+    #decisionSummary .ds-label {
+      color: var(--champagne-gold); font-weight: 700; margin-right: 10px;
+      letter-spacing: 0.5px;
+    }
+    #decisionSummary .ds-sep { color: rgba(255,255,255,0.35); margin: 0 8px; }
+
+    @media (min-width: 1024px) {
+      .zone-row-3 {
+        display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; align-items: start;
+      }
+      .zone-row-3 > .zone-group { margin-bottom: 0; }
+      .zone-row-3 #triggerCards { grid-template-columns: 1fr !important; }
+      .zone-row-3 #toundanCashflowBlock .grid { grid-template-columns: repeat(2, 1fr) !important; }
+      .zone-row-3 #monthlyDashboard .grid { grid-template-columns: 1fr !important; }
+      .zone-row-3 #toundanList { grid-template-columns: 1fr !important; }
+      .zone-row-3 #insuranceBlock .grid { grid-template-columns: 1fr !important; }
+      .zone-row-3 #positionControlBlock .grid { grid-template-columns: 1fr !important; }
+      .zone-row-3 #riskBudgetBlock .flex { flex-direction: column; gap: 8px; }
+    }
+
     /* ===== Mobile Tab Bar (hidden on desktop) ===== */
     #mobileTabBar { display: none; }
 
@@ -109,8 +152,10 @@
       }
       #modalTrade > div { max-height: 85vh; }
 
-      /* --- Signals: model info compact --- */
-      #signalsModelInfo .grid { gap: 0.5rem; }
+      /* --- Zone layout mobile --- */
+      .zone-group { padding: 12px; margin-bottom: 14px; }
+      .zone-title { font-size: 13px; margin-bottom: 10px; padding-left: 10px; }
+      #decisionSummary { padding: 12px 14px; font-size: 13px; }
 
       /* --- Reserve pool 5-grid --- */
       #toundanCashflowBlock .grid { gap: 0.5rem; }
@@ -383,64 +428,68 @@
       <!-- 顶部预警 banner（下行强补）-->
       <div id="alertBanner" class="hidden mb-4 p-3 rounded-xl text-sm font-medium" style="background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;"></div>
 
-      <h2 class="text-lg font-semibold mb-6" style="color: var(--deep-purple);">天府 v1.3.1 决策中心</h2>
-      <div class="rounded-xl shadow-sm p-5 mb-6" id="signalsModelInfo" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
-          <div><span style="color: var(--benchmark-gray);">模型名称</span><div class="font-medium" id="sigModelName" style="color: #2d2a3e;">-</div></div>
-          <div><span style="color: var(--benchmark-gray);">版本</span><div class="font-medium" id="sigVersion" style="color: #2d2a3e;">-</div></div>
-          <div><span style="color: var(--benchmark-gray);">更新时间</span><div class="font-medium" id="sigUpdated" style="color: #2d2a3e;">-</div></div>
-        </div>
+      <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <h2 class="text-lg font-semibold" style="color: var(--deep-purple);">天府 v1.3.1 决策中心</h2>
+        <div class="text-xs" style="color: var(--benchmark-gray);">v<span id="sigVersion">-</span> · 更新于 <span id="sigUpdated">-</span></div>
       </div>
 
-      <!-- 大盘现状 -->
-      <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">大盘现状</h3>
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6" id="marketOverviewList"></div>
+      <!-- 一句话决策 -->
+      <div id="decisionSummary"><span class="ds-label">综合研判</span>加载中…</div>
 
-      <!-- 2.1 触发预警动态卡片 -->
-      <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">风险事件触发预警</h3>
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6" id="triggerCards"></div>
-
-      <!-- 分位数引擎面板 -->
-      <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">分位数引擎</h3>
-      <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 mb-6" id="quantilePanel"></div>
-
-      <!-- 风险预算 R→RR→K→T -->
-      <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">风险预算</h3>
-      <div class="rounded-xl shadow-sm p-5 mb-6" id="riskBudgetBlock" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);"></div>
-
-      <!-- 2.2 月投信号仪表盘 -->
-      <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">月投信号仪表盘</h3>
-      <div class="rounded-xl shadow-sm p-5 mb-6" id="monthlyDashboard" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);"></div>
-
-      <!-- 下次定投 -->
-      <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">下次定投</h3>
-      <div class="rounded-xl shadow-sm p-5 mb-6" id="nextDingtouBlock" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);"></div>
-
-      <!-- 2.3 备弹池健康度 -->
-      <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">备弹池健康度</h3>
-      <div class="rounded-xl shadow-sm p-5 mb-6" id="toundanCashflowBlock" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-        <div class="grid grid-cols-2 sm:grid-cols-5 gap-4 text-sm mb-4">
-          <div><span style="color: var(--benchmark-gray);">备弹池余额</span><div class="font-bold text-lg" id="reservePoolValue" style="color: var(--deep-purple);">--</div></div>
-          <div><span style="color: var(--benchmark-gray);">已投弹总额</span><div class="font-bold text-lg" id="totalToundanUsed" style="color: #2d2a3e;">--</div></div>
-          <div><span style="color: var(--benchmark-gray);">年度投弹总额</span><div class="font-bold text-lg" id="totalInjected" style="color: #2d2a3e;">--</div></div>
-          <div><span style="color: var(--benchmark-gray);">最大可投弹次数</span><div class="font-bold text-lg" id="maxToundanTimes" style="color: var(--champagne-gold);">--</div></div>
-          <div><span style="color: var(--benchmark-gray);">备弹 / 总资产</span><div class="font-bold text-lg" id="reserveHealthPct" style="color: #2d2a3e;">--</div></div>
-        </div>
-        <div class="w-full rounded-full h-3 mb-2" style="background: rgba(74,61,124,0.1);"><div id="reserveBar" class="h-3 rounded-full transition-all" style="width:0;background:var(--deep-purple);"></div></div>
-        <div id="reserveWarning" class="hidden text-sm font-medium mt-2" style="color: #dc2626;"></div>
+      <!-- ===== 指标区（全宽） ===== -->
+      <div class="zone-group">
+        <div class="zone-title zone-c-purple"><i class="fas fa-chart-line"></i> 指标区</div>
+        <div class="zone-inner-label">大盘现状</div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4" id="marketOverviewList"></div>
+        <div class="zone-inner-label">分位数引擎</div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 mb-4" id="quantilePanel"></div>
+        <div class="zone-inner-label">风险预算</div>
+        <div class="p-4 rounded-lg mb-0" id="riskBudgetBlock" style="background:var(--light-purple-bg);"></div>
       </div>
 
-      <!-- 投弹预估 -->
-      <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">投弹预估</h3>
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6" id="toundanList"></div>
+      <!-- ===== 三列横排：投弹区 / 定投区 / 风控区 ===== -->
+      <div class="zone-row-3">
 
-      <!-- 仓位风控 -->
-      <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">仓位风控</h3>
-      <div class="rounded-xl shadow-sm p-5 mb-6" id="positionControlBlock" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);"></div>
+        <!-- 投弹区 -->
+        <div class="zone-group">
+          <div class="zone-title zone-c-red"><i class="fas fa-crosshairs"></i> 投弹区</div>
+          <div class="zone-inner-label">触发预警</div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4" id="triggerCards"></div>
+          <div class="zone-inner-label">备弹池健康度</div>
+          <div class="mb-4" id="toundanCashflowBlock">
+            <div class="grid grid-cols-2 sm:grid-cols-5 gap-4 text-sm mb-3">
+              <div><span style="color: var(--benchmark-gray);">备弹池余额</span><div class="font-bold text-lg" id="reservePoolValue" style="color: var(--deep-purple);">--</div></div>
+              <div><span style="color: var(--benchmark-gray);">已投弹总额</span><div class="font-bold text-lg" id="totalToundanUsed" style="color: #2d2a3e;">--</div></div>
+              <div><span style="color: var(--benchmark-gray);">年度投弹总额</span><div class="font-bold text-lg" id="totalInjected" style="color: #2d2a3e;">--</div></div>
+              <div><span style="color: var(--benchmark-gray);">最大可投弹次数</span><div class="font-bold text-lg" id="maxToundanTimes" style="color: var(--champagne-gold);">--</div></div>
+              <div><span style="color: var(--benchmark-gray);">备弹 / 总资产</span><div class="font-bold text-lg" id="reserveHealthPct" style="color: #2d2a3e;">--</div></div>
+            </div>
+            <div class="w-full rounded-full h-3 mb-2" style="background: rgba(74,61,124,0.1);"><div id="reserveBar" class="h-3 rounded-full transition-all" style="width:0;background:var(--deep-purple);"></div></div>
+            <div id="reserveWarning" class="hidden text-sm font-medium mt-2" style="color: #dc2626;"></div>
+          </div>
+          <div class="zone-inner-label">投弹预估</div>
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="toundanList"></div>
+        </div>
 
-      <!-- Put 保险 -->
-      <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">Put 保险</h3>
-      <div class="rounded-xl shadow-sm p-5 mb-6" id="insuranceBlock" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);"></div>
+        <!-- 定投区 -->
+        <div class="zone-group">
+          <div class="zone-title zone-c-teal"><i class="fas fa-calendar-check"></i> 定投区</div>
+          <div class="zone-inner-label">月投信号仪表盘</div>
+          <div class="p-4 rounded-lg mb-4" id="monthlyDashboard" style="background:var(--light-purple-bg);"></div>
+          <div class="zone-inner-label">下次定投</div>
+          <div class="p-4 rounded-lg" id="nextDingtouBlock" style="background:var(--light-purple-bg);"></div>
+        </div>
+
+        <!-- 风控区 -->
+        <div class="zone-group">
+          <div class="zone-title zone-c-gold"><i class="fas fa-shield-halved"></i> 风控区</div>
+          <div class="zone-inner-label">仓位风控</div>
+          <div class="p-4 rounded-lg mb-4" id="positionControlBlock" style="background:var(--light-purple-bg);"></div>
+          <div class="zone-inner-label">Put 保险</div>
+          <div class="p-4 rounded-lg" id="insuranceBlock" style="background:var(--light-purple-bg);"></div>
+        </div>
+
+      </div>
     </section>
 
     <!-- ========== 5. 压力测试 & 收益预测 ========== -->
@@ -1716,7 +1765,6 @@
       if (!data) return;
 
       // --- 模型信息 + 新鲜度计时器 ---
-      var ne = _$('sigModelName'); if (ne) ne.textContent = data.model_name || '-';
       var ve = _$('sigVersion'); if (ve) ve.textContent = data.version || '-';
       var ue = _$('sigUpdated'); if (ue) ue.textContent = data.updated_at || '-';
       _signalsComputedAt = data.computed_at;
@@ -1741,7 +1789,7 @@
           mkEl.innerHTML = mo.map(function(q) {
             var cc = _pctColor(q.change_pct);
             var cs = q.change_pct != null ? (q.change_pct >= 0 ? '+' : '') + q.change_pct + '%' : '--';
-            return '<div class="rounded-xl shadow-sm p-4" style="background:#fff;box-shadow:0 2px 16px rgba(74,61,124,0.06);"><div class="font-medium text-sm" style="color:var(--deep-purple);">' + (q.name||q.symbol) + '</div><div class="text-lg font-semibold mt-1" style="color:#2d2a3e;">' + (q.price!=null?Number(q.price).toLocaleString(undefined,{minimumFractionDigits:2}):'--') + '</div><div class="text-sm mt-1" style="'+cc+'">' + cs + '</div></div>';
+            return '<div class="rounded-xl shadow-sm p-4" style="background:#fff;box-shadow:0 2px 16px rgba(74,61,124,0.06);"><div class="font-medium text-sm" style="color:var(--deep-purple);">' + (q.name||q.symbol) + '</div><div class="flex items-baseline gap-2 mt-1"><span class="text-lg font-semibold" style="color:#2d2a3e;">' + (q.price!=null?Number(q.price).toLocaleString(undefined,{minimumFractionDigits:2}):'--') + '</span><span class="text-xs" style="'+cc+'">' + cs + '</span></div></div>';
           }).join('');
         }
       }
@@ -1806,7 +1854,7 @@
       if (rbEl && data.risk_budget) {
         var rb = data.risk_budget;
         var rrSpark = _sparkSvg(data.history_7d && data.history_7d.RR, 80, 30);
-        rbEl.innerHTML = '<div class="flex flex-wrap items-center gap-4 text-sm">'
+        rbEl.innerHTML = '<div class="flex flex-wrap items-center justify-center gap-4 text-sm">'
           + '<div class="text-center px-3"><div class="text-xs" style="color:var(--benchmark-gray);">R</div><div class="text-xl font-bold" style="color:var(--deep-purple);">' + rb.R + '</div></div>'
           + '<div style="color:var(--benchmark-gray);">×</div>'
           + '<div class="text-center px-3"><div class="text-xs" style="color:var(--benchmark-gray);">S(EMA)</div><div class="text-xl font-bold" style="color:var(--deep-purple);">' + rb.S_ema + '</div></div>'
@@ -1927,8 +1975,8 @@
       if (pcEl && pa) {
         var qr = pa.qqqm_ratio || 0;
         var fadePct = pa.fade ? (pa.fade * 100).toFixed(0) : 0;
-        var softPct = pa.soft_pct || 65;
-        var hardPct = pa.hard_pct || 80;
+        var softPct = pa.soft_pct || 70;
+        var hardPct = pa.hard_pct || 85;
         var fuseStr;
         if (!pa.fuse_active) {
           fuseStr = '<span style="color:#0d9488;">正常（≤' + softPct + '%）：定投按 60/25/15 分配</span>';
@@ -1967,6 +2015,33 @@
           + '<div><span style="color:var(--benchmark-gray);">年度预算</span><div class="font-medium mt-1">' + _usd(ins.annual_budget) + '</div>' + budgetBar + '<div class="text-xs" style="color:var(--benchmark-gray);">已用 ' + ins.budget_utilization + '%</div></div>'
           + '<div><span style="color:var(--benchmark-gray);">已支出</span><div class="font-medium mt-1">' + _usd(ins.annual_spent) + '</div></div>'
           + '</div>' + actionStr;
+      }
+
+      // --- 一句话决策合成 ---
+      var dsEl = _$('decisionSummary');
+      if (dsEl) {
+        var parts = [];
+        var ms = data.monthly_signal || {};
+        var sVal = ms.S;
+        if (sVal != null) {
+          var mood = sVal > 0.6 ? '偏恐惧' : sVal < 0.4 ? '偏贪婪' : '中性';
+          var moodColor = sVal > 0.6 ? '#5eead4' : sVal < 0.4 ? '#fca5a5' : 'rgba(255,255,255,0.7)';
+          parts.push('<span style="color:'+moodColor+';">市场'+mood+'(S='+Number(sVal).toFixed(2)+')</span>');
+        }
+        var fires = (data.toundan_estimate || []).filter(function(t){ return t.status === 'can_fire'; });
+        var nears = (data.toundan_estimate || []).filter(function(t){ return t.near_critical || t.status === 'near_critical'; });
+        if (fires.length) parts.push('<span style="color:#fca5a5;font-weight:700;">'+fires.length+'个投弹可执行</span>');
+        else if (nears.length) parts.push('<span style="color:#fbbf24;">'+nears.length+'个投弹临界</span>');
+        else parts.push('无投弹触发');
+        if (ms.M != null) parts.push('月投 '+Number(ms.M).toFixed(1)+'x '+_usd(ms.monthly_amount));
+        var pa2 = data.position_alerts || {};
+        if (pa2.fuse_active) {
+          var fp = pa2.fade ? (pa2.fade*100).toFixed(0) : 0;
+          parts.push('<span style="color:#fbbf24;">渐进熔断 '+fp+'%</span>');
+        } else {
+          parts.push('<span style="color:#5eead4;">仓位正常</span>');
+        }
+        dsEl.innerHTML = '<span class="ds-label">综合研判</span>' + parts.join('<span class="ds-sep">·</span>');
       }
     }
 
@@ -2110,7 +2185,7 @@
         sd.innerHTML = '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">K 封顶值</div><div class="text-lg font-bold mt-1" style="color:var(--deep-purple);">' + st.K_MAX_CAP + '</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">投弹比例 K 的最大值（v1.3.1 默认 0.12）</div></div>'
           + '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">月投基数</div><div class="text-lg font-bold mt-1" style="color:var(--deep-purple);">' + _usd(st.MONTHLY_BASE_OVERRIDE) + '</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">每月定投基础金额，乘以倍率 M 后为实际月投</div></div>'
           + '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">备弹池消耗率</div><div class="text-lg font-bold mt-1" style="color:' + (data.burn_rate > 70 ? '#dc2626' : data.burn_rate > 50 ? '#f59e0b' : 'var(--deep-purple)') + ';">' + data.burn_rate + '%</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">期间投弹总额 / 累计注入额，>70% 为过快</div></div>'
-          + '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">渐进熔断</div><div class="text-sm font-bold mt-1" style="color:var(--deep-purple);">' + (st.qqqm_soft_pct||65) + '% ~ ' + (st.qqqm_hard_pct||80) + '%</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">QQQM 占比超 soft 线后渐进缩减，hard 线完全停投</div></div>';
+          + '<div class="rounded-lg p-3" style="background:var(--light-purple-bg);"><div class="text-xs" style="color:var(--benchmark-gray);">渐进熔断</div><div class="text-sm font-bold mt-1" style="color:var(--deep-purple);">' + (st.qqqm_soft_pct||70) + '% ~ ' + (st.qqqm_hard_pct||85) + '%</div><div class="text-xs" style="color:rgba(138,145,153,0.7);font-style:italic;">QQQM 占比超 soft 线后渐进缩减，hard 线完全停投</div></div>';
       }
       // 动态建议
       var sugs = data.suggestions || [];
