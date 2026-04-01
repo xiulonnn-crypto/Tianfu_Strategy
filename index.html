@@ -2495,6 +2495,33 @@
     doInit();
   </script>
 
+  <!-- #region agent log -->
+  <script>
+  (function(){
+    var d = document.createElement('div');
+    d.id = '_diagPanel';
+    d.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;font-size:16px;font-weight:bold;padding:20px;z-index:99999;text-align:center;';
+    var info = [];
+    info.push('S2_defined=' + (typeof apiGet));
+    info.push('cloudMode=' + window.__isCloudMode);
+    info.push('host=' + location.hostname);
+    info.push('dbgLines=' + (typeof _dbgLines !== 'undefined' ? _dbgLines.length : 'UNDEF'));
+    if (typeof _dbgLines !== 'undefined' && _dbgLines.length > 0) {
+      info.push('LOGS: ' + _dbgLines.join(' | '));
+    }
+    d.textContent = info.join(' / ');
+    document.body.appendChild(d);
+
+    if (typeof apiGet === 'function' && window.__isCloudMode) {
+      fetch('./data/computed/version.json')
+        .then(function(r) { d.textContent += ' / FETCH_STATUS=' + r.status; return r.text(); })
+        .then(function(t) { d.textContent += ' / DATA_LEN=' + t.length; })
+        .catch(function(e) { d.textContent += ' / FETCH_ERR=' + e.message; });
+    }
+  })();
+  </script>
+  <!-- #endregion -->
+
   <!-- ========== 运行说明 ========== -->
   <!--
   运行方式（需先启动后端）：
