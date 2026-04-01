@@ -252,7 +252,7 @@
                 <th class="text-left p-3 cursor-pointer" data-sort="date">日期 <i class="fas fa-sort text-slate-400"></i></th>
                 <th class="text-right p-3">金额(USD)</th>
                 <th class="text-left p-3">备注</th>
-                <th class="text-left p-3 w-28">操作</th>
+                <th class="text-left p-3 w-28 cloud-hide-col">操作</th>
               </tr>
             </thead>
             <tbody id="fundTableBody"></tbody>
@@ -276,7 +276,7 @@
                 <th class="text-right p-3">股数</th>
                 <th class="text-right p-3">佣金(USD)</th>
                 <th class="text-left p-3">类型</th>
-                <th class="text-left p-3 w-28">管理</th>
+                <th class="text-left p-3 w-28 cloud-hide-col">管理</th>
               </tr>
             </thead>
             <tbody id="tradesTableBody"></tbody>
@@ -1437,10 +1437,12 @@
         return;
       }
       var hide = window.__sensitiveHidden;
+      var cloud = window.__isCloudMode;
       tbody.innerHTML = sorted.map(function (r) {
         const amt = Number(r.amount);
         var amtStr = hide ? '***' : ((amt >= 0 ? '+' : '') + '$' + amt.toLocaleString());
-        return '<tr data-index="' + r._i + '"><td class="p-3">' + r.date + '</td><td class="p-3 text-right">' + amtStr + '</td><td class="p-3">' + (r.note || '-') + '</td><td class="p-3"><div class="flex justify-between items-center gap-2 whitespace-nowrap"><button type="button" class="btn-fund-edit px-2 py-1 rounded bg-slate-200 hover:bg-slate-300 text-sm whitespace-nowrap" data-index="' + r._i + '">编辑</button><button type="button" class="btn-fund-delete px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-sm whitespace-nowrap" data-index="' + r._i + '">删除</button></div></td></tr>';
+        var ops = cloud ? '' : '<td class="p-3"><div class="flex justify-between items-center gap-2 whitespace-nowrap"><button type="button" class="btn-fund-edit px-2 py-1 rounded bg-slate-200 hover:bg-slate-300 text-sm whitespace-nowrap" data-index="' + r._i + '">编辑</button><button type="button" class="btn-fund-delete px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-sm whitespace-nowrap" data-index="' + r._i + '">删除</button></div></td>';
+        return '<tr data-index="' + r._i + '"><td class="p-3">' + r.date + '</td><td class="p-3 text-right">' + amtStr + '</td><td class="p-3">' + (r.note || '-') + '</td>' + ops + '</tr>';
       }).join('');
     }
 
@@ -1463,8 +1465,10 @@
         return;
       }
       var hide = window.__sensitiveHidden;
+      var cloud = window.__isCloudMode;
       tbody.innerHTML = sorted.map(function (r) {
-        return '<tr data-index="' + r._i + '"><td class="p-3">' + r.date + '</td><td class="p-3">' + r.symbol + '</td><td class="p-3">' + r.action + '</td><td class="p-3 text-right">' + _m('$' + Number(r.price).toFixed(2)) + '</td><td class="p-3 text-right">' + _m(r.shares) + '</td><td class="p-3 text-right">' + _m('$' + Number(r.commission || 0).toFixed(2)) + '</td><td class="p-3">' + _typeTag(r.type) + '</td><td class="p-3"><div class="flex justify-between items-center gap-2 whitespace-nowrap"><button type="button" class="btn-trade-edit px-2 py-1 rounded bg-slate-200 hover:bg-slate-300 text-sm whitespace-nowrap" data-index="' + r._i + '">编辑</button><button type="button" class="btn-trade-delete px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-sm whitespace-nowrap" data-index="' + r._i + '">删除</button></div></td></tr>';
+        var ops = cloud ? '' : '<td class="p-3"><div class="flex justify-between items-center gap-2 whitespace-nowrap"><button type="button" class="btn-trade-edit px-2 py-1 rounded bg-slate-200 hover:bg-slate-300 text-sm whitespace-nowrap" data-index="' + r._i + '">编辑</button><button type="button" class="btn-trade-delete px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-sm whitespace-nowrap" data-index="' + r._i + '">删除</button></div></td>';
+        return '<tr data-index="' + r._i + '"><td class="p-3">' + r.date + '</td><td class="p-3">' + r.symbol + '</td><td class="p-3">' + r.action + '</td><td class="p-3 text-right">' + _m('$' + Number(r.price).toFixed(2)) + '</td><td class="p-3 text-right">' + _m(r.shares) + '</td><td class="p-3 text-right">' + _m('$' + Number(r.commission || 0).toFixed(2)) + '</td><td class="p-3">' + _typeTag(r.type) + '</td>' + ops + '</tr>';
       }).join('');
     }
     async function loadTradeSummary(period) {
@@ -1972,8 +1976,11 @@
         } else { sw.classList.add('hidden'); }
       }
       if (sa) {
-        sa.innerHTML = '<button type="button" class="btn-adjust-k px-4 py-2 rounded text-sm transition" style="background:var(--champagne-gold);color:#2d2a3e;">下调 K 封顶（' + st.K_MAX_CAP + ' → ' + (st.K_MAX_CAP / 2).toFixed(2) + '）</button>'
-          + '<button type="button" class="btn-adjust-m px-4 py-2 rounded text-sm transition" style="background:var(--deep-purple);color:#fff;">提高月投 20%（' + _m('$' + st.MONTHLY_BASE_OVERRIDE + ' → $' + Math.round(st.MONTHLY_BASE_OVERRIDE * 1.2)) + '）</button>';
+        if (window.__isCloudMode) { sa.innerHTML = ''; }
+        else {
+          sa.innerHTML = '<button type="button" class="btn-adjust-k px-4 py-2 rounded text-sm transition" style="background:var(--champagne-gold);color:#2d2a3e;">下调 K 封顶（' + st.K_MAX_CAP + ' → ' + (st.K_MAX_CAP / 2).toFixed(2) + '）</button>'
+            + '<button type="button" class="btn-adjust-m px-4 py-2 rounded text-sm transition" style="background:var(--deep-purple);color:#fff;">提高月投 20%（' + _m('$' + st.MONTHLY_BASE_OVERRIDE + ' → $' + Math.round(st.MONTHLY_BASE_OVERRIDE * 1.2)) + '）</button>';
+        }
       }
     }
 
@@ -2290,6 +2297,12 @@
       window.__closeModal = closeModal;
       if (window.__isCloudMode) {
         document.querySelectorAll('.btn-toggle-sensitive').forEach(function(b) { b.style.display = 'none'; });
+        ['btnAddFund','btnAddTrade','btnSmartPaste'].forEach(function(id) {
+          var el = document.getElementById(id); if (el) el.style.display = 'none';
+        });
+        document.querySelectorAll('.cloud-hide-col').forEach(function(el) { el.style.display = 'none'; });
+        var bannerEl = document.getElementById('bannerRestartBackend');
+        if (bannerEl) bannerEl.style.display = 'none';
       }
       checkBackendVersion();
       loadReturnsOverview();
