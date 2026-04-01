@@ -890,7 +890,7 @@ def compute_value_growth_chart(trades_list, history_cache, bench_cache,
 @app.route("/")
 def index():
     """前端单页"""
-    return send_from_directory(".", "us-stock-trading-assistant.html")
+    return send_from_directory(".", "index.html")
 
 
 @app.route("/favicon.ico", methods=["GET"])
