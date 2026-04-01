@@ -740,36 +740,13 @@
       }
       return null;
     }
-    // #region agent log
-    var _dbgLines = [];
-    function _dbg(msg) {
-      _dbgLines.push('[' + new Date().toISOString().substr(11,12) + '] ' + msg);
-      var el = document.getElementById('_dbgPanel');
-      if (!el && document.body) {
-        el = document.createElement('div');
-        el.id = '_dbgPanel';
-        el.style.cssText = 'position:fixed;bottom:0;left:0;right:0;max-height:35vh;overflow:auto;background:#1a1a2e;color:#0f0;font-family:monospace;font-size:12px;padding:10px;z-index:9999;white-space:pre-wrap;border-top:3px solid #0f0;';
-        document.body.appendChild(el);
-      }
-      if (el) el.textContent = _dbgLines.join('\n');
-    }
-    window.onerror = function(msg, src, line, col, err) { _dbg('UNCAUGHT_ERR: ' + msg + ' at ' + (src||'?') + ':' + line); };
-    window.addEventListener('unhandledrejection', function(e) { _dbg('UNHANDLED_PROMISE: ' + (e.reason && e.reason.message || e.reason)); });
-    _dbg('SCRIPT_START cloudMode=' + window.__isCloudMode + ' host=' + location.hostname + ' proto=' + location.protocol);
-    // #endregion
     async function apiGet(path) {
       if (window.__isCloudMode) {
         var staticUrl = _mapApiToStatic(path);
-        // #region agent log
-        _dbg('apiGet cloud path=' + path + ' staticUrl=' + staticUrl);
-        // #endregion
         if (!staticUrl) return null;
-        const res = await fetch(staticUrl).catch(function(err) { _dbg('apiGet FETCH_ERR path=' + path + ' err=' + err.message); return null; });
-        // #region agent log
-        _dbg('apiGet cloud res path=' + path + ' ok=' + (res && res.ok) + ' status=' + (res && res.status));
-        // #endregion
+        const res = await fetch(staticUrl).catch(function(err) { return null; });
         if (!res || !res.ok) return null;
-        try { var j = await res.json(); _dbg('apiGet cloud JSON_OK path=' + path + ' keys=' + Object.keys(j).slice(0,5)); return j; } catch(e) { _dbg('apiGet JSON_ERR path=' + path + ' err=' + e.message); return null; }
+        try { return await res.json(); } catch(e) { return null; }
       }
       const url = API_BASE + path;
       const res = await fetch(url).catch(function (err) {
@@ -2459,9 +2436,6 @@
       }
     }
     function doInit() {
-      // #region agent log
-      _dbg('doInit START cloudMode=' + window.__isCloudMode + ' hostname=' + location.hostname + ' protocol=' + location.protocol + ' port=' + location.port + ' pathname=' + location.pathname);
-      // #endregion
       window.__navClick = showSection;
       window.__setPeriod = setPeriod;
       window.__toggleSensitive = toggleSensitive;
@@ -2478,70 +2452,19 @@
         var bannerEl = document.getElementById('bannerRestartBackend');
         if (bannerEl) bannerEl.style.display = 'none';
       }
-      // #region agent log
-      _dbg('doInit calling load functions...');
-      // #endregion
       checkBackendVersion();
-      loadReturnsOverview().then(function(){ _dbg('loadReturnsOverview DONE'); }).catch(function(e){ _dbg('loadReturnsOverview ERR: ' + e.message); });
-      loadAllocation().then(function(){ _dbg('loadAllocation DONE'); }).catch(function(e){ _dbg('loadAllocation ERR: ' + e.message); });
+      loadReturnsOverview();
+      loadAllocation();
       loadFundRecords();
       loadTrades();
       loadTradeSummary('all');
-      loadSignals().then(function(){ _dbg('loadSignals DONE'); }).catch(function(e){ _dbg('loadSignals ERR: ' + e.message); });
+      loadSignals();
       loadStrategyReview('all');
     }
 
     bindEvents();
     doInit();
   </script>
-
-  <!-- #region agent log -->
-  <script>
-  (function(){
-    var d = document.createElement('div');
-    d.id = '_diagPanel';
-    d.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;font-size:14px;font-weight:bold;padding:15px;z-index:99999;text-align:left;max-height:50vh;overflow:auto;white-space:pre-wrap;';
-    var info = [];
-    info.push('S2_apiGet=' + (typeof apiGet));
-    info.push('cloudMode=' + window.__isCloudMode);
-    info.push('host=' + location.hostname);
-
-    var varTests = ['API_BASE','debugLog','currentPeriod','chartReturns','_get_settings_cache','fundRecords','_mapApiToStatic','_dbgLines','apiGet','doInit','bindEvents'];
-    varTests.forEach(function(v) {
-      try {
-        var val = eval('typeof ' + v);
-        info.push(v + '=' + val);
-      } catch(e) {
-        info.push(v + '=ERR:' + e.message);
-      }
-    });
-
-    var scriptBlocks = document.querySelectorAll('script:not([src])');
-    info.push('inline_scripts=' + scriptBlocks.length);
-
-    var s2 = scriptBlocks.length >= 2 ? scriptBlocks[1] : null;
-    if (s2) {
-      var code = s2.textContent;
-      info.push('S2_len=' + code.length);
-      info.push('S2_first50=' + JSON.stringify(code.substring(0,50)));
-      try {
-        new Function(code);
-        info.push('S2_syntax=OK');
-      } catch(e) {
-        info.push('S2_syntax=ERR:' + e.message);
-      }
-    }
-
-    fetch('./data/computed/version.json')
-      .then(function(r) { info.push('FETCH=' + r.status); return r.text(); })
-      .then(function(t) { info.push('DATA=' + t.length + 'b'); d.textContent = info.join('\n'); })
-      .catch(function(e) { info.push('FETCH_ERR=' + e.message); d.textContent = info.join('\n'); });
-
-    d.textContent = info.join('\n');
-    document.body.appendChild(d);
-  })();
-  </script>
-  <!-- #endregion -->
 
   <!-- ========== 运行说明 ========== -->
   <!--
