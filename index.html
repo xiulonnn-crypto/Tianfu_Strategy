@@ -635,10 +635,6 @@
         var mobBtn = document.querySelector('.mob-tab[data-section="' + id + '"]');
         if (mobBtn) addClass(mobBtn, 'mob-active');
         window.scrollTo(0, 0);
-        // #region agent log
-        var _tb1 = document.getElementById('mobileTabBar'); var _cs1 = _tb1 ? getComputedStyle(_tb1) : null; var _rect1 = _tb1 ? _tb1.getBoundingClientRect() : null;
-        fetch('http://127.0.0.1:7366/ingest/7ecdd92a-c9e3-4aae-9b2e-a8cd2e14aebb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'42751c'},body:JSON.stringify({sessionId:'42751c',location:'index.html:navClick-post',message:'post-fix2 navClick',data:{targetSection:id,scrollY:window.scrollY,tabBarDisplay:_cs1?_cs1.display:'N/A',tabBarPosition:_cs1?_cs1.position:'N/A',tabBarInline:_tb1?_tb1.style.cssText:'N/A',tabBarRect:_rect1?{top:Math.round(_rect1.top),bottom:Math.round(_rect1.bottom),width:Math.round(_rect1.width),height:Math.round(_rect1.height)}:null,viewportH:window.innerHeight,viewportW:window.innerWidth,docH:document.documentElement.scrollHeight},timestamp:Date.now(),runId:'post-fix2',hypothesisId:'inlineFix'})}).catch(function(){});
-        // #endregion
       };
       window.__setPeriod = function(p) {
         var cards = document.querySelectorAll('.returns-card');
@@ -687,18 +683,6 @@
       var tbTrades = document.getElementById('tradesTableBody');
       if (tbFund) tbFund.innerHTML = '<tr><td colspan="4" class="p-3 text-center text-slate-500">加载中…</td></tr>';
       if (tbTrades) tbTrades.innerHTML = '<tr><td colspan="8" class="p-3 text-center text-slate-500">加载中…</td></tr>';
-      // #region agent log
-      var _mtb = document.getElementById('mobileTabBar');
-      fetch('http://127.0.0.1:7366/ingest/7ecdd92a-c9e3-4aae-9b2e-a8cd2e14aebb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'42751c'},body:JSON.stringify({sessionId:'42751c',location:'index.html:init',message:'page loaded',data:{tabBarExists:!!_mtb,tabBarDisplay:_mtb?getComputedStyle(_mtb).display:'N/A',windowWidth:window.innerWidth,windowHeight:window.innerHeight,screenW:screen.width,screenH:screen.height,ua:navigator.userAgent.substring(0,120)},timestamp:Date.now(),hypothesisId:'device'})}).catch(function(){});
-      if (_mtb) {
-        window.addEventListener('scroll', function() {
-          var _r = _mtb.getBoundingClientRect();
-          if (_r.top > window.innerHeight || _r.bottom < 0) {
-            fetch('http://127.0.0.1:7366/ingest/7ecdd92a-c9e3-4aae-9b2e-a8cd2e14aebb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'42751c'},body:JSON.stringify({sessionId:'42751c',location:'index.html:scroll',message:'tabBar OUT OF VIEWPORT on scroll!',data:{rectTop:Math.round(_r.top),rectBot:Math.round(_r.bottom),viewH:window.innerHeight,scrollY:Math.round(window.scrollY),position:getComputedStyle(_mtb).position},timestamp:Date.now(),hypothesisId:'scrollHide'})}).catch(function(){});
-          }
-        }, {passive:true});
-      }
-      // #endregion
     })();
   </script>
   <script>
