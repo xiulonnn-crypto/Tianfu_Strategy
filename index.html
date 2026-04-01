@@ -764,7 +764,7 @@
         _dbg('apiGet cloud path=' + path + ' staticUrl=' + staticUrl);
         // #endregion
         if (!staticUrl) return null;
-        var res = await fetch(staticUrl).catch(function(err) { _dbg('apiGet FETCH_ERR path=' + path + ' err=' + err.message); return null; });
+        const res = await fetch(staticUrl).catch(function(err) { _dbg('apiGet FETCH_ERR path=' + path + ' err=' + err.message); return null; });
         // #region agent log
         _dbg('apiGet cloud res path=' + path + ' ok=' + (res && res.ok) + ' status=' + (res && res.status));
         // #endregion
