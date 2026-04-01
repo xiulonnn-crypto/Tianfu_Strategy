@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>天府计划助手</title>
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -36,6 +36,99 @@
     .info-tip .info-tip-text { visibility: hidden; opacity: 0; position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: #2d2a3e; color: #fff; font-size: 11px; line-height: 1.5; padding: 6px 10px; border-radius: 6px; white-space: nowrap; z-index: 50; pointer-events: none; transition: opacity .15s; }
     .info-tip .info-tip-text::after { content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 4px solid transparent; border-top-color: #2d2a3e; }
     .info-tip:hover .info-tip-text { visibility: visible; opacity: 1; }
+
+    /* ===== Mobile Tab Bar (hidden on desktop) ===== */
+    #mobileTabBar { display: none; }
+
+    /* ===== Mobile Responsive (<640px, matches Tailwind sm breakpoint) ===== */
+    @media (max-width: 639px) {
+      /* --- Header --- */
+      #mainNav { display: none; }
+      header { padding: 0.6rem 1rem !important; }
+      header h1 { font-size: 1.05rem; }
+
+      /* --- Bottom Tab Bar --- */
+      #mobileTabBar {
+        display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 9999;
+        background: var(--deep-purple); justify-content: space-around; align-items: center;
+        padding: 0.25rem 0; padding-bottom: calc(0.25rem + env(safe-area-inset-bottom, 0px));
+        box-shadow: 0 -4px 16px rgba(0,0,0,0.25);
+        border-top: 1px solid rgba(191,169,96,0.3);
+      }
+      #mobileTabBar button {
+        display: flex; flex-direction: column; align-items: center; gap: 2px;
+        background: none; border: none; color: rgba(255,255,255,0.55);
+        font-size: 10px; padding: 6px 0; min-width: 0; flex: 1;
+        transition: color .15s;
+      }
+      #mobileTabBar button i { font-size: 18px; }
+      #mobileTabBar button.mob-active { color: var(--champagne-gold); }
+      body { padding-bottom: calc(3.5rem + env(safe-area-inset-bottom, 0px)); }
+
+      /* --- Container --- */
+      .container-main { padding-left: 0.75rem; padding-right: 0.75rem; }
+      main.container-main { padding-top: 1rem; }
+
+      /* --- Returns Cards 2-col --- */
+      #returnsCards { grid-template-columns: repeat(2, 1fr) !important; gap: 0.5rem; }
+      #returnsCards .returns-card { padding: 0.65rem; }
+      #returnsCards .returns-card .text-xl { font-size: 1.05rem; }
+      #returnsCards > :last-child { grid-column: 1 / -1; }
+
+      /* --- MWRR Compare Row stack --- */
+      #mwrrCompareRow { flex-direction: column; gap: 0.15rem; }
+
+      /* --- Risk Metrics compact --- */
+      #mwrrCompareRow + p + div { gap: 0.5rem; }
+      #mwrrCompareRow + p + div > div { padding: 0.65rem; }
+
+      /* --- Chart heights --- */
+      .h-80 { height: 200px !important; }
+      .h-48 { height: 140px !important; }
+      .h-64 { height: 180px !important; }
+      div[style*="height:340px"] { height: 220px !important; }
+
+      /* --- Strategy Driver grid --- */
+      #strategyDriverBlock .grid { grid-template-columns: 1fr !important; }
+
+      /* --- Allocation pies --- */
+      #section-allocation .w-48.h-48 { width: 9rem; height: 9rem; }
+
+      /* --- Tables: hide secondary cols, compact cells --- */
+      .col-shares, .col-avg, .col-amount, .col-commission, .col-type { display: none; }
+      table th, table td { padding: 6px 8px !important; font-size: 12px; }
+
+      /* --- Trade Summary 5-grid --- */
+      #tradeSummaryBar { gap: 0.4rem; }
+      #tradeSummaryBar > :last-child { grid-column: 1 / -1; }
+      #tradeSummaryBar .text-lg { font-size: 0.95rem; }
+
+      /* --- Modals full-width --- */
+      #modalFund > div, #modalTrade > div, #modalSmartPaste > div {
+        max-width: calc(100vw - 1.5rem) !important; padding: 1rem !important;
+      }
+      #modalTrade > div { max-height: 85vh; }
+
+      /* --- Signals: model info compact --- */
+      #signalsModelInfo .grid { gap: 0.5rem; }
+
+      /* --- Reserve pool 5-grid --- */
+      #toundanCashflowBlock .grid { gap: 0.5rem; }
+      #toundanCashflowBlock .text-lg { font-size: 0.95rem; }
+
+      /* --- Review cards --- */
+      #reviewCards { gap: 0.5rem; }
+
+      /* --- Touch-friendly buttons --- */
+      button, [type="button"], [type="submit"] { min-height: 36px; }
+      .nav-btn, .sum-period-btn, .review-period-btn, .chart-cmp-btn { min-height: 32px; }
+
+      /* --- Tooltips wrap on mobile --- */
+      .info-tip .info-tip-text { white-space: normal; min-width: 180px; max-width: 220px; }
+
+      /* --- Footer above tab bar --- */
+      footer { margin-bottom: 0; padding-bottom: 0.5rem; }
+    }
   </style>
 </head>
 <body class="min-h-screen">
@@ -274,8 +367,8 @@
                 <th class="text-left p-3">操作</th>
                 <th class="text-right p-3">价格(USD)</th>
                 <th class="text-right p-3">股数</th>
-                <th class="text-right p-3">佣金(USD)</th>
-                <th class="text-left p-3">类型</th>
+                <th class="text-right p-3 col-commission">佣金(USD)</th>
+                <th class="text-left p-3 col-type">类型</th>
                 <th class="text-left p-3 w-28 cloud-hide-col">管理</th>
               </tr>
             </thead>
@@ -510,6 +603,16 @@
     </div>
   </div>
 
+  <!-- Mobile Bottom Tab Bar -->
+  <nav id="mobileTabBar" aria-label="移动端导航" style="position:fixed;bottom:0;left:0;right:0;z-index:9999;">
+    <button type="button" class="mob-tab mob-active" data-section="returns" onclick="if(window.__navClick)window.__navClick('returns')"><i class="fas fa-chart-line"></i><span>收益</span></button>
+    <button type="button" class="mob-tab" data-section="allocation" onclick="if(window.__navClick)window.__navClick('allocation')"><i class="fas fa-chart-pie"></i><span>配置</span></button>
+    <button type="button" class="mob-tab" data-section="history" onclick="if(window.__navClick)window.__navClick('history')"><i class="fas fa-clock-rotate-left"></i><span>交易</span></button>
+    <button type="button" class="mob-tab" data-section="signals" onclick="if(window.__navClick)window.__navClick('signals')"><i class="fas fa-bullseye"></i><span>信号</span></button>
+    <button type="button" class="mob-tab" data-section="stress" onclick="if(window.__navClick)window.__navClick('stress')"><i class="fas fa-bolt"></i><span>测试</span></button>
+    <button type="button" class="mob-tab" data-section="review" onclick="if(window.__navClick)window.__navClick('review')"><i class="fas fa-rotate"></i><span>复盘</span></button>
+  </nav>
+
   <footer class="container-main px-4 py-6 text-center text-sm mt-10 border-t" style="color: var(--benchmark-gray); border-color: rgba(74,61,124,0.12);">
     天府计划助手 · 数据来自交易历史与 Yahoo Finance · 仅供参考
   </footer>
@@ -527,6 +630,15 @@
         var btn = document.querySelector('.nav-btn[data-section="' + id + '"]');
         if (s) removeClass(s, 'hidden');
         if (btn) { addClass(btn, 'bg-white/20'); btn.style.background = 'rgba(255,255,255,0.2)'; }
+        var mobAll = document.querySelectorAll('.mob-tab');
+        for (var k = 0; k < (mobAll && mobAll.length); k++) removeClass(mobAll[k], 'mob-active');
+        var mobBtn = document.querySelector('.mob-tab[data-section="' + id + '"]');
+        if (mobBtn) addClass(mobBtn, 'mob-active');
+        window.scrollTo(0, 0);
+        // #region agent log
+        var _tb1 = document.getElementById('mobileTabBar'); var _cs1 = _tb1 ? getComputedStyle(_tb1) : null; var _rect1 = _tb1 ? _tb1.getBoundingClientRect() : null;
+        fetch('http://127.0.0.1:7366/ingest/7ecdd92a-c9e3-4aae-9b2e-a8cd2e14aebb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'42751c'},body:JSON.stringify({sessionId:'42751c',location:'index.html:navClick-post',message:'post-fix navClick',data:{targetSection:id,scrollY:window.scrollY,tabBarRect:_rect1?{top:_rect1.top,bottom:_rect1.bottom}:null,viewportH:window.innerHeight},timestamp:Date.now(),runId:'post-fix',hypothesisId:'scrollFix'})}).catch(function(){});
+        // #endregion
       };
       window.__setPeriod = function(p) {
         var cards = document.querySelectorAll('.returns-card');
@@ -575,6 +687,17 @@
       var tbTrades = document.getElementById('tradesTableBody');
       if (tbFund) tbFund.innerHTML = '<tr><td colspan="4" class="p-3 text-center text-slate-500">加载中…</td></tr>';
       if (tbTrades) tbTrades.innerHTML = '<tr><td colspan="8" class="p-3 text-center text-slate-500">加载中…</td></tr>';
+      // #region agent log
+      var _mtb = document.getElementById('mobileTabBar');
+      if (_mtb) {
+        new MutationObserver(function(muts) {
+          muts.forEach(function(m) {
+            fetch('http://127.0.0.1:7366/ingest/7ecdd92a-c9e3-4aae-9b2e-a8cd2e14aebb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'42751c'},body:JSON.stringify({sessionId:'42751c',location:'index.html:mutationObserver',message:'mobileTabBar MUTATED',data:{type:m.type,attr:m.attributeName,oldVal:m.oldValue,newClasses:_mtb.className,newStyle:_mtb.style.cssText,computedDisplay:getComputedStyle(_mtb).display},timestamp:Date.now(),hypothesisId:'B'})}).catch(function(){});
+          });
+        }).observe(_mtb, {attributes:true,attributeOldValue:true,attributeFilter:['class','style']});
+      }
+      fetch('http://127.0.0.1:7366/ingest/7ecdd92a-c9e3-4aae-9b2e-a8cd2e14aebb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'42751c'},body:JSON.stringify({sessionId:'42751c',location:'index.html:init',message:'page loaded, tabBar initial state',data:{tabBarExists:!!_mtb,tabBarDisplay:_mtb?getComputedStyle(_mtb).display:'N/A',windowWidth:window.innerWidth},timestamp:Date.now(),hypothesisId:'D'})}).catch(function(){});
+      // #endregion
     })();
   </script>
   <script>
@@ -632,13 +755,30 @@
       }
       return null;
     }
+    // #region agent log
+    var _dbgLines = [];
+    function _dbg(msg) {
+      _dbgLines.push('[' + new Date().toISOString().substr(11,12) + '] ' + msg);
+      var el = document.getElementById('_dbgPanel');
+      if (el) el.textContent = _dbgLines.join('\n');
+      fetch('http://127.0.0.1:7366/ingest/7ecdd92a-c9e3-4aae-9b2e-a8cd2e14aebb',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8f2eaf'},body:JSON.stringify({sessionId:'8f2eaf',location:'index.html:_dbg',message:msg,timestamp:Date.now()})}).catch(function(){});
+    }
+    window.onerror = function(msg, src, line, col, err) { _dbg('UNCAUGHT_ERR: ' + msg + ' at ' + (src||'?') + ':' + line); };
+    window.addEventListener('unhandledrejection', function(e) { _dbg('UNHANDLED_PROMISE: ' + (e.reason && e.reason.message || e.reason)); });
+    // #endregion
     async function apiGet(path) {
       if (window.__isCloudMode) {
         var staticUrl = _mapApiToStatic(path);
+        // #region agent log
+        _dbg('apiGet cloud path=' + path + ' staticUrl=' + staticUrl);
+        // #endregion
         if (!staticUrl) return null;
-        var res = await fetch(staticUrl).catch(function(err) { return null; });
+        var res = await fetch(staticUrl).catch(function(err) { _dbg('apiGet FETCH_ERR path=' + path + ' err=' + err.message); return null; });
+        // #region agent log
+        _dbg('apiGet cloud res path=' + path + ' ok=' + (res && res.ok) + ' status=' + (res && res.status));
+        // #endregion
         if (!res || !res.ok) return null;
-        try { return await res.json(); } catch(e) { return null; }
+        try { var j = await res.json(); _dbg('apiGet cloud JSON_OK path=' + path + ' keys=' + Object.keys(j).slice(0,5)); return j; } catch(e) { _dbg('apiGet JSON_ERR path=' + path + ' err=' + e.message); return null; }
       }
       const url = API_BASE + path;
       const res = await fetch(url).catch(function (err) {
@@ -1504,7 +1644,7 @@
       var cloud = window.__isCloudMode;
       tbody.innerHTML = sorted.map(function (r) {
         var ops = cloud ? '' : '<td class="p-3"><div class="flex justify-between items-center gap-2 whitespace-nowrap"><button type="button" class="btn-trade-edit px-2 py-1 rounded bg-slate-200 hover:bg-slate-300 text-sm whitespace-nowrap" data-index="' + r._i + '">编辑</button><button type="button" class="btn-trade-delete px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-sm whitespace-nowrap" data-index="' + r._i + '">删除</button></div></td>';
-        return '<tr data-index="' + r._i + '"><td class="p-3">' + r.date + '</td><td class="p-3">' + r.symbol + '</td><td class="p-3">' + r.action + '</td><td class="p-3 text-right">' + _m('$' + Number(r.price).toFixed(2)) + '</td><td class="p-3 text-right">' + _m(r.shares) + '</td><td class="p-3 text-right">' + _m('$' + Number(r.commission || 0).toFixed(2)) + '</td><td class="p-3">' + _typeTag(r.type) + '</td>' + ops + '</tr>';
+        return '<tr data-index="' + r._i + '"><td class="p-3">' + r.date + '</td><td class="p-3">' + r.symbol + '</td><td class="p-3">' + r.action + '</td><td class="p-3 text-right">' + _m('$' + Number(r.price).toFixed(2)) + '</td><td class="p-3 text-right">' + _m(r.shares) + '</td><td class="p-3 text-right col-commission">' + _m('$' + Number(r.commission || 0).toFixed(2)) + '</td><td class="p-3 col-type">' + _typeTag(r.type) + '</td>' + ops + '</tr>';
       }).join('');
     }
     async function loadTradeSummary(period) {
@@ -1538,6 +1678,10 @@
       const btn = document.querySelector('.nav-btn[data-section="' + sectionId + '"]');
       if (section) section.classList.remove('hidden');
       if (btn) { btn.classList.add('bg-white/20'); btn.style.background = 'rgba(255,255,255,0.2)'; }
+      document.querySelectorAll('.mob-tab').forEach(el => el.classList.remove('mob-active'));
+      const mobBtn = document.querySelector('.mob-tab[data-section="' + sectionId + '"]');
+      if (mobBtn) mobBtn.classList.add('mob-active');
+      window.scrollTo(0, 0);
     }
 
     // ========== 交易历史子标签 ==========
@@ -2324,6 +2468,9 @@
       }
     }
     function doInit() {
+      // #region agent log
+      _dbg('doInit START cloudMode=' + window.__isCloudMode + ' hostname=' + location.hostname + ' protocol=' + location.protocol + ' port=' + location.port + ' pathname=' + location.pathname);
+      // #endregion
       window.__navClick = showSection;
       window.__setPeriod = setPeriod;
       window.__toggleSensitive = toggleSensitive;
@@ -2340,19 +2487,26 @@
         var bannerEl = document.getElementById('bannerRestartBackend');
         if (bannerEl) bannerEl.style.display = 'none';
       }
+      // #region agent log
+      _dbg('doInit calling load functions...');
+      // #endregion
       checkBackendVersion();
-      loadReturnsOverview();
-      loadAllocation();
+      loadReturnsOverview().then(function(){ _dbg('loadReturnsOverview DONE'); }).catch(function(e){ _dbg('loadReturnsOverview ERR: ' + e.message); });
+      loadAllocation().then(function(){ _dbg('loadAllocation DONE'); }).catch(function(e){ _dbg('loadAllocation ERR: ' + e.message); });
       loadFundRecords();
       loadTrades();
       loadTradeSummary('all');
-      loadSignals();
+      loadSignals().then(function(){ _dbg('loadSignals DONE'); }).catch(function(e){ _dbg('loadSignals ERR: ' + e.message); });
       loadStrategyReview('all');
     }
 
     bindEvents();
     doInit();
   </script>
+
+  <!-- #region agent log -->
+  <div id="_dbgPanel" style="position:fixed;bottom:0;left:0;right:0;max-height:30vh;overflow:auto;background:#1a1a2e;color:#0f0;font-family:monospace;font-size:11px;padding:8px;z-index:9999;white-space:pre-wrap;border-top:2px solid #0f0;"></div>
+  <!-- #endregion -->
 
   <!-- ========== 运行说明 ========== -->
   <!--
