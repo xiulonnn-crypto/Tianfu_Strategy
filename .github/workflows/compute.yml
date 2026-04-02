@@ -2,12 +2,7 @@ name: Compute Data
 
 on:
   push:
-    paths:
-      - 'data/trades.json'
-      - 'data/fund_records.json'
-      - 'data/model_state.json'
-      - 'server.py'
-      - 'compute.py'
+    branches: [main]
   schedule:
     # 美东 18:00 (UTC 22:00) 周一至周五，美股收盘后
     - cron: '0 22 * * 1-5'
