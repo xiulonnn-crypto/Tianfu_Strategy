@@ -551,14 +551,16 @@ def compute_twr(trades_list, history_cache, period_start, period_end, all_tradin
     if not dates_in_range:
         return 0.0
 
-    # 若 period_start 本身是交易日（如 1D 的 prev_trading_date），直接从它开始，不回溯 anchor
-    # 仅当 period_start 不在交易日列表中（如 YTD 的 01-01 为非交易日）时，才用前一个交易日作为锚定
+    # 构建日期链：若 period_start 是交易日则直接从它开始；否则用前一个交易日作为锚定。
+    # 当链中只有 1 个日期（如月初只有一天行情）时，始终回溯前一个交易日，否则无法计算涨跌。
+    dates_before = [d for d in all_trading_dates if d < period_start]
     if period_start in all_trading_dates:
         chain = dates_in_range
     else:
-        dates_before = [d for d in all_trading_dates if d < period_start]
         anchor = dates_before[-1] if dates_before else None
         chain = ([anchor] if anchor else []) + dates_in_range
+    if len(chain) < 2 and dates_before:
+        chain = [dates_before[-1]] + chain
     if len(chain) < 2:
         return 0.0
 
@@ -591,14 +593,16 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
     if not dates_in_range:
         return {"labels": [], "my": [], "bench": [], "dca": []}
 
+    dates_before = [d for d in all_trading_dates if d < period_start]
     if period_start in all_trading_dates:
         chain = dates_in_range
     else:
-        dates_before = [d for d in all_trading_dates if d < period_start]
         anchor = dates_before[-1] if dates_before else None
         chain = ([anchor] if anchor else []) + dates_in_range
+    if len(chain) < 2 and dates_before:
+        chain = [dates_before[-1]] + chain
 
-    b_base = get_price_on_date(BENCHMARK_SYMBOL, period_start, bench_cache) or 1.0
+    b_base = get_price_on_date(BENCHMARK_SYMBOL, chain[0], bench_cache) or 1.0
 
     # 计算时段内实际总买入金额（用于 DCA 模拟）
     total_buy_amount = sum(
