@@ -1879,8 +1879,8 @@ def _get_settings():
         "m1_vix_threshold": s.get("m1_vix_threshold", 18),
         "m2_vix_threshold": s.get("m2_vix_threshold", 22),
         "m3_vix_threshold": s.get("m3_vix_threshold", 50),
-        "qqqm_soft_pct": s.get("qqqm_soft_pct", 65),
-        "qqqm_hard_pct": s.get("qqqm_hard_pct", 80),
+        "qqqm_soft_pct": s.get("qqqm_soft_pct", 70),
+        "qqqm_hard_pct": s.get("qqqm_hard_pct", 85),
         "insurance_budget_pct": s.get("insurance_budget_pct", 0.02),
     }
 
@@ -2232,7 +2232,7 @@ def api_signals():
 
     M_amount = monthly_signal["monthly_amount"]
 
-    # 渐进熔断：65%~80% 线性 fade
+    # 渐进熔断：70%~85% 线性 fade
     soft_pct = settings["qqqm_soft_pct"]
     hard_pct = settings["qqqm_hard_pct"]
     if qqqm_ratio <= soft_pct:
@@ -2553,7 +2553,8 @@ def api_strategy_review():
 
     # 合规与集中度
     if qqqm_max_pct > 55:
-        parts.append(f"注意：QQQM 风险敞口达 {qqqm_max_pct}%，逼近 65% 渐进缩减起始线 / 80% 硬停线，关注组合集中度风险")
+        settings = _get_settings()
+        parts.append(f"注意：QQQM 风险敞口达 {qqqm_max_pct}%，逼近 {settings['qqqm_soft_pct']}% 渐进缩减起始线 / {settings['qqqm_hard_pct']}% 硬停线，关注组合集中度风险")
     if max_drift > 15:
         parts.append(f"配置偏离较大（最大偏离 {max_drift}%），建议适时再平衡")
 
