@@ -18,3 +18,9 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Sensitive raw data (stored in GitHub Secrets for CI)
+data/trades.json
+data/fund_records.json
+data/model_state.json
+data/price_cache.json

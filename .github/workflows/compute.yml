@@ -25,6 +25,17 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Restore raw data from secrets
+        env:
+          TRADES_B64: ${{ secrets.TRADES_B64 }}
+          FUND_RECORDS_B64: ${{ secrets.FUND_RECORDS_B64 }}
+          MODEL_STATE_B64: ${{ secrets.MODEL_STATE_B64 }}
+        run: |
+          mkdir -p data
+          echo "$TRADES_B64" | base64 -d > data/trades.json
+          echo "$FUND_RECORDS_B64" | base64 -d > data/fund_records.json
+          echo "$MODEL_STATE_B64" | base64 -d > data/model_state.json
+
       - name: Run compute
         run: python3 compute.py
 
