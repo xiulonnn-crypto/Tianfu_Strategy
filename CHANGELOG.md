@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-002] - 2026-04-17 - feat: 全量同步 — 文档体系、历史回测、pytest 套件与多处后端/前端增强
+
 ### Fixed
 
 - **API 性能**：收益概览、交易汇总、模型信号、策略复盘、资产配置等端点暖路径显著加速（价格查询由 pandas 全表掩码改为字典 + bisect；持仓按日期前缀时间线 O(log n) 查询；风险指标内 `_twr_daily_returns` 只算一次）。各端点统一使用 `_compute_fetch_range` 与同一 `price_cache` 键，减少 Yahoo 重复拉取。`/api/signals` 大盘行情改为并行请求并带 60s 内存缓存。递增 `_CACHE_VERSION` 使旧 `price_cache.json` 失效
@@ -19,11 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **公司行为同步**：`POST /api/corp-actions/sync` 从 Yahoo Finance 拉取 `Ticker.dividends` / `Ticker.splits`，自动写入 `type` 为「分红」「合股拆股」的交易（`auto: true`）；分红按再投资近似增加股数且不增加现金成本，拆股以成对买卖记录保持总成本不变。`/api/version` 增加 `corp_actions: true`；交易页提供「同步分红/拆股」按钮；`compute.py` 预计算前会先执行同步
 - **交易明细筛选**：交易历史 → 交易明细 Tab 新增两个筛选下拉。「标的」根据当前交易记录动态生成（含`全部`选项，默认`全部`）；「类型」固定枚举 `全部 / 定投 / 投弹 / 投机 / 现金管理 / 分红 / 合股拆股`，默认`全部`。两个筛选为「与」关系，实时过滤表格，空结果显示「当前筛选下无交易明细」占位；本地与云端只读模式均可用
 - **测试**：`tests/test_corp_actions.py` 覆盖成本语义与同步去重
-- **测试**：`tests/test_price_index.py`、`tests/test_position_timeline.py` 对拍快速路径与旧实现；`tests/test_perf_endpoints.py` 在 mock 行情下断言上述五端点暖响应 &lt; 1s
+- **测试**：`tests/test_price_index.py`、`tests/test_position_timeline.py` 对拍快速路径与旧实现；`tests/test_perf_endpoints.py` 在 mock 行情下断言上述五端点暖响应 < 1s
 
 ### Fixed
 
-- 修复「策略复盘 → 历史回测」在本地模式下显示「加载失败：请确认已运行 scripts/import_backtest.py 并提交 data/backtest/*.json」的问题：根因是 Flask 只显式暴露 `/api/*` 与 `/`，`data/backtest/*.json` 没有任何路由（默认 `static_url_path` 不覆盖 `/data/...`），前端 `fetch('./data/backtest/v1.3.1-*.json')` 走到本地 1001 端口时返回 404。新增 `GET /data/backtest/<path:filename>` 路由，以 `send_from_directory(BASE_DIR/'data'/'backtest', ...)` 直出文件，`safe_join` 内置路径遍历防护。`tests/test_backtest_static_route.py` 覆盖三档正常路径、`..` 遍历、不存在文件的 404 行为。云端（GitHub Pages）路径不受影响
+- 修复「策略复盘 → 历史回测」在本地模式下显示「加载失败：请确认已运行 scripts/import_backtest.py 并提交 data/backtest/*.json」的问题：根因是 Flask 只显式暴露 `/api/`* 与 `/`，`data/backtest/*.json` 没有任何路由（默认 `static_url_path` 不覆盖 `/data/...`），前端 `fetch('./data/backtest/v1.3.1-*.json')` 走到本地 1001 端口时返回 404。新增 `GET /data/backtest/<path:filename>` 路由，以 `send_from_directory(BASE_DIR/'data'/'backtest', ...)` 直出文件，`safe_join` 内置路径遍历防护。`tests/test_backtest_static_route.py` 覆盖三档正常路径、`..` 遍历、不存在文件的 404 行为。云端（GitHub Pages）路径不受影响
 - 修复首页收益概览与策略复盘收益率数据不一致的问题：两处各卡片/周期的收益率起点统一规则为 `max(时段起始日, 第一次持仓日期)`，保证起点不早于组合成立日；跨页面同一周期（如首页"1m"与策略复盘"本月"、首页"since"与策略复盘"全部"）的 MWRR / DCA / 超额收益现可直接对比
 - 首页 MTD 卡片之前直接以本月 1 日为起点，对于当月新建的组合会在尚未持仓的日期参与计算，现修正为 `max(本月 1 日, 第一次持仓日期)`
 - 修复「同步分红/拆股」生成的再投资股数与 IB 实际对账不一致的问题：旧公式 `div × shares / ex_close` 忽略了美股 30% 预扣税与付息日 VWAP，2026-03-23 QQQM 分红系统记 0.212054 股、IB 实际 0.1539 股（差 +0.058 股/$14 对账分歧）。新公式 `div × shares × (1 - 预扣税率) / 付息日开盘价`，预扣税率与付息日工作日偏移做成可配置（`dividend_withholding_rate` 默认 0.30、`dividend_reinvest_offset_bd` 默认 5）。同时放开已自动生成的分红/拆股记录的编辑入口，保留原有手动新建仍被禁止的保护；分红行补充 `withholding_rate` / `pay_date` / `reinvest_price` / `gross_dividend_usd` / `div_per_share` 等审计元数据（`gross_dividend_usd` 已加入 `compute.py` 脱敏清单）
