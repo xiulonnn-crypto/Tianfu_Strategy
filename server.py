@@ -4,8 +4,11 @@
 运行：pip install -r requirements.txt && python server.py
 """
 
+import bisect
 import json
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -36,7 +39,31 @@ MODEL_STATE_FILE = DATA_DIR / "model_state.json"
 
 # 价格缓存：文件持久化，同一天内所有请求使用同一份数据，避免刷新时数据变化
 PRICE_CACHE_FILE = DATA_DIR / "price_cache.json"
-_CACHE_VERSION = 5  # 升级时递增，使旧缓存失效（5：收益概览拉取区间含 1y_roll 缓冲，近1年有数据）
+_CACHE_VERSION = 6  # 升级时递增，使旧缓存失效（6：各端点统一 fetch 区间键，命中同一 price_cache）
+
+# 公司行为类交易类型：仅改股数、不改现金成本（MWRR/汇总/加仓散点等需排除）
+TYPE_DIVIDEND = "分红"
+TYPE_CORP_SPLIT = "合股拆股"
+ALLOWED_TRADE_TYPES = frozenset(
+    {"定投", "投弹", "投机", "现金管理", TYPE_DIVIDEND, TYPE_CORP_SPLIT}
+)
+
+# 分红再投资模型默认参数：对齐 IB 对美股非居民 DRIP 的实际口径
+# - 预扣税率 0.30：美国对非居民默认税率（有 W-8BEN 协定时可在 UI 改成 0.10）
+# - 付息日偏移 5：Invesco / SPDR 等常见 ETF 的 ex-date → pay-date 近似工作日数
+DEFAULT_DIVIDEND_WITHHOLDING_RATE = 0.30
+DEFAULT_DIVIDEND_REINVEST_OFFSET_BD = 5
+
+
+def _is_corp_action(t):
+    """分红 / 合股拆股：不计入 MWRR 现金流与佣金汇总；成本侧仅调整股数。"""
+    tp = (t.get("type") or "").strip()
+    return tp in (TYPE_DIVIDEND, TYPE_CORP_SPLIT)
+
+
+def _normalize_trade_type(raw):
+    s = (raw or "定投").strip()
+    return s if s in ALLOWED_TRADE_TYPES else "定投"
 
 
 def load_json(path, default):
@@ -63,11 +90,17 @@ def get_trades():
     return load_json(TRADES_FILE, [])
 
 
-def positions_at_date(trades, on_date):
+def positions_at_date(trades, on_date, position_timeline=None, timeline_dates=None):
     """
     计算在 on_date 当日收盘时的持仓（按标的汇总股数）。
     买入增加股数，卖出减少股数；仅统计 date <= on_date 的交易。
+    若提供 position_timeline + timeline_dates（由 _build_positions_timeline 生成），则 O(log n) 查表。
     """
+    if position_timeline is not None and timeline_dates is not None and timeline_dates:
+        i = bisect.bisect_right(timeline_dates, on_date) - 1
+        if i >= 0:
+            return dict(position_timeline[timeline_dates[i]])
+        return {}
     by_symbol = {}
     for t in trades:
         if (t.get("date") or "") > on_date:
@@ -82,6 +115,119 @@ def positions_at_date(trades, on_date):
         elif action == "卖出":
             by_symbol[sym] = by_symbol.get(sym, 0) - shares
     return {s: q for s, q in by_symbol.items() if q > 0}
+
+
+def _build_positions_timeline(trades, trading_dates):
+    """
+    对每个关键日期（交易日 ∪ 交易日历上有交易的日期）记录收盘持仓，供 O(log n) 查询。
+    返回 (timeline_dict, sorted_date_list)；timeline_dict[date] = {sym: qty}。
+    """
+    trade_dates = {(t.get("date") or "")[:10] for t in trades if (t.get("date") or "")[:10]}
+    all_dates = sorted(set(trading_dates or []) | trade_dates)
+    if not all_dates:
+        return {}, []
+    indexed = list(enumerate(trades))
+    indexed.sort(key=lambda x: ((x[1].get("date") or "")[:10], x[0]))
+    by_symbol = {}
+    ti = 0
+    n = len(indexed)
+    timeline = {}
+    for d in all_dates:
+        while ti < n:
+            _, t = indexed[ti]
+            td = (t.get("date") or "")[:10]
+            if td > d:
+                break
+            sym = (t.get("symbol") or "").strip().upper()
+            if not sym:
+                ti += 1
+                continue
+            action = t.get("action") or ""
+            try:
+                shares = float(t.get("shares") or 0)
+            except (TypeError, ValueError):
+                ti += 1
+                continue
+            if action == "买入":
+                by_symbol[sym] = by_symbol.get(sym, 0) + shares
+            elif action == "卖出":
+                by_symbol[sym] = by_symbol.get(sym, 0) - shares
+            ti += 1
+        timeline[d] = {s: q for s, q in by_symbol.items() if q > 0}
+    return timeline, all_dates
+
+
+def _build_price_index(history_cache):
+    """
+    将 {symbol: DataFrame} 转为 bisect 友好的 {symbol: (sorted_dates, {date: price})}。
+    """
+    idx = {}
+    for sym, df in (history_cache or {}).items():
+        if df is None or df.empty:
+            continue
+        prices = {}
+        for ts in df.index:
+            d = str(pd.Timestamp(ts).date()) if ts is not None else ""
+            if not d:
+                d = str(ts)[:10]
+            try:
+                val = df.at[ts, "Close"]
+                px = float(val.iloc[0]) if hasattr(val, "iloc") else float(val)
+                prices[d] = px
+            except Exception:
+                continue
+        if not prices:
+            continue
+        dates = sorted(prices.keys())
+        idx[sym] = (dates, prices)
+    return idx
+
+
+def get_price_on_date_fast(symbol, date_str, price_index):
+    """O(log n) 取 <= date_str 的最近收盘价；price_index 来自 _build_price_index。"""
+    if not symbol or not date_str or not price_index:
+        return None
+    sym = symbol.strip().upper() if isinstance(symbol, str) else symbol
+    if sym not in price_index:
+        return None
+    dates, prices = price_index[sym]
+    ds = date_str[:10]
+    if ds in prices:
+        return prices[ds]
+    i = bisect.bisect_right(dates, ds) - 1
+    if i < 0:
+        return None
+    return prices.get(dates[i])
+
+
+def _compute_fetch_range(trades_list):
+    """
+    统一各端点 Yahoo 拉取区间，使 _load_price_cache 键一致、避免互相覆盖。
+    与收益概览 api_returns_overview 的窗口定义对齐。
+    """
+    dt = datetime.now()
+    since_date = min((t["date"][:10] for t in trades_list), default=dt.strftime("%Y-%m-%d"))
+    year_start = dt.replace(month=1, day=1).strftime("%Y-%m-%d")
+    one_year_ago_with_buffer = (dt - timedelta(days=395)).strftime("%Y-%m-%d")
+    end_fetch = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
+    start_fetch = min(since_date, one_year_ago_with_buffer, year_start)
+    return start_fetch, end_fetch
+
+
+def build_perf_bundle(trades_list, history_cache, bench_cache, trading_dates):
+    """一次构建价格索引 + 持仓时间线，供收益/复盘等热路径复用。"""
+    merged = {}
+    if history_cache:
+        merged.update(history_cache)
+    if bench_cache:
+        merged.update(bench_cache)
+    price_index = _build_price_index(merged)
+    position_timeline, timeline_dates = _build_positions_timeline(trades_list, trading_dates)
+    return {
+        "price_index": price_index,
+        "position_timeline": position_timeline,
+        "timeline_dates": timeline_dates,
+    }
 
 
 def get_all_symbols(trades):
@@ -99,6 +245,11 @@ def yf_symbol(symbol):
     return symbol.replace(".", "-") if symbol else symbol
 
 
+# 实时行情内存缓存（秒级 TTL），减轻 signals 等端点连续刷新时的 Yahoo 延迟
+_REALTIME_QUOTE_TTL_SEC = 60.0
+_REALTIME_QUOTE_CACHE = {}
+
+
 def fetch_realtime_quote(symbol):
     """
     拉取单标的实时（或最近可用）行情。使用 yfinance 最近 5 日数据取最新收盘与涨跌。
@@ -107,6 +258,12 @@ def fetch_realtime_quote(symbol):
     """
     if not symbol or not isinstance(symbol, str):
         return None
+    now_m = time.monotonic()
+    cached = _REALTIME_QUOTE_CACHE.get(symbol)
+    if cached is not None:
+        t0, data = cached
+        if now_m - t0 < _REALTIME_QUOTE_TTL_SEC and data is not None:
+            return data
     sy = yf_symbol(symbol.strip())
     # 展示用名称（指数保留 ^ 前缀）
     display_symbol = symbol.strip().upper()
@@ -116,16 +273,18 @@ def fetch_realtime_quote(symbol):
         ticker = yf.Ticker(sy)
         hist = ticker.history(period="5d", auto_adjust=False)
         if hist is None or hist.empty or "Close" not in hist.columns:
+            _REALTIME_QUOTE_CACHE[symbol] = (time.monotonic(), None)
             return None
         # 取最近两日：最新价与前一收盘
         closes = hist["Close"].dropna()
         if len(closes) < 1:
+            _REALTIME_QUOTE_CACHE[symbol] = (time.monotonic(), None)
             return None
         price = float(closes.iloc[-1])
         prev_close = float(closes.iloc[-2]) if len(closes) >= 2 else price
         change = round(price - prev_close, 4)
         change_pct = round((change / prev_close * 100), 2) if prev_close and prev_close != 0 else 0.0
-        return {
+        result = {
             "symbol": display_symbol,
             "name": name,
             "price": round(price, 2),
@@ -133,14 +292,20 @@ def fetch_realtime_quote(symbol):
             "change": round(change, 2),
             "change_pct": change_pct,
         }
+        _REALTIME_QUOTE_CACHE[symbol] = (time.monotonic(), result)
+        return result
     except Exception:
+        _REALTIME_QUOTE_CACHE[symbol] = (time.monotonic(), None)
         return None
 
 
-def get_price_on_date(symbol, date_str, history_cache):
+def get_price_on_date(symbol, date_str, history_cache, price_index=None):
     """
     从已拉取的 history_cache[symbol] (DataFrame, index=Date) 中取 date_str 当日或之前最近一日的收盘价。
+    若提供 price_index（_build_price_index 结果），走 O(log n) 路径。
     """
+    if price_index is not None:
+        return get_price_on_date_fast(symbol, date_str, price_index)
     if symbol not in history_cache or history_cache[symbol] is None:
         return None
     df = history_cache[symbol]
@@ -358,15 +523,16 @@ def portfolio_value_with_prices(positions, prices):
     return total
 
 
-def prices_at(symbols, history_cache, date_str):
+def prices_at(symbols, history_cache, date_str, price_index=None):
     """从 history_cache 取各标的在 date_str 当日或之前最近交易日的收盘价，返回 {symbol: float or None}。"""
-    return {sym: get_price_on_date(sym, date_str, history_cache) for sym in symbols}
+    return {sym: get_price_on_date(sym, date_str, history_cache, price_index) for sym in symbols}
 
 
 def compute_cost_basis(trades):
     """
     平均成本法计算各标的当前持仓的成本。
     买入时累计成本（含手续费），卖出时按比例释放成本。
+    分红 / 合股拆股：只调整股数，不改变 total_cost（现金成本），使 avg_cost 随除权一致。
     返回 {symbol: {'shares', 'avg_cost', 'total_cost'}}，只含有持仓的标的。
     """
     holdings = {}
@@ -374,6 +540,7 @@ def compute_cost_basis(trades):
         sym = (t.get("symbol") or "").strip().upper()
         if not sym:
             continue
+        tp = (t.get("type") or "").strip()
         action = t.get("action") or ""
         try:
             shares = float(t.get("shares") or 0)
@@ -383,6 +550,23 @@ def compute_cost_basis(trades):
             continue
         if shares <= 0:
             continue
+
+        if tp == TYPE_DIVIDEND:
+            if action == "买入":
+                if sym not in holdings:
+                    holdings[sym] = {"shares": 0.0, "total_cost": 0.0}
+                holdings[sym]["shares"] += shares
+            continue
+
+        if tp == TYPE_CORP_SPLIT:
+            if sym not in holdings:
+                holdings[sym] = {"shares": 0.0, "total_cost": 0.0}
+            if action == "买入":
+                holdings[sym]["shares"] += shares
+            elif action == "卖出":
+                holdings[sym]["shares"] = max(0.0, holdings[sym]["shares"] - shares)
+            continue
+
         if action == "买入":
             if sym not in holdings:
                 holdings[sym] = {"shares": 0.0, "total_cost": 0.0}
@@ -452,7 +636,7 @@ def _npv_mwr(r, v0, v_end, cf_list, t_list):
     return val
 
 
-def compute_mwr(trades_list, fund_records, history_cache, period_start, period_end, all_trading_dates):
+def compute_mwr(trades_list, fund_records, history_cache, period_start, period_end, all_trading_dates, perf=None):
     """
     资金加权收益率（MWRR / IRR）计算。
 
@@ -471,18 +655,21 @@ def compute_mwr(trades_list, fund_records, history_cache, period_start, period_e
     if T_days <= 0:
         return None
 
+    pix = (perf or {}).get("price_index")
+    tl = (perf or {}).get("position_timeline")
+    tds = (perf or {}).get("timeline_dates")
     # 期初持仓市值视为 t=0 的投入（负现金流）
-    pos_start = positions_at_date(trades_list, period_start)
+    pos_start = positions_at_date(trades_list, period_start, tl, tds)
     syms_start = list(pos_start.keys()) if pos_start else []
     v0 = portfolio_value_with_prices(
-        pos_start, prices_at(syms_start, history_cache, period_start),
+        pos_start, prices_at(syms_start, history_cache, period_start, pix),
     ) if pos_start else 0.0
 
     # 期末持仓市值视为 t=1 的回收（正现金流）
-    pos_end = positions_at_date(trades_list, period_end)
+    pos_end = positions_at_date(trades_list, period_end, tl, tds)
     syms_end = list(pos_end.keys()) if pos_end else []
     v_end = portfolio_value_with_prices(
-        pos_end, prices_at(syms_end, history_cache, period_end),
+        pos_end, prices_at(syms_end, history_cache, period_end, pix),
     ) if pos_end else 0.0
 
     # 从交易记录构建现金流：仅 (period_start, period_end] 内的交易
@@ -492,6 +679,8 @@ def compute_mwr(trades_list, fund_records, history_cache, period_start, period_e
     for t in trades_list:
         d = (t.get("date") or "")[:10]
         if not d or d <= period_start or d > period_end:
+            continue
+        if _is_corp_action(t):
             continue
         action = t.get("action") or ""
         try:
@@ -536,7 +725,7 @@ def compute_mwr(trades_list, fund_records, history_cache, period_start, period_e
         return round(((v_end / v0) - 1.0) * 100, 2) if v0 > 1e-6 else None
 
 
-def compute_twr(trades_list, history_cache, period_start, period_end, all_trading_dates):
+def compute_twr(trades_list, history_cache, period_start, period_end, all_trading_dates, perf=None):
     """
     时间加权收益率（TWR）计算。
 
@@ -564,16 +753,19 @@ def compute_twr(trades_list, history_cache, period_start, period_end, all_tradin
     if len(chain) < 2:
         return 0.0
 
+    pix = (perf or {}).get("price_index")
+    tl = (perf or {}).get("position_timeline")
+    tds = (perf or {}).get("timeline_dates")
     cumulative_factor = 1.0
     for i in range(1, len(chain)):
         prev_d, curr_d = chain[i - 1], chain[i]
         # 使用 prev_d 收盘时（含当日交易）的持仓
-        pos = positions_at_date(trades_list, prev_d)
+        pos = positions_at_date(trades_list, prev_d, tl, tds)
         if not pos:
             continue
         syms = list(pos.keys())
-        v_prev = portfolio_value_with_prices(pos, prices_at(syms, history_cache, prev_d))
-        v_curr = portfolio_value_with_prices(pos, prices_at(syms, history_cache, curr_d))
+        v_prev = portfolio_value_with_prices(pos, prices_at(syms, history_cache, prev_d, pix))
+        v_curr = portfolio_value_with_prices(pos, prices_at(syms, history_cache, curr_d, pix))
         # 用同一批持仓估值，排除现金流干扰
         if v_prev > 1e-6:
             cumulative_factor *= (v_curr / v_prev)
@@ -582,7 +774,7 @@ def compute_twr(trades_list, history_cache, period_start, period_end, all_tradin
 
 
 def compute_twr_chart(trades_list, history_cache, bench_cache,
-                      period_start, period_end, all_trading_dates):
+                      period_start, period_end, all_trading_dates, perf=None):
     """
     生成时段内每个交易日的累计 TWR 走势 + DCA 基准。
 
@@ -602,14 +794,18 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
     if len(chain) < 2 and dates_before:
         chain = [dates_before[-1]] + chain
 
-    b_base = get_price_on_date(BENCHMARK_SYMBOL, chain[0], bench_cache) or 1.0
+    pix = (perf or {}).get("price_index")
+    tl = (perf or {}).get("position_timeline")
+    tds = (perf or {}).get("timeline_dates")
+    b_base = get_price_on_date(BENCHMARK_SYMBOL, chain[0], bench_cache, pix) or 1.0
 
-    # 计算时段内实际总买入金额（用于 DCA 模拟）
+    # 计算时段内实际总买入金额（用于 DCA 模拟）；排除分红/拆股等非现金买入
     total_buy_amount = sum(
         float(t.get("price", 0)) * float(t.get("shares", 0))
         for t in trades_list
         if (t.get("action") or "") == "买入"
         and period_start <= (t.get("date") or "")[:10] <= period_end
+        and not _is_corp_action(t)
     )
     n_days = len(dates_in_range)
     daily_dca_amount = total_buy_amount / n_days if n_days > 0 and total_buy_amount > 0 else 0
@@ -621,22 +817,22 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
 
     for i in range(1, len(chain)):
         prev_d, curr_d = chain[i - 1], chain[i]
-        pos = positions_at_date(trades_list, prev_d)
+        pos = positions_at_date(trades_list, prev_d, tl, tds)
         if pos:
             syms = list(pos.keys())
-            v_prev = portfolio_value_with_prices(pos, prices_at(syms, history_cache, prev_d))
-            v_curr = portfolio_value_with_prices(pos, prices_at(syms, history_cache, curr_d))
+            v_prev = portfolio_value_with_prices(pos, prices_at(syms, history_cache, prev_d, pix))
+            v_curr = portfolio_value_with_prices(pos, prices_at(syms, history_cache, curr_d, pix))
             if v_prev > 1e-6:
                 cumulative_factor *= (v_curr / v_prev)
 
         if curr_d >= period_start:
-            b_curr = get_price_on_date(BENCHMARK_SYMBOL, curr_d, bench_cache) or b_base
+            b_curr = get_price_on_date(BENCHMARK_SYMBOL, curr_d, bench_cache, pix) or b_base
             labels.append(curr_d[5:])
             my_series.append(round((cumulative_factor - 1) * 100, 2))
             bench_series.append(round((b_curr / b_base - 1) * 100, 2) if b_base > 0 else 0.0)
 
             # DCA：每日等额买入，用 QQQM 价格模拟
-            qqqm_p = get_price_on_date("QQQM", curr_d, history_cache)
+            qqqm_p = get_price_on_date("QQQM", curr_d, history_cache, pix)
             dca_price = qqqm_p if qqqm_p and qqqm_p > 0 else (b_curr if b_curr > 0 else 1)
             if daily_dca_amount > 0 and dca_price > 0:
                 dca_cum_shares += daily_dca_amount / dca_price
@@ -655,6 +851,8 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
         sym = (t.get("symbol") or "").upper()
         if (t.get("action") or "") != "买入" or td < period_start or td > period_end:
             continue
+        if _is_corp_action(t):
+            continue
         if sym in CASH_TICKERS_CHART:
             continue
         label_key = td[5:]
@@ -670,23 +868,26 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
     return {"labels": labels, "my": my_series, "bench": bench_series, "dca": dca_series, "buy_markers": buy_markers}
 
 
-def _twr_daily_returns(trades_list, history_cache, bench_cache, dates_in_range):
+def _twr_daily_returns(trades_list, history_cache, bench_cache, dates_in_range, perf=None):
     """返回 (r_port_list, r_bench_list) 日 TWR 收益，仅含前一日有持仓的区间。"""
+    pix = (perf or {}).get("price_index")
+    tl = (perf or {}).get("position_timeline")
+    tds = (perf or {}).get("timeline_dates")
     r_port = []
     r_bench = []
     for i in range(1, len(dates_in_range)):
         prev_d, curr_d = dates_in_range[i - 1], dates_in_range[i]
-        pos = positions_at_date(trades_list, prev_d)
+        pos = positions_at_date(trades_list, prev_d, tl, tds)
         if not pos:
             continue
         syms = list(pos.keys())
-        v_prev = portfolio_value_with_prices(pos, prices_at(syms, history_cache, prev_d))
-        v_curr = portfolio_value_with_prices(pos, prices_at(syms, history_cache, curr_d))
+        v_prev = portfolio_value_with_prices(pos, prices_at(syms, history_cache, prev_d, pix))
+        v_curr = portfolio_value_with_prices(pos, prices_at(syms, history_cache, curr_d, pix))
         if not v_prev or v_prev <= 1e-6:
             continue
         r_port.append((v_curr / v_prev) - 1.0)
-        b_prev = get_price_on_date(BENCHMARK_SYMBOL, prev_d, bench_cache) or 0.0
-        b_curr = get_price_on_date(BENCHMARK_SYMBOL, curr_d, bench_cache) or 0.0
+        b_prev = get_price_on_date(BENCHMARK_SYMBOL, prev_d, bench_cache, pix) or 0.0
+        b_curr = get_price_on_date(BENCHMARK_SYMBOL, curr_d, bench_cache, pix) or 0.0
         r_bench.append((b_curr / b_prev) - 1.0 if b_prev and b_prev > 1e-6 else 0.0)
     return r_port, r_bench
 
@@ -776,7 +977,7 @@ def _build_drawdown_series(r_port_list, dates_with_returns):
 
 
 def compute_risk_metrics(trades_list, history_cache, bench_cache,
-                         period_start, effective_end_date, all_trading_dates):
+                         period_start, effective_end_date, all_trading_dates, perf=None):
     """
     风险指标（纳指为基准），均按所选时段 [period_start, effective_end_date] 计算：
     - 最大回撤 + 回撤序列 + Top-3 回撤明细（Duration / Recovery）。
@@ -797,13 +998,20 @@ def compute_risk_metrics(trades_list, history_cache, bench_cache,
 
     dates_in_period = [d for d in all_trading_dates if period_start <= d <= effective_end_date]
 
+    # 日收益序列只算一次（原实现重复 3 次 _twr_daily_returns）
+    r_port_once = r_bench_once = None
+    if len(dates_in_period) >= 2:
+        r_port_once, r_bench_once = _twr_daily_returns(
+            trades_list, history_cache, bench_cache, dates_in_period, perf
+        )
+
     # ---------- 1. 回撤分析：净值曲线 → 回撤序列 + Top3 ----------
     max_drawdown_pct = None
     drawdown_series = None
     drawdown_labels = None
     top3_drawdowns = None
-    if len(dates_in_period) >= 2:
-        r_port, _ = _twr_daily_returns(trades_list, history_cache, bench_cache, dates_in_period)
+    if len(dates_in_period) >= 2 and r_port_once is not None:
+        r_port = r_port_once
         if len(r_port) >= 1:
             dd_series, top3 = _build_drawdown_series(r_port, dates_in_period)
             max_drawdown_pct = round(min(dd_series) * -1, 1) if dd_series else None
@@ -815,10 +1023,8 @@ def compute_risk_metrics(trades_list, history_cache, bench_cache,
     sharpe_ratio = None
     alpha_pct = None
     beta = None
-    if len(dates_in_period) >= 2:
-        r_port_period, r_bench_period = _twr_daily_returns(
-            trades_list, history_cache, bench_cache, dates_in_period
-        )
+    if len(dates_in_period) >= 2 and r_port_once is not None and r_bench_once is not None:
+        r_port_period, r_bench_period = r_port_once, r_bench_once
         if len(r_port_period) >= 2 and len(r_port_period) == len(r_bench_period):
             rp = np.array(r_port_period, dtype=float)
             rb = np.array(r_bench_period, dtype=float)
@@ -838,11 +1044,10 @@ def compute_risk_metrics(trades_list, history_cache, bench_cache,
                 alpha_pct = round(alpha_period * 100, 1)
 
     bench_max_drawdown_pct = None
-    if len(dates_in_period) >= 2:
-        _, r_bench_dd = _twr_daily_returns(trades_list, history_cache, bench_cache, dates_in_period)
-        if r_bench_dd:
-            bench_dd_series, _ = _build_drawdown_series(r_bench_dd, dates_in_period)
-            bench_max_drawdown_pct = round(min(bench_dd_series) * -1, 1) if bench_dd_series else None
+    if len(dates_in_period) >= 2 and r_bench_once:
+        r_bench_dd = r_bench_once
+        bench_dd_series, _ = _build_drawdown_series(r_bench_dd, dates_in_period)
+        bench_max_drawdown_pct = round(min(bench_dd_series) * -1, 1) if bench_dd_series else None
 
     return {
         "max_drawdown_pct": max_drawdown_pct,
@@ -856,7 +1061,7 @@ def compute_risk_metrics(trades_list, history_cache, bench_cache,
 
 
 def compute_value_growth_chart(trades_list, history_cache, bench_cache,
-                               period_start, period_end, all_trading_dates):
+                               period_start, period_end, all_trading_dates, perf=None):
     """
     生成时段内每个交易日的「市值相对期初增长%」走势，用于资金加权收益率下的图表展示。
     my：组合市值 (V(t)/V_start - 1)*100；bench：纳指相对 period_start 的简单涨跌幅（%）。
@@ -865,26 +1070,29 @@ def compute_value_growth_chart(trades_list, history_cache, bench_cache,
     if not dates_in_range:
         return {"labels": [], "my": [], "bench": []}
 
-    pos_start = positions_at_date(trades_list, period_start)
+    pix = (perf or {}).get("price_index")
+    tl = (perf or {}).get("position_timeline")
+    tds = (perf or {}).get("timeline_dates")
+    pos_start = positions_at_date(trades_list, period_start, tl, tds)
     syms_start = list(pos_start.keys()) if pos_start else []
     v_start = portfolio_value_with_prices(
         pos_start,
-        prices_at(syms_start, history_cache, period_start),
+        prices_at(syms_start, history_cache, period_start, pix),
     ) if pos_start else 0.0
     if v_start < 1e-6:
         v_start = 1.0
 
-    b_base = get_price_on_date(BENCHMARK_SYMBOL, period_start, bench_cache) or 1.0
+    b_base = get_price_on_date(BENCHMARK_SYMBOL, period_start, bench_cache, pix) or 1.0
     labels, my_series, bench_series = [], [], []
 
     for d in dates_in_range:
-        pos = positions_at_date(trades_list, d)
+        pos = positions_at_date(trades_list, d, tl, tds)
         v_t = portfolio_value_with_prices(
             pos,
-            prices_at(list(pos.keys()), history_cache, d),
+            prices_at(list(pos.keys()), history_cache, d, pix),
         ) if pos else 0.0
         my_series.append(round((v_t / v_start - 1.0) * 100, 2))
-        b_curr = get_price_on_date(BENCHMARK_SYMBOL, d, bench_cache) or b_base
+        b_curr = get_price_on_date(BENCHMARK_SYMBOL, d, bench_cache, pix) or b_base
         bench_series.append(round((b_curr / b_base - 1) * 100, 2) if b_base > 0 else 0.0)
         labels.append(d[5:])
 
@@ -897,6 +1105,16 @@ def index():
     return send_from_directory(".", "index.html")
 
 
+@app.route("/data/backtest/<path:filename>", methods=["GET"])
+def serve_backtest_static(filename: str):
+    """历史回测预生成 JSON 直出。
+    本地模式下前端 fetch('./data/backtest/v1.3.1-*-{summary,nav,trades}.json')
+    需有此路由；云端（GitHub Pages）由静态托管直接服务。
+    send_from_directory 内置 safe_join，会阻止 '..' 跨目录访问。
+    """
+    return send_from_directory(BASE_DIR / "data" / "backtest", filename)
+
+
 @app.route("/favicon.ico", methods=["GET"])
 def favicon():
     """避免浏览器自动请求 favicon 时产生 404 日志"""
@@ -906,7 +1124,7 @@ def favicon():
 @app.route("/api/version", methods=["GET"])
 def api_version():
     """用于前端判断当前后端是否支持编辑/删除（避免 404 时误判）"""
-    return jsonify({"edit_delete": True})
+    return jsonify({"edit_delete": True, "corp_actions": True})
 
 
 @app.route("/api/fund-records", methods=["GET"])
@@ -985,26 +1203,11 @@ def api_trades():
 def api_trades_post():
     """新增一条交易"""
     data = request.get_json() or {}
-    required = ["date", "symbol", "action", "price", "shares"]
-    for k in required:
-        if k not in data:
-            return jsonify({"error": f"缺少 {k}"}), 400
-    try:
-        price = float(data["price"])
-        shares = float(data["shares"])
-        commission = float(data.get("commission") or 0)
-    except (TypeError, ValueError):
-        return jsonify({"error": "price/shares/commission 需为数字"}), 400
+    row, err = _trade_row_from_request(data)
+    if err:
+        return jsonify({"error": err}), 400
     trades_list = get_trades()
-    trades_list.append({
-        "date": data["date"].strip(),
-        "symbol": data["symbol"].strip(),
-        "action": data["action"].strip(),
-        "price": price,
-        "shares": shares,
-        "commission": commission,
-        "type": (data.get("type") or "定投").strip(),
-    })
+    trades_list.append(row)
     save_json(TRADES_FILE, trades_list)
     return jsonify({"ok": True})
 
@@ -1027,7 +1230,12 @@ def api_trades_delete():
 
 @app.route("/api/trades/update", methods=["POST"])
 def api_trades_update():
-    """按索引编辑一条交易（POST body: {"index", "date", "symbol", "action", "price", "shares", ...}）"""
+    """按索引编辑一条交易（POST body: {"index", "date", "symbol", "action", "price", "shares", ...}）
+
+    分红 / 合股拆股记录默认禁止手动新建，但允许编辑由同步流程自动生成的既有记录：
+    当原记录 auto=True 时，自动保留 auto 标记与元数据（withholding_rate 等），
+    使用户可以对照 IB 的实际股数做小幅校准。
+    """
     data = request.get_json() or {}
     try:
         idx = int(data.get("index", -1))
@@ -1036,27 +1244,32 @@ def api_trades_update():
     trades_list = get_trades()
     if idx < 0 or idx >= len(trades_list):
         return jsonify({"error": "索引无效"}), 404
-    required = ["date", "symbol", "action", "price", "shares"]
-    for k in required:
-        if k not in data:
-            return jsonify({"error": f"缺少 {k}"}), 400
-    try:
-        price = float(data["price"])
-        shares = float(data["shares"])
-        commission = float(data.get("commission") or 0)
-    except (TypeError, ValueError):
-        return jsonify({"error": "price/shares/commission 需为数字"}), 400
-    trades_list[idx] = {
-        "date": data["date"].strip(),
-        "symbol": data["symbol"].strip(),
-        "action": data["action"].strip(),
-        "price": price,
-        "shares": shares,
-        "commission": commission,
-        "type": (data.get("type") or "定投").strip(),
-    }
+    existing = trades_list[idx] or {}
+    if existing.get("auto") is True:
+        data = dict(data)
+        data["auto"] = True
+    row, err = _trade_row_from_request(data)
+    if err:
+        return jsonify({"error": err}), 400
+    if existing.get("auto") is True:
+        for k in (
+            "source", "split_ratio", "div_per_share", "withholding_rate",
+            "pay_date", "reinvest_price", "gross_dividend_usd",
+        ):
+            if k in existing and k not in row:
+                row[k] = existing[k]
+    trades_list[idx] = row
     save_json(TRADES_FILE, trades_list)
     return jsonify({"ok": True})
+
+
+@app.route("/api/corp-actions/sync", methods=["POST"])
+def api_corp_actions_sync():
+    """从 yfinance 同步分红、拆股到交易记录（body 可选 {\"symbol\": \"QQQM\"}，缺省为全部持仓标的）。"""
+    data = request.get_json() or {}
+    sym = (data.get("symbol") or "").strip() or None
+    out = sync_corp_actions_from_yfinance(symbol_filter=sym)
+    return jsonify({"ok": True, **out})
 
 
 @app.route("/api/trade-summary", methods=["GET"])
@@ -1092,7 +1305,10 @@ def api_trade_summary():
         elif amt < 0:
             total_outflow += abs(amt)
 
-    total_commission = round(sum(float(t.get("commission") or 0) for t in tds), 2)
+    total_commission = round(
+        sum(float(t.get("commission") or 0) for t in tds if not _is_corp_action(t)),
+        2,
+    )
 
     # 资金利用率需要当前持仓数据
     all_trades = get_trades()
@@ -1100,16 +1316,16 @@ def api_trade_summary():
     cash_util = 0.0
     if all_symbols:
         dt = datetime.now()
-        since_date = min((t["date"][:10] for t in all_trades), default=dt.strftime("%Y-%m-%d"))
-        start_f = min(since_date, (dt - timedelta(days=365)).strftime("%Y-%m-%d"))
-        end_f = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
-        hc, _, td_dates = fetch_histories_with_bench(all_symbols, start_f, end_f)
+        start_f, end_f = _compute_fetch_range(all_trades)
+        hc, bc, td_dates = fetch_histories_with_bench(all_symbols, start_f, end_f)
         eff_date = td_dates[-1] if td_dates else dt.strftime("%Y-%m-%d")
-        pos = positions_at_date(all_trades, eff_date)
+        perf = build_perf_bundle(all_trades, hc, bc, td_dates)
+        pix = perf["price_index"]
+        pos = positions_at_date(all_trades, eff_date, perf["position_timeline"], perf["timeline_dates"])
         tv = 0.0
         boxx_v = 0.0
         for sym, qty in pos.items():
-            p = get_price_on_date(sym, eff_date, hc) or 0
+            p = get_price_on_date(sym, eff_date, hc, pix) or 0
             v = qty * p
             tv += v
             if sym.upper() == "BOXX":
@@ -1152,14 +1368,15 @@ def api_returns_overview():
     year_start = dt.replace(month=1, day=1).strftime("%Y-%m-%d")
     # 近1年(1y_roll)按「最后交易日」往前推 365 天，故拉取起点需多留缓冲，避免周末/节假日导致无数据
     one_year_ago = (dt - timedelta(days=365)).strftime("%Y-%m-%d")
-    one_year_ago_with_buffer = (dt - timedelta(days=395)).strftime("%Y-%m-%d")  # 多约 30 天，覆盖 1y_roll 起点
-    start_fetch = min(since_date, one_year_ago_with_buffer, year_start)
-    end_fetch = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
+    start_fetch, end_fetch = _compute_fetch_range(trades_list)
 
     # 拉取历史行情（统一文件缓存，同一天内收益与资产配置数据完全一致）
     history_cache, bench_cache, trading_dates = fetch_histories_with_bench(symbols, start_fetch, end_fetch)
     if not trading_dates:
         return jsonify(empty_resp)
+
+    perf = build_perf_bundle(trades_list, history_cache, bench_cache, trading_dates)
+    pix = perf["price_index"]
 
     # 以最后一个有行情的交易日为基准，保证每次刷新结果一致（配合价格缓存）
     effective_end_date = trading_dates[-1]
@@ -1167,20 +1384,23 @@ def api_returns_overview():
     effective_end_dt = datetime.strptime(effective_end_date, "%Y-%m-%d")
 
     # 当前持仓与市值（全部基于交易历史 + 真实行情计算）
-    current_pos = positions_at_date(trades_list, effective_end_date)
+    current_pos = positions_at_date(
+        trades_list, effective_end_date, perf["position_timeline"], perf["timeline_dates"],
+    )
     if not current_pos:
         return jsonify(empty_resp)
 
     v_end = portfolio_value_with_prices(
         current_pos,
-        prices_at(list(current_pos.keys()), history_cache, effective_end_date),
+        prices_at(list(current_pos.keys()), history_cache, effective_end_date, pix),
     )
 
-    # 各时段起始日定义；YTD / 1Y 取「自然起始日」与「组合第一次交易日期」的较晚值，避免起始早于组合成立
+    # 各时段起始日定义：1D 保留日级涨跌语义；其他时段取「自然起始日」与「组合第一次持仓日期」
+    # 的较晚者（max），保证起点不早于 since_date，避免在无持仓区间计算收益。
     one_year_ago_str = (effective_end_dt - timedelta(days=365)).strftime("%Y-%m-%d")
     periods = {
         "1d":      prev_trading_date,
-        "1m":      month_start,
+        "1m":      max(month_start, since_date),
         "1y":      max(year_start, since_date),
         "1y_roll": max(one_year_ago_str, since_date),
         "since":   since_date,
@@ -1196,18 +1416,18 @@ def api_returns_overview():
 
     for key, p_start in periods.items():
         # TWR（时间加权）
-        twr_pct = compute_twr(trades_list, history_cache, p_start, effective_end_date, trading_dates)
+        twr_pct = compute_twr(trades_list, history_cache, p_start, effective_end_date, trading_dates, perf)
         # MWRR（金额加权）
-        mwrr_pct = compute_mwr(trades_list, fund_records, history_cache, p_start, effective_end_date, trading_dates)
+        mwrr_pct = compute_mwr(trades_list, fund_records, history_cache, p_start, effective_end_date, trading_dates, perf)
 
         # USD 收益
         if key == "since":
             usd = round(v_end - total_cost, 2)
         else:
-            pos_start = positions_at_date(trades_list, p_start)
+            pos_start = positions_at_date(trades_list, p_start, perf["position_timeline"], perf["timeline_dates"])
             v_start = portfolio_value_with_prices(
                 pos_start,
-                prices_at(list(pos_start.keys()), history_cache, p_start),
+                prices_at(list(pos_start.keys()), history_cache, p_start, pix),
             ) if pos_start else 0.0
             usd = round(v_start * twr_pct / 100, 2) if v_start > 1e-6 else round(v_end - total_cost, 2)
 
@@ -1215,8 +1435,8 @@ def api_returns_overview():
 
         # 走势图
         if key == "1d":
-            b0 = get_price_on_date(BENCHMARK_SYMBOL, prev_trading_date, bench_cache) or 1.0
-            b1 = get_price_on_date(BENCHMARK_SYMBOL, effective_end_date, bench_cache) or b0
+            b0 = get_price_on_date(BENCHMARK_SYMBOL, prev_trading_date, bench_cache, pix) or 1.0
+            b1 = get_price_on_date(BENCHMARK_SYMBOL, effective_end_date, bench_cache, pix) or b0
             bench_1d = round((b1 / b0 - 1) * 100, 2) if b0 > 0 else 0.0
             twr_1d = twr_pct if twr_pct is not None else 0.0
             chart[key] = {
@@ -1229,7 +1449,7 @@ def api_returns_overview():
         else:
             chart[key] = compute_twr_chart(
                 trades_list, history_cache, bench_cache,
-                p_start, effective_end_date, trading_dates,
+                p_start, effective_end_date, trading_dates, perf,
             )
 
     # 风险指标（含回撤序列 + Top3 回撤明细）
@@ -1237,7 +1457,7 @@ def api_returns_overview():
     for key, p_start in periods.items():
         risk_metrics[key] = compute_risk_metrics(
             trades_list, history_cache, bench_cache,
-            p_start, effective_end_date, trading_dates,
+            p_start, effective_end_date, trading_dates, perf,
         )
 
     # ===== 策略驱动力归因（Since Inception）— PnL 贡献法 =====
@@ -1256,7 +1476,7 @@ def api_returns_overview():
             bs = float(t.get("shares") or 0)
             if bp <= 0 or bs <= 0:
                 continue
-            cur_p = get_price_on_date(sym, effective_end_date, history_cache)
+            cur_p = get_price_on_date(sym, effective_end_date, history_cache, pix)
             if cur_p:
                 pnl = (cur_p - bp) * bs
                 pnl_total += pnl
@@ -1310,7 +1530,7 @@ def api_returns_overview():
     for lot in cash_buys:
         if lot["shares"] <= 1e-9:
             continue
-        cur_p = get_price_on_date(lot["sym"], effective_end_date, history_cache)
+        cur_p = get_price_on_date(lot["sym"], effective_end_date, history_cache, pix)
         if cur_p:
             pnl = (cur_p - lot["price"]) * lot["shares"]
             cash_pnl += pnl
@@ -1368,21 +1588,21 @@ def api_allocation():
         return jsonify([])
 
     dt = datetime.now()
-    since_date = min((t["date"][:10] for t in trades_list), default=dt.strftime("%Y-%m-%d"))
-    year_start = dt.replace(month=1, day=1).strftime("%Y-%m-%d")
-    one_year_ago = (dt - timedelta(days=365)).strftime("%Y-%m-%d")
-    start_fetch = min(since_date, one_year_ago, year_start)
-    end_fetch = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
+    start_fetch, end_fetch = _compute_fetch_range(trades_list)
     # 与收益概览使用完全相同的日期范围，保证命中同一缓存
     history_cache, bench_cache, trading_dates = fetch_histories_with_bench(symbols, start_fetch, end_fetch)
     effective_end_date = trading_dates[-1] if trading_dates else dt.strftime("%Y-%m-%d")
 
-    pos = positions_at_date(trades_list, effective_end_date)
+    perf = build_perf_bundle(trades_list, history_cache, bench_cache, trading_dates)
+    pix = perf["price_index"]
+    pos = positions_at_date(
+        trades_list, effective_end_date, perf["position_timeline"], perf["timeline_dates"],
+    )
     cost_basis_map = compute_cost_basis(trades_list)
 
     rows = []
     for sym, qty in pos.items():
-        price = get_price_on_date(sym, effective_end_date, history_cache)
+        price = get_price_on_date(sym, effective_end_date, history_cache, pix)
         if price is None:
             price = 0.0
         amount = qty * price
@@ -1500,6 +1720,17 @@ def api_asset_analysis(symbol):
                 p = float(t.get("price") or 0)
                 s = float(t.get("shares") or 0)
                 c = float(t.get("commission") or 0)
+                tp = (t.get("type") or "").strip()
+                if tp == TYPE_DIVIDEND:
+                    if action == "买入" and s > 0:
+                        cum_shares += s
+                    continue
+                if tp == TYPE_CORP_SPLIT:
+                    if action == "买入" and s > 0:
+                        cum_shares += s
+                    elif action == "卖出" and s > 0:
+                        cum_shares = max(0.0, cum_shares - s)
+                    continue
                 if action == "买入" and s > 0:
                     cum_cost += p * s + c
                     cum_shares += s
@@ -1514,6 +1745,8 @@ def api_asset_analysis(symbol):
     buy_points = []
     for t in sym_trades:
         if (t.get("action") or "") != "买入":
+            continue
+        if _is_corp_action(t):
             continue
         tp = t.get("type") or "定投"
         label = "投弹" if tp == "投弹" else ("投机" if tp == "投机" else "月投")
@@ -1579,6 +1812,8 @@ def api_asset_analysis(symbol):
     for t in sym_trades:
         if (t.get("action") or "") != "买入":
             continue
+        if _is_corp_action(t):
+            continue
         tp = t.get("type") or "定投"
         bp_val = float(t.get("price") or 0)
         bs_val = float(t.get("shares") or 0)
@@ -1612,6 +1847,318 @@ def api_asset_analysis(symbol):
             "max_drawdown_period": {"start": max_dd_start, "end": max_dd_end} if max_dd_end else None,
         },
     })
+
+
+def _trade_row_from_request(data):
+    """
+    从 POST body 构建一条交易 dict。分红/合股拆股仅允许 auto=true（同步写入）。
+    返回 (row, error_message)；error_message 非空表示应返回 400。
+    """
+    required = ["date", "symbol", "action", "price", "shares"]
+    for k in required:
+        if k not in data:
+            return None, f"缺少 {k}"
+    try:
+        price = float(data["price"])
+        shares = float(data["shares"])
+        commission = float(data.get("commission") or 0)
+    except (TypeError, ValueError):
+        return None, "price/shares/commission 需为数字"
+    tp = _normalize_trade_type(data.get("type"))
+    if tp in (TYPE_DIVIDEND, TYPE_CORP_SPLIT) and not data.get("auto"):
+        return None, "分红与合股拆股仅可通过「同步分红/拆股」自动生成"
+    row = {
+        "date": data["date"].strip(),
+        "symbol": data["symbol"].strip(),
+        "action": data["action"].strip(),
+        "price": price,
+        "shares": shares,
+        "commission": commission,
+        "type": tp,
+    }
+    if data.get("auto") is True:
+        row["auto"] = True
+    sr = data.get("split_ratio")
+    if sr is not None:
+        try:
+            row["split_ratio"] = float(sr)
+        except (TypeError, ValueError):
+            pass
+    src = (data.get("source") or "").strip()
+    if src:
+        row["source"] = src
+    return row, None
+
+
+def _yf_event_date(idx):
+    try:
+        return str(pd.Timestamp(idx).date())
+    except Exception:
+        return str(idx)[:10]
+
+
+def _has_manual_corp(trades_list, sym, ex_d, kind_type):
+    for t in trades_list:
+        if (t.get("symbol") or "").strip().upper() != sym:
+            continue
+        if (t.get("date") or "")[:10] != ex_d:
+            continue
+        if (t.get("type") or "").strip() != kind_type:
+            continue
+        if not t.get("auto"):
+            return True
+    return False
+
+
+def _dividend_auto_exists(trades_list, sym, ex_d):
+    return any(
+        (t.get("symbol") or "").strip().upper() == sym
+        and (t.get("date") or "")[:10] == ex_d
+        and (t.get("type") or "").strip() == TYPE_DIVIDEND
+        and t.get("auto") is True
+        for t in trades_list
+    )
+
+
+def _split_auto_pair_exists(trades_list, sym, ex_d, ratio):
+    rows = [
+        t
+        for t in trades_list
+        if (t.get("symbol") or "").strip().upper() == sym
+        and (t.get("date") or "")[:10] == ex_d
+        and (t.get("type") or "").strip() == TYPE_CORP_SPLIT
+        and t.get("auto") is True
+        and abs(float(t.get("split_ratio") or 0) - ratio) < 1e-6
+    ]
+    return len(rows) >= 2
+
+
+def _next_nth_weekday_after(date_str, n):
+    """返回 date_str 之后第 n 个工作日（M–F，不含假日，近似交易日）。
+
+    n=0 时返回原日期；n>0 时逐日递增，跳过周末。用于估算付息日。
+    """
+    try:
+        d = parse_date(date_str)
+    except Exception:
+        return date_str
+    if d is None:
+        return date_str
+    if n <= 0:
+        return d.strftime("%Y-%m-%d")
+    cnt = 0
+    while cnt < n:
+        d = d + timedelta(days=1)
+        if d.weekday() < 5:
+            cnt += 1
+    return d.strftime("%Y-%m-%d")
+
+
+def _fetch_open_price_on_or_after(symbol, date_str):
+    """拉取 symbol 在 date_str 当日或之后第一个交易日的开盘价。
+
+    独立于 _fetch_histories_raw 的 Close-only 缓存，避免改动现有价格缓存结构。
+    出错/无数据时返回 None，由调用方回退到收盘价近似。
+    """
+    try:
+        target = parse_date(date_str)
+    except Exception:
+        return None
+    if target is None:
+        return None
+    start = date_str[:10]
+    end = (target + timedelta(days=15)).strftime("%Y-%m-%d")
+    use_repair = _yfinance_repair_available()
+    try:
+        df = yf.Ticker(yf_symbol(symbol)).history(
+            start=start, end=end, auto_adjust=False, repair=use_repair
+        )
+    except Exception:
+        return None
+    if df is None or df.empty or "Open" not in df.columns:
+        return None
+    idx = df.index
+    try:
+        target_ts = pd.Timestamp(date_str[:10])
+        if hasattr(idx, "tz") and idx.tz is not None:
+            target_ts = target_ts.tz_localize(idx.tz)
+        mask = idx >= target_ts
+        if not mask.any():
+            return None
+        val = df.loc[mask].iloc[0]["Open"]
+        return float(val.iloc[0]) if hasattr(val, "iloc") else float(val)
+    except Exception:
+        return None
+
+
+def sync_corp_actions_from_yfinance(symbol_filter=None):
+    """
+    从 yfinance 拉取分红、拆股并追加写入 trades.json。
+
+    分红股数（对齐 IB DRIP 口径）：
+        shares = (每股分红 × 除息日前夜持仓 × (1 - 预扣税率)) / 付息日开盘价
+    - 预扣税率：model_state.settings.dividend_withholding_rate，默认 0.30
+    - 付息日偏移：model_state.settings.dividend_reinvest_offset_bd，默认 5 工作日
+    - 付息日开盘价拉取失败时回退到除息日收盘价（仍应用预扣税率）
+
+    拆股：同日一条卖出旧股数 + 一条买入新股数（新股数 = 旧股数 × Yahoo 比例），不改变 total_cost。
+    """
+    settings = _get_settings()
+    wh_rate = float(settings.get(
+        "dividend_withholding_rate", DEFAULT_DIVIDEND_WITHHOLDING_RATE))
+    wh_rate = max(0.0, min(0.5, wh_rate))
+    offset_bd = int(settings.get(
+        "dividend_reinvest_offset_bd", DEFAULT_DIVIDEND_REINVEST_OFFSET_BD))
+    offset_bd = max(0, min(10, offset_bd))
+
+    trades_list = get_trades()
+    inserted = []
+    skipped = []
+
+    if symbol_filter:
+        s = (symbol_filter or "").strip().upper()
+        symbols = [s] if s else []
+    else:
+        symbols = sorted(get_all_symbols(trades_list))
+
+    if not symbols:
+        return {"inserted": [], "skipped": [{"reason": "无标的，请先添加交易"}]}
+
+    dt = datetime.now()
+    end_fetch = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    for sym in symbols:
+        sy = yf_symbol(sym)
+        try:
+            tk = yf.Ticker(sy)
+            divs = tk.dividends
+            spls = tk.splits
+        except Exception as e:
+            skipped.append({"symbol": sym, "reason": f"yfinance: {e!s}"})
+            continue
+
+        events = []
+        if divs is not None and len(divs) > 0:
+            for idx, val in divs.items():
+                ex_d = _yf_event_date(idx)
+                try:
+                    dv = float(val)
+                except (TypeError, ValueError):
+                    continue
+                if dv <= 0:
+                    continue
+                events.append(("div", ex_d, dv, None))
+        if spls is not None and len(spls) > 0:
+            for idx, val in spls.items():
+                ex_d = _yf_event_date(idx)
+                try:
+                    ratio = float(val)
+                except (TypeError, ValueError):
+                    continue
+                if abs(ratio - 1.0) < 1e-12:
+                    continue
+                events.append(("split", ex_d, ratio, None))
+
+        events.sort(key=lambda x: (x[1], 0 if x[0] == "div" else 1))
+
+        sym_dates = [ex_d for _, ex_d, _, _ in events]
+        if not sym_dates:
+            continue
+        start_fetch = (
+            parse_date(min(sym_dates)) - timedelta(days=45)
+        ).strftime("%Y-%m-%d") if parse_date(min(sym_dates)) else min(sym_dates)
+
+        hist_one = _fetch_histories_raw([sym], start_fetch, end_fetch)
+        hist_cache = hist_one if hist_one else {}
+
+        for kind, ex_d, val, _ in events:
+            if kind == "div":
+                div_per = val
+                if _has_manual_corp(trades_list, sym, ex_d, TYPE_DIVIDEND):
+                    skipped.append({"symbol": sym, "date": ex_d, "kind": "div", "reason": "同日存在手动分红"})
+                    continue
+                if _dividend_auto_exists(trades_list, sym, ex_d):
+                    skipped.append({"symbol": sym, "date": ex_d, "kind": "div", "reason": "已存在自动分红"})
+                    continue
+                pos = positions_at_date(trades_list, ex_d)
+                shares_held = float(pos.get(sym, 0) or 0)
+                if shares_held <= 1e-12:
+                    skipped.append({"symbol": sym, "date": ex_d, "kind": "div", "reason": "除息日无持仓"})
+                    continue
+                close_p = get_price_on_date(sym, ex_d, hist_cache)
+                if close_p is None or close_p <= 0:
+                    skipped.append({"symbol": sym, "date": ex_d, "kind": "div", "reason": "无法取得收盘价"})
+                    continue
+                pay_d = _next_nth_weekday_after(ex_d, offset_bd)
+                pay_open = _fetch_open_price_on_or_after(sym, pay_d) if offset_bd > 0 else close_p
+                reinvest_p = pay_open if pay_open and pay_open > 0 else close_p
+                gross_cash = div_per * shares_held
+                net_cash = gross_cash * (1.0 - wh_rate)
+                shares_added = net_cash / reinvest_p
+                if shares_added <= 1e-12:
+                    skipped.append({"symbol": sym, "date": ex_d, "kind": "div", "reason": "再投资股数过小"})
+                    continue
+                row = {
+                    "date": ex_d,
+                    "symbol": sym,
+                    "action": "买入",
+                    "price": 0.0,
+                    "shares": round(shares_added, 6),
+                    "commission": 0.0,
+                    "type": TYPE_DIVIDEND,
+                    "auto": True,
+                    "source": "yfinance",
+                    "div_per_share": div_per,
+                    "withholding_rate": wh_rate,
+                    "pay_date": pay_d,
+                    "reinvest_price": round(reinvest_p, 4),
+                    "gross_dividend_usd": round(gross_cash, 4),
+                }
+                trades_list.append(row)
+                inserted.append(row)
+            else:
+                ratio = val
+                if _has_manual_corp(trades_list, sym, ex_d, TYPE_CORP_SPLIT):
+                    skipped.append({"symbol": sym, "date": ex_d, "kind": "split", "reason": "同日存在手动合股拆股"})
+                    continue
+                if _split_auto_pair_exists(trades_list, sym, ex_d, ratio):
+                    skipped.append({"symbol": sym, "date": ex_d, "kind": "split", "reason": "已存在自动拆股"})
+                    continue
+                old_sh = float(positions_at_date(trades_list, ex_d).get(sym, 0) or 0)
+                if old_sh <= 1e-12:
+                    skipped.append({"symbol": sym, "date": ex_d, "kind": "split", "reason": "除权日无持仓"})
+                    continue
+                new_sh = round(old_sh * ratio, 6)
+                sell_r = {
+                    "date": ex_d,
+                    "symbol": sym,
+                    "action": "卖出",
+                    "price": 0.0,
+                    "shares": round(old_sh, 6),
+                    "commission": 0.0,
+                    "type": TYPE_CORP_SPLIT,
+                    "auto": True,
+                    "source": "yfinance",
+                    "split_ratio": ratio,
+                }
+                buy_r = {
+                    "date": ex_d,
+                    "symbol": sym,
+                    "action": "买入",
+                    "price": 0.0,
+                    "shares": new_sh,
+                    "commission": 0.0,
+                    "type": TYPE_CORP_SPLIT,
+                    "auto": True,
+                    "source": "yfinance",
+                    "split_ratio": ratio,
+                }
+                trades_list.extend([sell_r, buy_r])
+                inserted.extend([sell_r, buy_r])
+
+    if inserted:
+        save_json(TRADES_FILE, trades_list)
+    return {"inserted": inserted, "skipped": skipped}
 
 
 # =====================================================================
@@ -1886,6 +2433,10 @@ def _get_settings():
         "qqqm_soft_pct": s.get("qqqm_soft_pct", 70),
         "qqqm_hard_pct": s.get("qqqm_hard_pct", 85),
         "insurance_budget_pct": s.get("insurance_budget_pct", 0.02),
+        "dividend_withholding_rate": s.get(
+            "dividend_withholding_rate", DEFAULT_DIVIDEND_WITHHOLDING_RATE),
+        "dividend_reinvest_offset_bd": s.get(
+            "dividend_reinvest_offset_bd", DEFAULT_DIVIDEND_REINVEST_OFFSET_BD),
     }
 
 
@@ -2170,27 +2721,31 @@ def api_signals():
 
     # 当前持仓与占比（先算持仓，再用 BOXX 市值驱动备弹池）
     symbols = get_all_symbols(trades_list)
+    perf_sig = None
+    pix_sig = None
     if not symbols:
         history_cache = {}
         effective_end_date = datetime.now().strftime("%Y-%m-%d")
     else:
         dt = datetime.now()
-        since_date = min((t["date"][:10] for t in trades_list), default=dt.strftime("%Y-%m-%d"))
-        one_year_ago = (dt - timedelta(days=365)).strftime("%Y-%m-%d")
-        year_start = dt.replace(month=1, day=1).strftime("%Y-%m-%d")
-        start_fetch = min(since_date, one_year_ago, year_start)
-        end_fetch = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
-        history_cache, _, trading_dates = fetch_histories_with_bench(symbols, start_fetch, end_fetch)
+        start_fetch, end_fetch = _compute_fetch_range(trades_list)
+        history_cache, bench_cache_sig, trading_dates = fetch_histories_with_bench(symbols, start_fetch, end_fetch)
         effective_end_date = trading_dates[-1] if trading_dates else dt.strftime("%Y-%m-%d")
+        perf_sig = build_perf_bundle(trades_list, history_cache, bench_cache_sig, trading_dates)
+        pix_sig = perf_sig["price_index"]
 
-    pos = positions_at_date(trades_list, effective_end_date)
+    pos = positions_at_date(
+        trades_list, effective_end_date,
+        (perf_sig or {}).get("position_timeline"),
+        (perf_sig or {}).get("timeline_dates"),
+    )
     total_value = 0.0
     qqqm_value = 0.0
     risk_value = 0.0
     CASH_TICKERS = {"BOXX"}
     sym_values = {}
     for sym, qty in pos.items():
-        p = get_price_on_date(sym, effective_end_date, history_cache)
+        p = get_price_on_date(sym, effective_end_date, history_cache, pix_sig)
         if p is None:
             p = 0.0
         v = qty * p
@@ -2286,12 +2841,23 @@ def api_signals():
             "latest_price": latest_p, "shares_to_buy": shares, "order_text": order_text,
         })
 
-    # ===== 大盘现状 =====
+    # ===== 大盘现状 =====（并行拉取，降低串行 Yahoo 延迟）
+    market_syms = ("QQQ", "^VIX", "GLD", "^TNX")
     market_overview = []
-    for sym in ("QQQ", "^VIX", "GLD", "^TNX"):
-        q = fetch_realtime_quote(sym)
-        if q:
-            market_overview.append(q)
+    results_mkt = {}
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        future_to_sym = {ex.submit(fetch_realtime_quote, s): s for s in market_syms}
+        for fut in as_completed(future_to_sym):
+            sym = future_to_sym[fut]
+            try:
+                q = fut.result()
+                if q:
+                    results_mkt[sym] = q
+            except Exception:
+                pass
+    for sym in market_syms:
+        if sym in results_mkt:
+            market_overview.append(results_mkt[sym])
 
     # ===== 仓位风控 =====
     if qqqm_ratio < 35:
@@ -2412,12 +2978,13 @@ def api_strategy_review():
     period = request.args.get("period", "all")
     dt = datetime.now()
     if period == "1m":
-        cutoff = (dt - timedelta(days=30)).strftime("%Y-%m-%d")
+        cutoff = dt.replace(day=1).strftime("%Y-%m-%d")
     elif period == "3m":
-        cutoff = (dt - timedelta(days=90)).strftime("%Y-%m-%d")
+        quarter_month = ((dt.month - 1) // 3) * 3 + 1
+        cutoff = dt.replace(month=quarter_month, day=1).strftime("%Y-%m-%d")
     else:
         cutoff = "2000-01-01"
-    period_label = {"1m": "最近 1 个月", "3m": "最近 1 个季度", "all": "全部"}.get(period, period)
+    period_label = {"1m": "本月", "3m": "本季度", "all": "全部"}.get(period, period)
 
     trades_list = get_trades()
     # 期间内投弹记录
@@ -2443,20 +3010,23 @@ def api_strategy_review():
 
     if symbols and trades_list:
         since_date = min(t["date"][:10] for t in trades_list)
-        start_f = min(since_date, (dt - timedelta(days=395)).strftime("%Y-%m-%d"))
-        end_f = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
+        start_f, end_f = _compute_fetch_range(trades_list)
         hc, bc, td = fetch_histories_with_bench(symbols, start_f, end_f)
         eff_end = td[-1] if td else dt.strftime("%Y-%m-%d")
+        perf_sr = build_perf_bundle(trades_list, hc, bc, td)
+        pix = perf_sr["price_index"]
 
+        # 周期起点统一取 max(cutoff, since_date)，保证起点不早于第一次持仓日期；
+        # 与首页 returns-overview 的 periods 定义规则一致，使两处同一周期的 DCA/MWRR 可直接对比。
         chart_start = max(cutoff, since_date)
-        chart_data = compute_twr_chart(trades_list, hc, bc, chart_start, eff_end, td)
+        chart_data = compute_twr_chart(trades_list, hc, bc, chart_start, eff_end, td, perf_sr)
         if chart_data["my"]:
             real_twr = chart_data["my"][-1]
         if chart_data.get("dca"):
             dca_return = chart_data["dca"][-1]
         # 使用 MWRR 作为主指标
         fund_records = get_fund_records()
-        mwrr_val = compute_mwr(trades_list, fund_records, hc, chart_start, eff_end, td)
+        mwrr_val = compute_mwr(trades_list, fund_records, hc, chart_start, eff_end, td, perf_sr)
         real_mwrr = mwrr_val if mwrr_val is not None else real_twr
         excess_return = round(real_mwrr - dca_return, 2)
 
@@ -2470,17 +3040,17 @@ def api_strategy_review():
             bomb_end = bomb_dates[-1]
             dates_in = [d for d in td if bomb_start <= d <= bomb_end]
             if dates_in:
-                lows = [get_price_on_date("QQQM", d, hc) for d in dates_in]
+                lows = [get_price_on_date("QQQM", d, hc, pix) for d in dates_in]
                 lows = [p for p in lows if p and p > 0]
                 period_low = min(lows) if lows else avg_bomb_price
                 bomb_efficiency = round((avg_bomb_price / period_low - 1) * 100, 2) if period_low > 0 else None
 
         # 资金安全系数：备弹池 / 压力情景回撤金额（假设 -20% 回撤）
-        pos = positions_at_date(trades_list, eff_end)
-        boxx_val = (get_price_on_date("BOXX", eff_end, hc) or 0) * pos.get("BOXX", 0)
+        pos = positions_at_date(trades_list, eff_end, perf_sr["position_timeline"], perf_sr["timeline_dates"])
+        boxx_val = (get_price_on_date("BOXX", eff_end, hc, pix) or 0) * pos.get("BOXX", 0)
         rp_info = compute_reserve_pool(trades_list, boxx_val)
         reserve_pool = rp_info["reserve_pool"]
-        tv = sum((get_price_on_date(s, eff_end, hc) or 0) * q for s, q in pos.items())
+        tv = sum((get_price_on_date(s, eff_end, hc, pix) or 0) * q for s, q in pos.items())
         max_dd_amount = tv * 0.15 if tv > 0 else 1
         safety_ratio = round(reserve_pool / max_dd_amount, 2) if max_dd_amount > 0 else None
 
@@ -2499,13 +3069,13 @@ def api_strategy_review():
     TARGET_PCT = {"QQQM": 60, "BRK.B": 25, "IAU": 15}
     qqqm_max_pct = 0
     if symbols and trades_list:
-        pos_now = positions_at_date(trades_list, eff_end)
-        risk_val = sum((get_price_on_date(s, eff_end, hc) or 0) * q for s, q in pos_now.items() if s.upper() not in CASH_TICKERS)
+        pos_now = positions_at_date(trades_list, eff_end, perf_sr["position_timeline"], perf_sr["timeline_dates"])
+        risk_val = sum((get_price_on_date(s, eff_end, hc, pix) or 0) * q for s, q in pos_now.items() if s.upper() not in CASH_TICKERS)
         if risk_val > 0:
             drifts = []
             for sym in TARGET_PCT:
                 qty = pos_now.get(sym, 0)
-                p = get_price_on_date(sym, eff_end, hc) or 0
+                p = get_price_on_date(sym, eff_end, hc, pix) or 0
                 eff_pct = qty * p / risk_val * 100 if risk_val > 0 else 0
                 drift = abs(eff_pct - TARGET_PCT[sym])
                 drifts.append(drift)
@@ -2615,19 +3185,24 @@ def api_update_settings():
     state = load_model_state()
     s = state.get("settings", {})
     param_rules = {
-        "K_MAX_CAP":            (0.01, 0.5),
-        "MONTHLY_BASE_OVERRIDE": (500, 10000),
-        "m1_vix_threshold":     (10, 30),
-        "m2_vix_threshold":     (15, 40),
-        "m3_vix_threshold":     (30, 80),
-        "qqqm_soft_pct":        (40, 90),
-        "qqqm_hard_pct":        (50, 95),
-        "insurance_budget_pct": (0.005, 0.05),
+        "K_MAX_CAP":                   (0.01, 0.5),
+        "MONTHLY_BASE_OVERRIDE":       (500, 10000),
+        "m1_vix_threshold":            (10, 30),
+        "m2_vix_threshold":            (15, 40),
+        "m3_vix_threshold":            (30, 80),
+        "qqqm_soft_pct":               (40, 90),
+        "qqqm_hard_pct":               (50, 95),
+        "insurance_budget_pct":        (0.005, 0.05),
+        "dividend_withholding_rate":   (0.0, 0.5),
+        "dividend_reinvest_offset_bd": (0, 10),
     }
+    int_keys = {"dividend_reinvest_offset_bd"}
     for key, (lo, hi) in param_rules.items():
         if key in data:
             try:
-                s[key] = max(lo, min(hi, float(data[key])))
+                v = float(data[key])
+                v = max(lo, min(hi, v))
+                s[key] = int(round(v)) if key in int_keys else v
             except (TypeError, ValueError):
                 pass
     state["settings"] = s
@@ -2654,16 +3229,16 @@ def api_stress_test():
         return jsonify({"stress": None, "monte_carlo": None})
 
     dt = datetime.now()
-    since_date = min((t["date"][:10] for t in trades_list), default=dt.strftime("%Y-%m-%d"))
-    one_year_ago = (dt - timedelta(days=365)).strftime("%Y-%m-%d")
-    year_start = dt.replace(month=1, day=1).strftime("%Y-%m-%d")
-    start_fetch = min(since_date, one_year_ago, year_start)
-    end_fetch = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
+    start_fetch, end_fetch = _compute_fetch_range(trades_list)
     history_cache, bench_cache, trading_dates = fetch_histories_with_bench(symbols, start_fetch, end_fetch)
     effective_end_date = trading_dates[-1] if trading_dates else dt.strftime("%Y-%m-%d")
 
-    pos = positions_at_date(trades_list, effective_end_date)
-    prices_now = prices_at(list(pos.keys()), history_cache, effective_end_date)
+    perf_st = build_perf_bundle(trades_list, history_cache, bench_cache, trading_dates)
+    pos = positions_at_date(
+        trades_list, effective_end_date,
+        perf_st["position_timeline"], perf_st["timeline_dates"],
+    )
+    prices_now = prices_at(list(pos.keys()), history_cache, effective_end_date, perf_st["price_index"])
 
     boxx_val = (prices_now.get("BOXX") or 0) * pos.get("BOXX", 0)
     rp_info = compute_reserve_pool(trades_list, boxx_val)

@@ -1,0 +1,67 @@
+{
+  "version": "v1.3.1",
+  "period": "30y",
+  "symbols": [
+    "BOXX",
+    "BRK-B",
+    "IAU",
+    "QLD",
+    "QQQM"
+  ],
+  "start_date": "1996-01-01",
+  "end_date": "2025-12-31",
+  "initial_capital": 50000.0,
+  "commission_rate": 0.001,
+  "slippage_bps": 5,
+  "metrics": {
+    "cumulative_return_pct": 1100.31,
+    "cagr_pct": 8.6,
+    "max_drawdown_pct": 64.6,
+    "recovery_days": 1039,
+    "sharpe": 0.157,
+    "win_rate_pct": 68.12,
+    "profit_loss_ratio": 4.605,
+    "trade_count": 1312,
+    "final_capital": 23562247.01,
+    "alpha_pct": 0.31,
+    "beta": 0.763
+  },
+  "top_drawdowns": [
+    {
+      "peak_date": "2000-03-24",
+      "trough_date": "2002-10-09",
+      "recovery_date": "2006-11-22",
+      "drawdown_pct": 64.6,
+      "duration_days": 929,
+      "recovery_days": 1505
+    },
+    {
+      "peak_date": "2007-11-06",
+      "trough_date": "2008-11-20",
+      "recovery_date": "2010-01-04",
+      "drawdown_pct": 42.45,
+      "duration_days": 380,
+      "recovery_days": 410
+    },
+    {
+      "peak_date": "2022-01-03",
+      "trough_date": "2022-10-14",
+      "recovery_date": "2023-07-18",
+      "drawdown_pct": 30.9,
+      "duration_days": 284,
+      "recovery_days": 277
+    }
+  ],
+  "nav_rows": 7587,
+  "trade_rows": 1312,
+  "benchmark": {
+    "symbol": "QQQ",
+    "proxy_before": "^IXIC",
+    "qqq_ipo_date": "1999-03-10",
+    "proxy_days": 830,
+    "dca_total": 50000.0,
+    "dca_schedule": "monthly",
+    "first_qqq_date": "1999-03-10",
+    "portfolio_curve": "nav_scaled_to_summary_cumulative_pct"
+  }
+}

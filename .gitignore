@@ -1,26 +1,119 @@
+# ============================================================
+# 敏感原始数据（通过 GitHub Secrets 管理，不提交仓库）
+# ============================================================
+data/trades.json
+data/fund_records.json
+data/model_state.json
+data/price_cache.json
+data/*.bak
+data/*.bak.*
+
+# ============================================================
 # Python
+# ============================================================
+
+# 字节码 / 缓存
 __pycache__/
-*.py[cod]
+*.py[codz]
 *$py.class
 *.so
-.Python
-venv/
+
+# 虚拟环境
 .venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.pixi/
+__pypackages__/
+
+# 分发 / 打包
+.Python
+build/
+dist/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 环境变量
 .env
 .env.local
+.envrc
 
+# 单元测试 / 覆盖率
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py.cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Flask
+instance/
+.webassets-cache
+
+# 类型检查
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+cython_debug/
+
+# Ruff
+.ruff_cache/
+
+# ============================================================
+# macOS
+# ============================================================
+.DS_Store
+.localized
+__MACOSX/
+.AppleDouble
+.LSOverride
+Icon[ ]
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+
+# ============================================================
 # IDE
+# ============================================================
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Sensitive raw data (stored in GitHub Secrets for CI)
-data/trades.json
-data/fund_records.json
-data/model_state.json
-data/price_cache.json
+# ============================================================
+# 日志 / 临时文件
+# ============================================================
+*.log
+pip-log.txt
+pip-delete-this-directory.txt

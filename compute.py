@@ -29,7 +29,7 @@ def _nullify(d, keys):
 
 def _sanitize_trades(data):
     for row in data:
-        _nullify(row, ("price", "shares", "commission"))
+        _nullify(row, ("price", "shares", "commission", "gross_dividend_usd"))
     return data
 
 
@@ -186,6 +186,21 @@ def main():
             print(f"  ✗ {path} → {e}")
 
     print("=== 预计算开始 ===")
+
+    # 预计算前先同步 Yahoo 分红/拆股到交易表（与本地「同步分红/拆股」一致）
+    try:
+        sync_resp = client.post("/api/corp-actions/sync", json={})
+        if sync_resp.status_code != 200:
+            print(f"  警告：/api/corp-actions/sync → HTTP {sync_resp.status_code}")
+        else:
+            try:
+                sj = sync_resp.get_json() or {}
+            except Exception:
+                sj = {}
+            ins = sj.get("inserted") or []
+            print(f"  公司行为同步：新增 {len(ins)} 条")
+    except Exception as ex:
+        print(f"  警告：公司行为同步失败：{ex}")
 
     # 基础数据
     print("[1/8] 基础数据...")

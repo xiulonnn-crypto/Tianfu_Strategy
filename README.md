@@ -14,16 +14,16 @@ cd /Users/soul/Documents/Cursor/us-stock-trading-assistant
 - **Windows**：双击 `run.bat`
 - **Mac / Linux**：终端执行 `./run.sh` 或 `python3 run.py`（Mac 通常用 `python3`）
 
-会自动安装依赖、启动服务并打开浏览器访问 http://localhost:5000 。
+会自动安装依赖、启动服务并打开浏览器访问 http://localhost:1001 。
 
 ## 手动运行
 
 ```bash
-pip install -r requirements.txt
-python server.py
+pip3 install -r requirements.txt
+python3 server.py
 ```
 
-然后在浏览器打开 http://localhost:5000 。
+然后在浏览器打开 http://localhost:1001 。
 
 ## 文件夹说明
 
