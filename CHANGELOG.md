@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-004] - 2026-04-18 - fix: pre-push 同步 Secrets 并入 .githooks（之前被 core.hooksPath 屏蔽永不生效）
+
 ### Fixed
 
 - **pre-push 同步 Secrets 从未生效**：仓库已设 `git config core.hooksPath=.githooks`，Git 只从 `.githooks/` 调用钩子，完全忽略 `.git/hooks/`。上一版新增的 `scripts/hooks/pre-push`（同步 Secrets）经 `install-hooks.sh` 链到 `.git/hooks/pre-push`，但被 `core.hooksPath` 屏蔽 —— 真正被 git 调用的只有 `.githooks/pre-push`（仅做 CHANGELOG 版本化），从未调用过 `./sync-secrets.sh`。修复：把同步逻辑并入 `.githooks/pre-push`（CHANGELOG bump 之后，仅推送 `main` 时触发；失败阻塞推送），删除失效的 `scripts/hooks/`、`scripts/install-hooks.sh` 与 `.git/hooks/pre-push` 符号链接。`tests/test_pre_push_hook.py` 改为针对 git 实际入口的集成测试，新增 `test_repo_uses_githooks_as_hookspath` 与 `test_no_shadow_hook_under_scripts` 守住本类"hook 存在但不被 git 调用"的回归。首次启用仍需 `git config core.hooksPath .githooks` 一次（已写入 AGENTS.md）
