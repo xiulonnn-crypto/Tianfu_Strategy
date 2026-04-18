@@ -11,6 +11,7 @@
 import copy
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from server import app
@@ -205,6 +206,17 @@ def main():
     # 基础数据
     print("[1/8] 基础数据...")
     get_json("/api/version", "version.json")
+    # 追加 updated_at：用于前端云端模式给所有静态 JSON 加 ?v=<版本> 强制更新
+    try:
+        vpath = OUTPUT_DIR / "version.json"
+        vdata = json.loads(vpath.read_text(encoding="utf-8")) if vpath.exists() else {}
+        if not isinstance(vdata, dict):
+            vdata = {}
+        vdata["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with open(vpath, "w", encoding="utf-8") as f:
+            json.dump(vdata, f, ensure_ascii=False, separators=(",", ":"))
+    except Exception as ex:
+        print(f"  警告：写入 updated_at 失败：{ex}")
     get_json("/api/fund-records", "fund-records.json")
     get_json("/api/trades", "trades.json")
 

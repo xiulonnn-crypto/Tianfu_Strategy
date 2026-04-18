@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **GitHub Pages 数据不跟随 git push 更新**：线上历史交易页卡在旧日期（如缺失 4 月 2 日之后的记录）。根因是 CI (`.github/workflows/compute.yml`) 从 GitHub Secrets 还原原始数据，而 Secrets 仅能通过 `./sync-secrets.sh` 手动更新；`git push` 不会触发同步，CI 每次都用旧 Secrets 产出陈旧的 `data/computed/*.json`
+- **手机浏览器看不到最新的 `data/computed/*.json`（电脑正常）**：线上云端只读模式下前端 `fetch('./data/computed/*.json')` 既未携带版本号也未声明 `cache: 'no-store'`，GitHub Pages 默认 `max-age=600` 叠加移动端（iOS Safari、微信 / 飞书 WebView 等）更激进的本地缓存策略，导致 CI 产出更新后手机端仍反复命中旧 JSON。现以数据版本号做 URL 变体破缓存：`compute.py` 每次预计算后在 `data/computed/version.json` 写入 `updated_at`（UTC ISO 时间戳）；`index.html` 新增 `ensureCloudVersion()`，云端模式启动时以 `cache: 'no-store'` 优先拉取 `version.json` 取得 `updated_at`，之后所有 `/api/*` → 静态文件映射在请求时自动附加 `?v=<updated_at>`；未更新时 URL 稳定、继续享受浏览器/CDN 缓存，一旦 CI 重算版本号改变，URL 即变新地址强制回源。并发首次访问通过 `__cloudVersionPromise` 去重单次请求；本地 Flask 模式完全不走该分支
+
+### Added
+
+- **Git pre-push hook 自动同步 Secrets**：新增 `scripts/hooks/pre-push` 与 `scripts/install-hooks.sh`。推送到 `main` 时会自动执行 `./sync-secrets.sh` 把本地 `data/{trades,fund_records,model_state}.json` 同步到 GitHub Secrets，保证后续 CI 拿到最新数据重算 `data/computed/*.json`。非 main 分支跳过；sync 失败阻止 push 并提示 `git push --no-verify` 绕过。首次使用需运行 `./scripts/install-hooks.sh` 安装（hook 以符号链接形式接入 `.git/hooks/`，后续跟随仓库更新）。`tests/test_pre_push_hook.py` 覆盖存在性、main/非 main 分支分支、失败阻塞三类行为
+
 ## [0.1.0-002] - 2026-04-17 - feat: 全量同步 — 文档体系、历史回测、pytest 套件与多处后端/前端增强
 
 ### Fixed
@@ -79,3 +88,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 原始数据文件（`trades.json` / `fund_records.json` / `model_state.json`）加入 `.gitignore`，仅通过 GitHub Secrets 传递
 
 ---
+

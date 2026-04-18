@@ -938,11 +938,43 @@
       }
       return null;
     }
+    // 云端模式数据版本号：由 ensureCloudVersion() 从 version.json.updated_at 读出，
+    // 作为所有 data/computed/*.json 的 ?v= 查询串，数据一旦更新 URL 即变化，
+    // 手机浏览器/CDN 的旧缓存自然失效；未更新前仍可享受缓存。
+    window.__cloudDataVersion = window.__cloudDataVersion || '';
+    function _withVersion(url) {
+      var v = window.__cloudDataVersion;
+      if (!v) return url;
+      return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'v=' + encodeURIComponent(v);
+    }
+    window.__cloudVersionPromise = window.__cloudVersionPromise || null;
+    function ensureCloudVersion() {
+      if (!window.__isCloudMode) return Promise.resolve();
+      if (window.__cloudDataVersion) return Promise.resolve();
+      if (window.__cloudVersionPromise) return window.__cloudVersionPromise;
+      window.__cloudVersionPromise = (async function() {
+        try {
+          var u = './data/computed/version.json?t=' + Date.now();
+          var res = await fetch(u, { cache: 'no-store' });
+          if (res && res.ok) {
+            var j = await res.json();
+            if (j && j.updated_at) {
+              window.__cloudDataVersion = String(j.updated_at);
+              return;
+            }
+          }
+        } catch (e) { /* ignore */ }
+        // 兜底：用本地时间戳，至少保证本次会话能破缓存
+        window.__cloudDataVersion = String(Date.now());
+      })();
+      return window.__cloudVersionPromise;
+    }
     async function apiGet(path) {
       if (window.__isCloudMode) {
         var staticUrl = _mapApiToStatic(path);
         if (!staticUrl) return null;
-        const res = await fetch(staticUrl).catch(function(err) { return null; });
+        if (!window.__cloudDataVersion) await ensureCloudVersion();
+        const res = await fetch(_withVersion(staticUrl)).catch(function(err) { return null; });
         if (!res || !res.ok) return null;
         try { return await res.json(); } catch(e) { return null; }
       }
@@ -3306,7 +3338,7 @@
         banner.classList.remove('block');
       }
     }
-    function doInit() {
+    async function doInit() {
       window.__navClick = showSection;
       window.__setPeriod = setPeriod;
       window.__toggleSensitive = toggleSensitive;
@@ -3322,6 +3354,7 @@
         document.querySelectorAll('.cloud-hide-col').forEach(function(el) { el.style.display = 'none'; });
         var bannerEl = document.getElementById('bannerRestartBackend');
         if (bannerEl) bannerEl.style.display = 'none';
+        await ensureCloudVersion();
       }
       checkBackendVersion();
       loadReturnsOverview();
