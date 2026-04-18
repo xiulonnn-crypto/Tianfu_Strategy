@@ -20,7 +20,7 @@
 - 改 `server.py` 后需重启服务（Ctrl+C → `python3 server.py`）
 - 新增 GET 端点时需同步更新 `compute.py` 的端点列表与脱敏逻辑
 - 所有改动只在 `us-stock-trading-assistant/` 子目录中进行
-- **新 clone 或换机器后**运行一次 `./scripts/install-hooks.sh`（将 `scripts/hooks/pre-push` 链到 `.git/hooks/pre-push`），否则推送到 `main` 时不会自动把本地原始数据同步到 GitHub Secrets，云端 `data/computed/*.json` 会长期落后
+- **新 clone 或换机器后**运行一次 `git config core.hooksPath .githooks` 启用项目内的 pre-push 钩子；它负责 ① CHANGELOG 自动版本化 ② 推送 `main` 时调用 `./sync-secrets.sh` 同步原始数据到 GitHub Secrets。未启用时推送不会同步 Secrets，CI 重算 `data/computed/*.json` 会长期用旧数据
 
 ## 运行环境
 
@@ -35,11 +35,11 @@
   └─ 云端模式 → ./data/computed/*.json（静态，只读）
 
 CI (GitHub Actions)
-  git push main → pre-push 钩子执行 ./sync-secrets.sh（需 gh CLI 已登录）→ 更新 Secrets
+  git push main → .githooks/pre-push → ① CHANGELOG 版本化 + ② ./sync-secrets.sh（需 gh CLI 已登录）
   Secrets(base64) → data/*.json → compute.py → data/computed/*.json → [skip ci] 提交
 ```
 
-**说明：** 原始数据在 `.gitignore` 中，仓库里只有预计算结果。CI 只能从 Secrets 还原 `data/*.json`；若只 `git push` 而不更新 Secrets，预计算仍用旧数据。`pre-push` 仅在推送 **refs/heads/main** 时调用 `./sync-secrets.sh`；其他分支不触发。同步失败会阻止 push，紧急可用 `git push --no-verify` 绕过（不推荐，云端仍会旧）。
+**说明：** 原始数据在 `.gitignore` 中，仓库里只有预计算结果。CI 只能从 Secrets 还原 `data/*.json`；若只 `git push` 而不更新 Secrets，预计算仍用旧数据。项目通过 `git config core.hooksPath .githooks` 启用 `.githooks/pre-push`，它仅在推送 **refs/heads/main** 时调用 `./sync-secrets.sh`；其他分支跳过。同步失败会阻止 push，紧急可用 `git push --no-verify` 绕过（不推荐，云端仍会旧）。注意：`.git/hooks/` 在本项目已被 `core.hooksPath` 屏蔽，不要往那里放脚本（不会被调用）。
 
 ## API 一览
 
