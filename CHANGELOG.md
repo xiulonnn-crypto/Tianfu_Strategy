@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-003] - 2026-04-18 - feat: pre-push 自动同步 Secrets + 云端 JSON 版本号破缓存
+
 ### Fixed
 
 - **GitHub Pages 数据不跟随 git push 更新**：线上历史交易页卡在旧日期（如缺失 4 月 2 日之后的记录）。根因是 CI (`.github/workflows/compute.yml`) 从 GitHub Secrets 还原原始数据，而 Secrets 仅能通过 `./sync-secrets.sh` 手动更新；`git push` 不会触发同步，CI 每次都用旧 Secrets 产出陈旧的 `data/computed/*.json`
