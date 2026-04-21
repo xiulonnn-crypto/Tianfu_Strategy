@@ -185,7 +185,6 @@
         <button type="button" class="nav-btn px-4 py-2 rounded transition hover:bg-white/10" style="color: rgba(255,255,255,0.85);" data-section="allocation" onclick="if(window.__navClick)window.__navClick('allocation')">资产配置</button>
         <button type="button" class="nav-btn px-4 py-2 rounded transition hover:bg-white/10" style="color: rgba(255,255,255,0.85);" data-section="history" onclick="if(window.__navClick)window.__navClick('history')">交易历史</button>
         <button type="button" class="nav-btn px-4 py-2 rounded transition hover:bg-white/10" style="color: rgba(255,255,255,0.85);" data-section="signals" onclick="if(window.__navClick)window.__navClick('signals')">模型信号</button>
-        <button type="button" class="nav-btn px-4 py-2 rounded transition hover:bg-white/10" style="color: rgba(255,255,255,0.85);" data-section="stress" onclick="if(window.__navClick)window.__navClick('stress')">压力测试</button>
         <button type="button" class="nav-btn px-4 py-2 rounded transition hover:bg-white/10" style="color: rgba(255,255,255,0.85);" data-section="review" onclick="if(window.__navClick)window.__navClick('review')">策略复盘</button>
       </nav>
     </div>
@@ -515,56 +514,13 @@
       </div>
     </section>
 
-    <!-- ========== 5. 压力测试 & 收益预测 ========== -->
-    <section id="section-stress" class="section-content hidden">
-      <h2 class="text-lg font-semibold mb-6" style="color: var(--deep-purple);">压力测试 & 收益预测</h2>
-      <div id="stressLoading" class="text-sm mb-4" style="color: var(--benchmark-gray);">点击加载压力测试…</div>
-      <button type="button" id="btnRunStress" class="px-4 py-2 rounded text-sm text-white mb-6 transition" style="background: var(--deep-purple);" onclick="if(window.__loadStressTest)window.__loadStressTest()">运行压力测试</button>
-      <!-- 压力测试结果 -->
-      <div id="stressResultBlock" class="hidden">
-        <div class="rounded-xl shadow-sm p-5 mb-6" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-          <h3 class="text-md font-medium mb-3" style="color: var(--down-red);">极端情景：<span id="stressScenario"></span></h3>
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm mb-4">
-            <div><span style="color: var(--benchmark-gray);">压力前市值</span><div class="font-bold" id="stressBefore" style="color: #2d2a3e;">--</div></div>
-            <div><span style="color: var(--benchmark-gray);">压力后市值</span><div class="font-bold" id="stressAfter" style="color: var(--down-red);">--</div></div>
-            <div><span style="color: var(--benchmark-gray);">组合总回撤</span><div class="font-bold" id="stressDrawdown" style="color: var(--down-red);">--</div></div>
-            <div><span style="color: var(--benchmark-gray);">投弹现金占用</span><div class="font-bold" id="stressCashDeploy" style="color: var(--champagne-gold);">--</div></div>
-          </div>
-          <h4 class="text-sm font-medium mb-2" style="color: var(--deep-purple);">各标的冲击明细</h4>
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm"><thead style="background: var(--light-purple-bg);"><tr>
-              <th class="text-left p-2">标的</th><th class="text-right p-2">冲击幅度</th>
-              <th class="text-right p-2">压力前</th><th class="text-right p-2">压力后</th>
-            </tr></thead><tbody id="stressDetailBody"></tbody></table>
-          </div>
-          <h4 class="text-sm font-medium mt-4 mb-2" style="color: var(--deep-purple);">投弹触发模拟</h4>
-          <div id="stressToundanSim" class="grid grid-cols-1 sm:grid-cols-3 gap-3"></div>
-          <div id="stressSurvival" class="mt-4 p-4 rounded-xl text-sm font-medium"></div>
-        </div>
-        <!-- 蒙特卡洛概率分布 -->
-        <div class="rounded-xl shadow-sm p-5 mb-6" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-          <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">未来 30 天收益概率分布（蒙特卡洛）</h3>
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm mb-4">
-            <div><span style="color: var(--benchmark-gray);">模拟次数</span><div class="font-bold" id="mcNSims">--</div></div>
-            <div><span style="color: var(--benchmark-gray);">历史样本天数</span><div class="font-bold" id="mcNHistory">--</div></div>
-            <div><span style="color: var(--benchmark-gray);">95% CI 下限</span><div class="font-bold" id="mcCILow" style="color: var(--down-red);">--</div></div>
-            <div><span style="color: var(--benchmark-gray);">95% CI 上限</span><div class="font-bold" id="mcCIHigh" style="color: #0d9488;">--</div></div>
-          </div>
-          <div class="h-64 relative">
-            <canvas id="chartMonteCarlo"></canvas>
-            <div id="chartMonteCarloPlaceholder" class="absolute inset-0 flex items-center justify-center text-sm" style="color: var(--benchmark-gray);">运行压力测试后展示</div>
-          </div>
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-sm" id="mcPercentiles"></div>
-        </div>
-      </div>
-    </section>
-
     <!-- ========== 7. 策略复盘 ========== -->
     <section id="section-review" class="section-content hidden">
       <h2 class="text-lg font-semibold mb-4" style="color: var(--deep-purple);">策略复盘</h2>
       <div class="flex flex-wrap gap-2 mb-4 border-b" style="border-color: rgba(74,61,124,0.12);">
         <button type="button" class="review-main-tab tab-active px-4 py-2 text-sm font-medium" data-review-main="live" style="color: var(--deep-purple);">实盘复盘</button>
         <button type="button" class="review-main-tab px-4 py-2 text-sm font-medium text-slate-600" data-review-main="backtest">历史回测</button>
+        <button type="button" class="review-main-tab px-4 py-2 text-sm font-medium text-slate-600" data-review-main="stress">前瞻压测</button>
       </div>
 
       <div id="reviewLivePanel">
@@ -661,6 +617,49 @@
               <button type="button" id="backtestTradesPrev" class="px-2 py-1 rounded" style="border:1px solid var(--deep-purple);color:var(--deep-purple);">上一页</button>
               <button type="button" id="backtestTradesNext" class="px-2 py-1 rounded" style="border:1px solid var(--deep-purple);color:var(--deep-purple);">下一页</button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="reviewStressPanel" class="hidden">
+        <h3 class="text-md font-semibold mb-4" style="color: var(--deep-purple);">压力测试 & 收益预测</h3>
+        <div id="stressLoading" class="text-sm mb-4" style="color: var(--benchmark-gray);">点击加载压力测试…</div>
+        <button type="button" id="btnRunStress" class="px-4 py-2 rounded text-sm text-white mb-6 transition" style="background: var(--deep-purple);" onclick="if(window.__loadStressTest)window.__loadStressTest()">运行压力测试</button>
+        <!-- 压力测试结果 -->
+        <div id="stressResultBlock" class="hidden">
+          <div class="rounded-xl shadow-sm p-5 mb-6" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
+            <h3 class="text-md font-medium mb-3" style="color: var(--down-red);">极端情景：<span id="stressScenario"></span></h3>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm mb-4">
+              <div><span style="color: var(--benchmark-gray);">压力前市值</span><div class="font-bold" id="stressBefore" style="color: #2d2a3e;">--</div></div>
+              <div><span style="color: var(--benchmark-gray);">压力后市值</span><div class="font-bold" id="stressAfter" style="color: var(--down-red);">--</div></div>
+              <div><span style="color: var(--benchmark-gray);">组合总回撤</span><div class="font-bold" id="stressDrawdown" style="color: var(--down-red);">--</div></div>
+              <div><span style="color: var(--benchmark-gray);">投弹现金占用</span><div class="font-bold" id="stressCashDeploy" style="color: var(--champagne-gold);">--</div></div>
+            </div>
+            <h4 class="text-sm font-medium mb-2" style="color: var(--deep-purple);">各标的冲击明细</h4>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm"><thead style="background: var(--light-purple-bg);"><tr>
+                <th class="text-left p-2">标的</th><th class="text-right p-2">冲击幅度</th>
+                <th class="text-right p-2">压力前</th><th class="text-right p-2">压力后</th>
+              </tr></thead><tbody id="stressDetailBody"></tbody></table>
+            </div>
+            <h4 class="text-sm font-medium mt-4 mb-2" style="color: var(--deep-purple);">投弹触发模拟</h4>
+            <div id="stressToundanSim" class="grid grid-cols-1 sm:grid-cols-3 gap-3"></div>
+            <div id="stressSurvival" class="mt-4 p-4 rounded-xl text-sm font-medium"></div>
+          </div>
+          <!-- 蒙特卡洛概率分布 -->
+          <div class="rounded-xl shadow-sm p-5 mb-6" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
+            <h3 class="text-md font-medium mb-3" style="color: var(--deep-purple);">未来 30 天收益概率分布（蒙特卡洛）</h3>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm mb-4">
+              <div><span style="color: var(--benchmark-gray);">模拟次数</span><div class="font-bold" id="mcNSims">--</div></div>
+              <div><span style="color: var(--benchmark-gray);">历史样本天数</span><div class="font-bold" id="mcNHistory">--</div></div>
+              <div><span style="color: var(--benchmark-gray);">95% CI 下限</span><div class="font-bold" id="mcCILow" style="color: var(--down-red);">--</div></div>
+              <div><span style="color: var(--benchmark-gray);">95% CI 上限</span><div class="font-bold" id="mcCIHigh" style="color: #0d9488;">--</div></div>
+            </div>
+            <div class="h-64 relative">
+              <canvas id="chartMonteCarlo"></canvas>
+              <div id="chartMonteCarloPlaceholder" class="absolute inset-0 flex items-center justify-center text-sm" style="color: var(--benchmark-gray);">运行压力测试后展示</div>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-sm" id="mcPercentiles"></div>
           </div>
         </div>
       </div>
@@ -764,7 +763,6 @@
     <button type="button" class="mob-tab" data-section="allocation" onclick="if(window.__navClick)window.__navClick('allocation')"><i class="fas fa-chart-pie"></i><span>配置</span></button>
     <button type="button" class="mob-tab" data-section="history" onclick="if(window.__navClick)window.__navClick('history')"><i class="fas fa-clock-rotate-left"></i><span>交易</span></button>
     <button type="button" class="mob-tab" data-section="signals" onclick="if(window.__navClick)window.__navClick('signals')"><i class="fas fa-bullseye"></i><span>信号</span></button>
-    <button type="button" class="mob-tab" data-section="stress" onclick="if(window.__navClick)window.__navClick('stress')"><i class="fas fa-bolt"></i><span>测试</span></button>
     <button type="button" class="mob-tab" data-section="review" onclick="if(window.__navClick)window.__navClick('review')"><i class="fas fa-rotate"></i><span>复盘</span></button>
   </nav>
 
@@ -818,6 +816,7 @@
         document.querySelectorAll('.btn-toggle-sensitive').forEach(function(b) { b.style.display = 'none'; });
       }
       window.__historyTab = function(tab, _skipHash) {
+        if (window.__isCloudMode && tab === 'fund') tab = 'trades';
         var tabs = document.querySelectorAll('.history-tab');
         for (var i = 0; i < (tabs && tabs.length); i++) { removeClass(tabs[i], 'tab-active'); addClass(tabs[i], 'text-slate-600'); }
         var active = document.querySelector('.history-tab[data-tab="' + tab + '"]');
@@ -830,14 +829,16 @@
       };
 
       // ========== URL Hash 路由：每 tab 对应 #xxx，刷新/分享/前进后退均可保持在原 tab ==========
-      window.__routeSections = ['returns', 'allocation', 'history', 'signals', 'stress', 'review'];
+      window.__routeSections = ['returns', 'allocation', 'history', 'signals', 'review'];
       window.__routeHistorySubs = ['fund', 'trades'];
-      window.__routeReviewSubs = ['live', 'backtest'];
+      window.__routeReviewSubs = ['live', 'backtest', 'stress'];
       window.__parseHash = function(hash) {
         var h = (hash || '').replace(/^#\/?/, '');
         if (!h) return { section: 'returns' };
         var parts = h.split('/');
         var section = parts[0];
+        // 旧书签 #stress → 策略复盘 > 前瞻压测
+        if (section === 'stress') return { section: 'review', sub: 'stress' };
         if (window.__routeSections.indexOf(section) === -1) return { section: 'returns' };
         var res = { section: section };
         if (section === 'history' && parts[1] && window.__routeHistorySubs.indexOf(parts[1]) !== -1) {
@@ -1921,6 +1922,7 @@
 
     // ========== 交易历史子标签（支持 hash 路由同步；_skipHash=true 用于 __applyRoute 内部调用）==========
     function showHistoryTab(tab, _skipHash) {
+      if (window.__isCloudMode && tab === 'fund') tab = 'trades';
       document.querySelectorAll('.history-tab').forEach(el => {
         el.classList.remove('tab-active');
         el.style.color = 'var(--benchmark-gray)';
@@ -2531,6 +2533,7 @@
     window.__reviewSubTab = function (mode, skipHash) {
       var live = document.getElementById('reviewLivePanel');
       var bt = document.getElementById('reviewBacktestPanel');
+      var stress = document.getElementById('reviewStressPanel');
       document.querySelectorAll('.review-main-tab').forEach(function (t) {
         var m = t.getAttribute('data-review-main');
         var on = m === mode;
@@ -2540,12 +2543,13 @@
       });
       if (live) live.classList.toggle('hidden', mode !== 'live');
       if (bt) bt.classList.toggle('hidden', mode !== 'backtest');
+      if (stress) stress.classList.toggle('hidden', mode !== 'stress');
       if (mode === 'backtest') {
         applyBacktestQueryParam();
         window.__renderBacktestPanel();
       }
       if (!skipHash && window.__updateRouteHash) {
-        window.__updateRouteHash('review', mode === 'backtest' ? 'backtest' : 'live');
+        window.__updateRouteHash('review', mode);
       }
     };
     window.__renderBacktestPanel = async function () {
@@ -3352,6 +3356,8 @@
           var el = document.getElementById(id); if (el) el.style.display = 'none';
         });
         document.querySelectorAll('.cloud-hide-col').forEach(function(el) { el.style.display = 'none'; });
+        var fundTabBtn = document.querySelector('.history-tab[data-tab="fund"]');
+        if (fundTabBtn) fundTabBtn.style.display = 'none';
         var bannerEl = document.getElementById('bannerRestartBackend');
         if (bannerEl) bannerEl.style.display = 'none';
         await ensureCloudVersion();

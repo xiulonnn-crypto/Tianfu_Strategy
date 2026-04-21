@@ -95,7 +95,7 @@ graph TD
         Signals["决策信号\napi_signals\n分位数 + 风险预算 + 触发器"]
         StrategyReview["策略复盘\napi_strategy_review"]
         UpdateSettings["参数设置\napi_update_settings"]
-        StressTest["压力测试\napi_stress_test\n情景冲击 + 蒙特卡洛"]
+        StressTest["压力测试\napi_stress_test\n情景冲击 + 蒙特卡洛\n（前端：策略复盘→前瞻压测）"]
     end
 
     subgraph data_layer [数据层 Lines 42-95]

@@ -100,8 +100,7 @@ Windows 优先 Segoe UI，Mac/iOS 优先 PingFang SC，兼顾中英文混排。
 │  ├─ section-allocation（资产配置，hidden）      │
 │  ├─ section-history   （交易历史，hidden）      │
 │  ├─ section-signals   （模型信号，hidden）      │
-│  ├─ section-stress    （压力测试，hidden）      │
-│  └─ section-review    （策略复盘，hidden）      │
+│  └─ section-review    （策略复盘，hidden；含前瞻压测子面板）│
 ├──────────────────────────────────────────────┤
 │  Footer（居中文字 + 上边线分隔）               │
 ├──────────────────────────────────────────────┤
@@ -115,9 +114,9 @@ Windows 优先 Segoe UI，Mac/iOS 优先 PingFang SC，兼顾中英文混排。
 
 **桌面端（≥640px）**：Header 内横向按钮组（`id="mainNav"`），当前页按钮以 `bg-white/20` 半透明白色底色高亮，`data-section` 属性对应 Section ID。
 
-**移动端（<640px）**：隐藏 Header 导航，底部固定 Tab Bar（6 个图标 + 文字），active 状态变为香槟金色（`style="color: var(--champagne-gold)"`）。使用 `env(safe-area-inset-bottom)` 适配 iPhone 刘海屏安全区。
+**移动端（<640px）**：隐藏 Header 导航，底部固定 Tab Bar（5 个图标 + 文字），active 状态变为香槟金色（`style="color: var(--champagne-gold)"`）。使用 `env(safe-area-inset-bottom)` 适配 iPhone 刘海屏安全区。
 
-### 4.3 六大 Section 布局
+### 4.3 五大 Section 布局
 
 #### 收益概览 `section-returns`
 
@@ -204,26 +203,10 @@ Windows 优先 Segoe UI，Mac/iOS 优先 PingFang SC，兼顾中英文混排。
 
 `.zone-row-3` 在 `≥1024px` 时生效 `grid-template-columns: repeat(3, 1fr)`。
 
-#### 压力测试 `section-stress`
-
-```
-标题 + "运行压力测试" 按钮（主按钮样式）
-↓
-极端情景结果
-  4 格统计（当前市值/最大冲击/平均冲击/生存概率）
-  冲击明细表（各情景跌幅 + 组合损失）
-  投弹模拟 + 生存评估建议
-↓
-蒙特卡洛概率分布
-  4 格统计（中位数/25%/75%/97.5% 分位）
-  直方图 canvas #chartMonteCarlo
-  分位数网格（12 格）
-```
-
 #### 策略复盘 `section-review`
 
 ```
-主导航子 Tab（实盘复盘 / 历史回测，.tab-active = 金色下划线 + 深紫字）
+主导航子 Tab（实盘复盘 / 历史回测 / 前瞻压测，.tab-active = 金色下划线 + 深紫字）
 ↓
 【实盘复盘】
   周期切换按钮组（1 月 / 1 季 / 全部，激活状态：深紫底白字）
@@ -251,6 +234,13 @@ Windows 优先 Segoe UI，Mac/iOS 优先 PingFang SC，兼顾中英文混排。
   回撤走势 #chartBacktestDrawdown + Top-3 回撤事件卡片（与首页回撤卡片样式一致）
   ↓
   交易明细分页表 + 下载 CSV
+↓
+【前瞻压测】（`#review/stress`，懒加载：点「运行压力测试」后请求 `/api/stress-test`）
+  标题 + "运行压力测试" 按钮（主按钮样式）
+  ↓
+  极端情景结果（QQQ/VIX 情景、各标的冲击、投弹触发模拟、生存评估）
+  ↓
+  蒙特卡洛概率分布（canvas #chartMonteCarlo、分位数网格）
 ```
 
 ---

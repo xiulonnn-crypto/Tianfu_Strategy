@@ -1,6 +1,6 @@
 # CLAUDE.md — 项目说明书
 
-美股交易助手：个人美股投资管理工具，基于 Flask + 纯前端单页，提供收益计算、资产配置、天府模型信号、策略复盘、压力测试等功能。支持本地全功能模式和 GitHub Pages 只读展示模式。
+美股交易助手：个人美股投资管理工具，基于 Flask + 纯前端单页，提供收益计算、资产配置、天府模型信号、策略复盘（含前瞻压测：极端情景与蒙特卡洛）等功能。支持本地全功能模式和 GitHub Pages 只读展示模式。
 
 > 相关文档：[ARCHITECTURE.md](ARCHITECTURE.md) 系统架构 · [DESIGN.md](DESIGN.md) 页面样式 · [TECHNICAL.md](TECHNICAL.md) 技术细节
 

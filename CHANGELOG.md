@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> Theme: 压力测试并入策略复盘「前瞻压测」子 tab，主导航精简
+
+### Changed
+
+- 云端只读模式下「交易历史」隐藏「出入金记录」子 tab 按钮，默认落在「交易明细」；直接访问 `#history/fund` 的旧链接自动切到交易明细，本地模式行为不变
+- 独立「压力测试」主 tab 已并入策略复盘第三子 tab「前瞻压测」；桌面与移动主导航由 6 项减为 5 项，Hash 路由新增 `#review/stress`，旧书签 `#stress` 自动映射到策略复盘前瞻压测
+
 ## [0.1.0-004] - 2026-04-18 - fix: pre-push 同步 Secrets 并入 .githooks（之前被 core.hooksPath 屏蔽永不生效）
 
 ### Fixed
