@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-005] - 2026-04-21 - feat: 云端只读模式隐藏出入金 tab；同步压测并入策略复盘的文档更新
+
 > Theme: 压力测试并入策略复盘「前瞻压测」子 tab，主导航精简
 
 ### Changed
