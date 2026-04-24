@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> Theme: 盘中高频刷新下的写仓竞态保护
+## [0.1.0-007] - 2026-04-24 - compute workflow 的 push 步骤加 retry+rebase，避开盘中刷新与并发 push 的竞态
 
 ### Fixed
 
