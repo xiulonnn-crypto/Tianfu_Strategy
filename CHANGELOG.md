@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> Theme: 文档同步"盘中刷新节奏 + CI 写回竞态守护"约定
+## [0.1.0-008] - 2026-04-24 - 文档同步盘中刷新节奏与 CI 写回 main 的竞态守护约定
 
 ### Changed
 
