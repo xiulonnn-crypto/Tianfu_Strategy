@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> Theme: 收益概览盘中实时刷新，不再卡在昨日收盘
+## [0.1.0-006] - 2026-04-24 - 美股盘中每 30 分钟重算线上数据，#returns 不再卡在昨日收盘
 
 ### Changed
 
