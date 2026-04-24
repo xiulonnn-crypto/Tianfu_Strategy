@@ -43,6 +43,29 @@ _RE_VERSION_HEADING = re.compile(
     r"## \[(\d+\.\d+\.\d+(?:-\d{3})?)\](?:\([^)]*\))?",
 )
 
+# 匹配紧跟 [Unreleased] 之后的 `> Theme: …` blockquote
+# skill 规则：Theme 行仅存在于 [Unreleased]，version bump 时必须删除，
+# 否则会在 released block 头顶遗留"重复摘要"（违反 Keep a Changelog 的
+# "release 时 Theme 合并进标题、不与标题重复"约束）。
+_RE_THEME_AFTER_UNRELEASED = re.compile(
+    r"(## \[Unreleased\](?:\([^)]*\))?[ \t]*\n)"  # 1 号捕获：Unreleased 标题行
+    r"([ \t]*\n)+"                                # 1 条或多条空行
+    r">[ \t]*Theme:[^\n]*\n"                      # Theme 行本身
+    r"(?:[ \t]*\n)?",                             # 可选的尾随空行
+    re.IGNORECASE,
+)
+
+# 匹配 Conventional Commits 前缀：feat / fix / chore / docs / refactor /
+# test / style / perf / build / ci / revert，可带 scope 与 `!` 破坏标记
+# 例：feat: xxx   fix(api): xxx   refactor!: xxx
+_RE_CC_PREFIX = re.compile(
+    r"^(?:feat|fix|chore|docs|refactor|test|style|perf|build|ci|revert)"
+    r"(?:\([^)]+\))?"
+    r"!?"
+    r":\s*",
+    re.IGNORECASE,
+)
+
 
 # ---------------------------------------------------------------------------
 # 读写
@@ -78,6 +101,32 @@ def get_latest_version(content: str) -> Optional[str]:
     """返回最新的已发布版本号（跳过 Unreleased）"""
     matches = _RE_VERSION_HEADING.findall(content)
     return matches[0] if matches else None
+
+
+def strip_theme_after_unreleased(content: str) -> str:
+    """删除紧跟 `## [Unreleased]` 之后的 `> Theme: …` blockquote。
+
+    把 `[Unreleased]` 晋升为版本块时，若不先剥离该行，Theme 就会遗留在新
+    released block 的头顶，造成"标题摘要 + Theme"重复两遍同一句话。参见
+    coding/debugging skill 关于 "Theme collapses into the heading" 的约束。
+
+    未发现 Theme 行时原样返回。
+    """
+    m = _RE_THEME_AFTER_UNRELEASED.search(content)
+    if not m:
+        return content
+    # 仅保留 Unreleased 标题行 + 一条空行，Theme 块完整消除
+    replacement = m.group(1) + "\n"
+    return content[: m.start()] + replacement + content[m.end():]
+
+
+def strip_commit_prefix(subject: str) -> str:
+    """剥离 Conventional Commits 前缀（feat: / fix: / chore(scope): / feat!: 等）。
+
+    CHANGELOG 标题摘要应面向用户可读，不应保留提交消息的技术前缀。
+    无前缀时原样返回。
+    """
+    return _RE_CC_PREFIX.sub("", subject, count=1)
 
 
 # ---------------------------------------------------------------------------
@@ -166,10 +215,18 @@ def bump(explicit_version: Optional[str] = None) -> Optional[Tuple[str, str]]:
         print("[CHANGELOG] [Unreleased] 部分无内容，跳过版本更新")
         return None
 
+    # skill 规则：Theme 仅能存在于 [Unreleased]，晋升前必须先剥离，
+    # 否则会遗留在新 released block 头顶造成摘要重复。
+    content = strip_theme_after_unreleased(content)
+
     prev_ver = get_latest_version(content)
     new_ver = compute_next_version(prev_ver, explicit_version)
     today = date.today().isoformat()
-    summary = None if explicit_version else get_commit_summary()
+    if explicit_version:
+        summary = None
+    else:
+        raw = get_commit_summary()
+        summary = strip_commit_prefix(raw) if raw else raw
 
     # 构建新标题
     unreleased_heading = build_unreleased_heading()

@@ -7,102 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0-005] - 2026-04-21 - feat: 云端只读模式隐藏出入金 tab；同步压测并入策略复盘的文档更新
-
-> Theme: 压力测试并入策略复盘「前瞻压测」子 tab，主导航精简
+> Theme: 收益概览盘中实时刷新，不再卡在昨日收盘
 
 ### Changed
 
-- 云端只读模式下「交易历史」隐藏「出入金记录」子 tab 按钮，默认落在「交易明细」；直接访问 `#history/fund` 的旧链接自动切到交易明细，本地模式行为不变
-- 独立「压力测试」主 tab 已并入策略复盘第三子 tab「前瞻压测」；桌面与移动主导航由 6 项减为 5 项，Hash 路由新增 `#review/stress`，旧书签 `#stress` 自动映射到策略复盘前瞻压测
+- **收益概览盘中实时更新**：线上「收益」页的「数据基准日」不再只停留在前一个美股收盘日。美股盘中每半小时会自动重算一次并推送到线上，当天任何时段访问页面看到的就是当日最新行情（以最后一笔成交价作为临时收盘价）；当日最终收盘后会再刷新一次以产出终版快照。周末与节假日不触发，不产生无效刷新。
 
-## [0.1.0-004] - 2026-04-18 - fix: pre-push 同步 Secrets 并入 .githooks（之前被 core.hooksPath 屏蔽永不生效）
-
-### Fixed
-
-- **pre-push 同步 Secrets 从未生效**：仓库已设 `git config core.hooksPath=.githooks`，Git 只从 `.githooks/` 调用钩子，完全忽略 `.git/hooks/`。上一版新增的 `scripts/hooks/pre-push`（同步 Secrets）经 `install-hooks.sh` 链到 `.git/hooks/pre-push`，但被 `core.hooksPath` 屏蔽 —— 真正被 git 调用的只有 `.githooks/pre-push`（仅做 CHANGELOG 版本化），从未调用过 `./sync-secrets.sh`。修复：把同步逻辑并入 `.githooks/pre-push`（CHANGELOG bump 之后，仅推送 `main` 时触发；失败阻塞推送），删除失效的 `scripts/hooks/`、`scripts/install-hooks.sh` 与 `.git/hooks/pre-push` 符号链接。`tests/test_pre_push_hook.py` 改为针对 git 实际入口的集成测试，新增 `test_repo_uses_githooks_as_hookspath` 与 `test_no_shadow_hook_under_scripts` 守住本类"hook 存在但不被 git 调用"的回归。首次启用仍需 `git config core.hooksPath .githooks` 一次（已写入 AGENTS.md）
-
-## [0.1.0-003] - 2026-04-18 - feat: pre-push 自动同步 Secrets + 云端 JSON 版本号破缓存
-
-### Fixed
-
-- **GitHub Pages 数据不跟随 git push 更新**：线上历史交易页卡在旧日期（如缺失 4 月 2 日之后的记录）。根因是 CI (`.github/workflows/compute.yml`) 从 GitHub Secrets 还原原始数据，而 Secrets 仅能通过 `./sync-secrets.sh` 手动更新；`git push` 不会触发同步，CI 每次都用旧 Secrets 产出陈旧的 `data/computed/*.json`
-- **手机浏览器看不到最新的 `data/computed/*.json`（电脑正常）**：线上云端只读模式下前端 `fetch('./data/computed/*.json')` 既未携带版本号也未声明 `cache: 'no-store'`，GitHub Pages 默认 `max-age=600` 叠加移动端（iOS Safari、微信 / 飞书 WebView 等）更激进的本地缓存策略，导致 CI 产出更新后手机端仍反复命中旧 JSON。现以数据版本号做 URL 变体破缓存：`compute.py` 每次预计算后在 `data/computed/version.json` 写入 `updated_at`（UTC ISO 时间戳）；`index.html` 新增 `ensureCloudVersion()`，云端模式启动时以 `cache: 'no-store'` 优先拉取 `version.json` 取得 `updated_at`，之后所有 `/api/*` → 静态文件映射在请求时自动附加 `?v=<updated_at>`；未更新时 URL 稳定、继续享受浏览器/CDN 缓存，一旦 CI 重算版本号改变，URL 即变新地址强制回源。并发首次访问通过 `__cloudVersionPromise` 去重单次请求；本地 Flask 模式完全不走该分支
-
-### Added
-
-- **Git pre-push hook 自动同步 Secrets**：新增 `scripts/hooks/pre-push` 与 `scripts/install-hooks.sh`。推送到 `main` 时会自动执行 `./sync-secrets.sh` 把本地 `data/{trades,fund_records,model_state}.json` 同步到 GitHub Secrets，保证后续 CI 拿到最新数据重算 `data/computed/*.json`。非 main 分支跳过；sync 失败阻止 push 并提示 `git push --no-verify` 绕过。首次使用需运行 `./scripts/install-hooks.sh` 安装（hook 以符号链接形式接入 `.git/hooks/`，后续跟随仓库更新）。`tests/test_pre_push_hook.py` 覆盖存在性、main/非 main 分支分支、失败阻塞三类行为
-
-## [0.1.0-002] - 2026-04-17 - feat: 全量同步 — 文档体系、历史回测、pytest 套件与多处后端/前端增强
-
-### Fixed
-
-- **API 性能**：收益概览、交易汇总、模型信号、策略复盘、资产配置等端点暖路径显著加速（价格查询由 pandas 全表掩码改为字典 + bisect；持仓按日期前缀时间线 O(log n) 查询；风险指标内 `_twr_daily_returns` 只算一次）。各端点统一使用 `_compute_fetch_range` 与同一 `price_cache` 键，减少 Yahoo 重复拉取。`/api/signals` 大盘行情改为并行请求并带 60s 内存缓存。递增 `_CACHE_VERSION` 使旧 `price_cache.json` 失效
-
-### Added
-
-- **历史回测收益率对比曲线**：策略复盘 → 历史回测中净值卡片支持「NAV / 收益率」切换；收益率视图为三条累计收益 % 曲线——组合（与 `summary.metrics.cumulative_return_pct` 末值对齐的净值形状缩放）、QQQ 买入持有、QQQ 按月定投（初始资金均摊到日历月数）。QQQ 上市前用 `^IXIC` 按比例缩放衔接。离线字段由 `python3 scripts/import_backtest.py --enrich-benchmark` 写入 `*-nav.json` / `summary.benchmark`；`tests/test_backtest_enrich.py` 覆盖计算与 `^IXIC` 省略拉取（nav 起点晚于 IPO）
-- **策略复盘 → 历史回测**：`section-review` 内新增「实盘复盘 / 历史回测」子 Tab；历史回测加载静态 `data/backtest/v1.3.1-{10y|20y|30y}-{summary|nav|trades}.json`（`fetch` 相对路径，本地与 GitHub Pages 一致）。支持 10/20/30 年窗口切换、净值/回撤 Chart.js 图、Top-3 回撤段、交易明细分页与 CSV 导出。数据由 `scripts/import_backtest.py` 从回测 Excel 一次性生成；`tests/test_backtest_data.py` 校验 JSON 结构
-- **URL Hash 路由**：六个主 Tab（收益概览/资产配置/交易历史/模型信号/压力测试/策略复盘）对应 `#returns` `#allocation` `#history` `#signals` `#stress` `#review`；交易历史子 Tab 对应 `#history/fund` `#history/trades`；策略复盘子 Tab 对应 `#review/live` `#review/backtest`。刷新保持原 Tab、浏览器前进/后退在 Tab 间切换、URL 可直接分享指向指定 Tab；非法 / 过期 hash 自动回退到收益概览。纯前端实现，本地模式与云端（GitHub Pages）只读模式均可用，不涉及后端改动
-- **公司行为同步**：`POST /api/corp-actions/sync` 从 Yahoo Finance 拉取 `Ticker.dividends` / `Ticker.splits`，自动写入 `type` 为「分红」「合股拆股」的交易（`auto: true`）；分红按再投资近似增加股数且不增加现金成本，拆股以成对买卖记录保持总成本不变。`/api/version` 增加 `corp_actions: true`；交易页提供「同步分红/拆股」按钮；`compute.py` 预计算前会先执行同步
-- **交易明细筛选**：交易历史 → 交易明细 Tab 新增两个筛选下拉。「标的」根据当前交易记录动态生成（含`全部`选项，默认`全部`）；「类型」固定枚举 `全部 / 定投 / 投弹 / 投机 / 现金管理 / 分红 / 合股拆股`，默认`全部`。两个筛选为「与」关系，实时过滤表格，空结果显示「当前筛选下无交易明细」占位；本地与云端只读模式均可用
-- **测试**：`tests/test_corp_actions.py` 覆盖成本语义与同步去重
-- **测试**：`tests/test_price_index.py`、`tests/test_position_timeline.py` 对拍快速路径与旧实现；`tests/test_perf_endpoints.py` 在 mock 行情下断言上述五端点暖响应 < 1s
-
-### Fixed
-
-- 修复「策略复盘 → 历史回测」在本地模式下显示「加载失败：请确认已运行 scripts/import_backtest.py 并提交 data/backtest/*.json」的问题：根因是 Flask 只显式暴露 `/api/`* 与 `/`，`data/backtest/*.json` 没有任何路由（默认 `static_url_path` 不覆盖 `/data/...`），前端 `fetch('./data/backtest/v1.3.1-*.json')` 走到本地 1001 端口时返回 404。新增 `GET /data/backtest/<path:filename>` 路由，以 `send_from_directory(BASE_DIR/'data'/'backtest', ...)` 直出文件，`safe_join` 内置路径遍历防护。`tests/test_backtest_static_route.py` 覆盖三档正常路径、`..` 遍历、不存在文件的 404 行为。云端（GitHub Pages）路径不受影响
-- 修复首页收益概览与策略复盘收益率数据不一致的问题：两处各卡片/周期的收益率起点统一规则为 `max(时段起始日, 第一次持仓日期)`，保证起点不早于组合成立日；跨页面同一周期（如首页"1m"与策略复盘"本月"、首页"since"与策略复盘"全部"）的 MWRR / DCA / 超额收益现可直接对比
-- 首页 MTD 卡片之前直接以本月 1 日为起点，对于当月新建的组合会在尚未持仓的日期参与计算，现修正为 `max(本月 1 日, 第一次持仓日期)`
-- 修复「同步分红/拆股」生成的再投资股数与 IB 实际对账不一致的问题：旧公式 `div × shares / ex_close` 忽略了美股 30% 预扣税与付息日 VWAP，2026-03-23 QQQM 分红系统记 0.212054 股、IB 实际 0.1539 股（差 +0.058 股/$14 对账分歧）。新公式 `div × shares × (1 - 预扣税率) / 付息日开盘价`，预扣税率与付息日工作日偏移做成可配置（`dividend_withholding_rate` 默认 0.30、`dividend_reinvest_offset_bd` 默认 5）。同时放开已自动生成的分红/拆股记录的编辑入口，保留原有手动新建仍被禁止的保护；分红行补充 `withholding_rate` / `pay_date` / `reinvest_price` / `gross_dividend_usd` / `div_per_share` 等审计元数据（`gross_dividend_usd` 已加入 `compute.py` 脱敏清单）
-- 修复 `tests/test_corp_actions.py` 的 `tmp_trades_file` fixture 仅隔离 `TRADES_FILE` / `DATA_DIR`、未隔离 `MODEL_STATE_FILE` / `FUND_FILE` / `PRICE_CACHE_FILE` 的缺陷：测试中触发的 `save_model_state` / `/api/update-settings` 等曾污染真实 `data/model_state.json`；fixture 现补齐全部四个数据文件路径的 monkeypatch
-- 修复「策略复盘 → 历史回测」30 年窗口 Alpha / Beta 显示为 `0 / 0` 的问题：源头 Excel 对 30 年跨度的 Alpha/Beta 公式失败（部分标的如 QQQM/QLD 无 30 年历史），单元格填 0，`scripts/import_backtest.py` 透传导致前端 `renderBacktestSubCards` 渲染 `0 / 0`。`scripts/import_backtest.py` 新增 `compute_alpha_beta_from_returns` / `compute_alpha_beta_for_nav`：基于 `nav.json` + yfinance `^IXIC` 做 CAPM 回归，β 用 1% / 99% winsorize 日收益去尖峰（应对资金注入引起的异常日），α 直接使用 `summary.cagr_pct` 作可信年化以避免 NAV 注入放大。Excel 值为 0/0 哨兵时才自动补算（保留 10y / 20y 原值），新增 `--recompute-risk` CLI 与 `--force` 开关；`tests/test_backtest_alpha_beta.py` 覆盖合成序列单测与三档周期断言。30y 现显示 `alpha_pct=0.31, beta=0.763`
+## [0.1.0-005] - 2026-04-21 - 云端只读模式隐藏出入金 tab；压测并入策略复盘
 
 ### Changed
 
-- 策略复盘周期切换器标签由"最近 1 月/最近 1 季"改为"本月/本季度"，对应 cutoff 改为自然月初/季初（与首页 MTD/YTD 同一历法概念）
-- 交易明细「同步分红/拆股」按钮增加进行态反馈：点击后按钮禁用，文字变为「同步中...」，`fa-rotate` 图标叠加 `fa-spin` 类持续旋转，请求结束（成功 / 失败 / 异常）后自动恢复原标签与图标
+- **云端模式隐藏出入金记录**：云端只读模式下「交易历史」不再显示「出入金记录」子 tab，默认打开「交易明细」；旧链接自动回落到交易明细，本地模式行为不变。
+- **压力测试并入策略复盘**：独立「压力测试」主 tab 已移入「策略复盘 → 前瞻压测」子 tab，主导航由 6 项减为 5 项；旧书签自动跳转到新位置。
+
+## [0.1.0-004] - 2026-04-18 - 推送前数据同步钩子统一接入
+
+### Fixed
+
+- **推送前数据同步真正生效**：向云端推送时应自动把本地最新的交易与出入金数据同步上去，但此前因仓库内的 Git 钩子目录配置未被正确应用，该同步动作一直没有被触发，导致云端重算后看到的仍是旧数据。钩子已移动到会被实际调用的位置，推送时现按预期自动同步，云端重算后即可看到新记录。
+
+## [0.1.0-003] - 2026-04-18 - 推送自动同步数据 + 云端缓存版本化
+
+### Added
+
+- **推送时自动同步数据到云端**：向 main 分支推送代码时会自动把本地最新的交易与出入金数据同步到云端，云端重算后即可在页面看到新记录，无需再手动跑同步脚本。同步失败会阻止推送，可用 `git push --no-verify` 临时绕过；非 main 分支推送不受影响。
+
+### Fixed
+
+- **线上历史数据不跟随推送更新**：此前推送代码后，云端重算所用的原始数据仍是旧的，导致线上历史交易页停留在早几天的日期。现已把数据同步动作纳入推送流程，推送后云端拿到的就是最新数据。
+
+- **手机端数据比电脑端陈旧**：手机浏览器（iOS Safari、常见应用内置浏览器等）对静态数据的缓存更激进，云端重算后电脑已看到新版、手机却反复命中旧缓存。现已在每次重算时写入数据版本标记，前端请求自动携带，数据一更新即强制拉新；数据未变时仍走缓存，不影响加载速度。
+
+## [0.1.0-002] - 2026-04-17 - 历史回测、分红自动同步、Hash 路由与多处性能优化
+
+### Added
+
+- **历史回测收益率对比曲线**：策略复盘的历史回测视图新增「NAV / 收益率」切换，收益率视图同时绘制组合、纳指买入持有、纳指按月定投三条累计收益曲线，一眼看出超额收益来自何处。
+
+- **历史回测子 Tab**：策略复盘下新增「实盘复盘 / 历史回测」切换，历史回测支持 10 / 20 / 30 年窗口、净值与回撤图、Top-3 回撤段展示，以及交易明细的分页浏览与 CSV 导出。
+
+- **URL 可直达指定标签**：六个主 Tab 与「交易历史」「策略复盘」的子 Tab 均拥有稳定的 URL 锚点，刷新保持当前位置、浏览器前进 / 后退在 Tab 间切换，分享链接可直接定位同一页面。
+
+- **一键同步分红与拆股**：交易明细新增「同步分红/拆股」按钮，会从公开行情接口拉取所持标的的分红与拆股记录并自动写入交易流水——分红按再投资近似增加股数，拆股保持总成本不变——并标记为自动生成便于区分。
+
+- **交易明细筛选**：交易明细新增「标的」与「类型」两个筛选下拉，「标的」依据当前记录动态生成，「类型」覆盖定投 / 投弹 / 投机 / 现金管理 / 分红 / 合股拆股等常见类别，两个筛选以「与」关系实时过滤，本地与云端模式均可使用。
+
+### Changed
+
+- **周期切换器改用自然月 / 季度**：策略复盘的「最近 1 月 / 最近 1 季」改为「本月 / 本季度」，与首页 MTD / YTD 采用同一历法口径，跨页面同一周期的收益率现可直接对比。
+
+- **同步按钮显示进行态**：点击「同步分红/拆股」后按钮会禁用、文字变为「同步中...」、图标持续旋转，成功或失败后自动恢复，避免误以为没响应而反复点击。
+
+### Fixed
+
+- **多处数据接口明显加速**：收益概览、交易汇总、模型信号、策略复盘、资产配置等页面首次加载的等待时间显著下降，相同行情数据不再被重复拉取；若看到旧缓存请手动刷新一次以重建缓存。
+
+- **本地模式历史回测加载失败**：本地模式打开「策略复盘 → 历史回测」曾提示「加载失败」，原因是离线回测数据没有对应的本地访问通道，现已补齐，10 / 20 / 30 年三档均可正常加载，云端模式不受影响。
+
+- **首页与策略复盘收益率对不齐**：两处各卡片 / 周期的收益率起点统一为「时段起点与首次持仓日的较晚者」，避免组合尚未建仓的日期也被计入；首页 MTD 同步修正，跨页面同一周期的 MWRR / DCA / 超额收益现可直接对比。
+
+- **分红再投资股数与券商不一致**：旧口径忽略了美股预扣税与付息日价格，导致系统记录的再投资股数与券商实际持仓有偏差。新口径引入可配置的默认预扣税率与付息日偏移，并放开了已自动生成的分红 / 拆股记录的编辑入口，便于核对后手工修正。
+
+- **30 年历史回测 Alpha / Beta 显示为 0**：部分标的不足 30 年历史导致源数据的回归公式失败，该窗口的 Alpha / Beta 被填为 0。现会在检测到此类哨兵值时自动用可用历史区间重新回归，10 / 20 年窗口的原值保持不变。
 
 ## [0.1.0] - 2026-04-08
 
 ### Added
 
-- Flask 后端 `server.py`（约 2800 行），承载 15+ REST API 端点，采用 POST 统一写操作风格
-- 单页前端 `index.html`：原生 JS + Tailwind CSS CDN + Chart.js，轻奢紫金 UI 风格
-- 出入金记录与交易记录完整 CRUD（新增 / 修改 / 删除 / 查询）
-- 收益概览：TWR（时间加权）/ MWRR（资金加权）/ 最大回撤 / 走势图对比
-- 风险指标：夏普比率（年化 √252）/ Alpha（区间超额收益）/ Beta（相对纳指）
-- 资产配置面板：持仓权重 / 目标权重 / 实时行情（yfinance 逐标的拉取）
-- 单标的分析：历史持仓、盈亏归因、交易明细
-- 天府模型 v1.3.1：分位数引擎 / 风险预算链 R→K→T / 备弹池管理 / 触发器系统
-- 决策中心：信号优先级、定投倍数、投弹建议金额、Put 保险计算
-- 渐进熔断机制：软熔断（70% 仓位警示）/ 硬熔断（85% 仓位停止加仓）
-- VIX 阈值触发：高波动警示（VIX ≥ 25）/ 极端波动防御（VIX ≥ 35）
-- 策略复盘：绩效归因（定投 / 投弹 / 现金贡献度）+ 评分与建议
-- 压力测试：极端情景冲击（2020疫情、2022熊市等）+ 蒙特卡洛模拟（10000 条路径）
-- 双模式运行：本地全功能模式（Flask `localhost:1001`）/ GitHub Pages 只读展示模式
-- GitHub Actions 预计算流水线：从 Secrets 恢复数据 → `compute.py` 脱敏计算 → 推送静态 JSON
-- 日级价格缓存（`price_cache.json`），`_CACHE_VERSION` 常量控制全量失效
-- 移动端响应式适配
-- 一键启动脚本：`run.py` / `run.sh` / `启动天府助手.command`
-- GitHub Secrets 同步工具 `sync-secrets.sh`（base64 编码存储敏感数据）
+- **每日决策主页**：单页整合收益概览、资产配置、交易历史、模型信号、压力测试与策略复盘，覆盖每日看盘、建仓、复盘所需的全部视图与操作；界面采用轻奢紫金风格并适配移动端。
+
+- **完整收益与风险指标**：收益概览提供时间加权 / 资金加权收益率、最大回撤与走势对比图；风险指标包含夏普比率、相对纳指的 Alpha 与 Beta，收益率起点按时段与首次持仓的较晚者对齐。
+
+- **资产配置与单标的分析**：资产配置面板同时显示持仓权重、目标权重与实时行情；点开任一标的可查看其历史持仓、盈亏归因与交易明细。
+
+- **出入金与交易完整管理**：出入金记录与交易记录支持新增 / 修改 / 删除 / 查询，配合清晰的表单校验与空状态提示。
+
+- **天府模型 v1.3.1 决策引擎**：内置分位数引擎、风险预算链、备弹池管理与触发器系统，决策中心据此给出信号优先级、定投倍数、投弹建议金额与 Put 保险参考。
+
+- **渐进熔断与 VIX 预警**：仓位达到 70% 触发软熔断警示，85% 触发硬熔断停止加仓；VIX ≥ 25 给出高波动警示，≥ 35 进入极端波动防御。
+
+- **策略复盘与压力测试**：策略复盘提供定投 / 投弹 / 现金三类资金的贡献度归因并附评分与建议；压力测试叠加疫情、熊市等极端情景冲击，并辅以一万条路径的蒙特卡洛模拟。
+
+- **本地 + 云端双模式**：本地模式为全功能版（可增删改），云端模式作为只读展示页公开给家人 / 同事查看；云端每次更新会从加密存储的原始数据自动重算指标并发布脱敏后的静态数据。
+
+- **一键启动**：提供 macOS 双击即用的启动入口，首次使用无需手动配置即可打开本地版本。
 
 ### Changed
 
-- 渐进熔断默认阈值从旧值更新为 70%（软）/ 85%（硬）
-- 收益率口径统一：Alpha 改用区间超额公式（非年化绝对偏差）
-- API 路由全面切换为 `kebab-case`，写操作统一通过 POST + 子路径语义化
+- **熔断阈值调整**：渐进熔断的软 / 硬阈值默认分别设为 70% 与 85%，与当前策略设计保持一致。
+
+- **Alpha 口径统一**：Alpha 改用区间超额收益口径，不再采用年化绝对偏差，跨周期比较更一致。
+
+- **接口路径规范化**：所有后端接口统一为小写连字符命名，写操作统一走 POST，便于外部脚本对接。
 
 ### Fixed
 
-- 月初（第一个交易日）MTD 收益率及走势图无数据问题
-- GitHub Pages 部署后 `var/const` 命名冲突导致整个脚本块失效
+- **月初第一个交易日 MTD 空数据**：每月第一个交易日打开首页时，MTD 收益率及走势图曾出现空数据，现已修复。
+
+- **云端部署后页面失效**：一次部署到云端后整段脚本因命名冲突而未执行，页面内容无法加载，现已修正。
 
 ### Security
 
-- 脱敏处理：`computed/*.json` 剔除价格、股数、佣金、均成本等敏感字段，仅保留结构与脱敏后的展示数据
-- 云端模式（`github.io` 域名）下自动隐藏所有增删改操作入口，防止误触写入接口
-- 原始数据文件（`trades.json` / `fund_records.json` / `model_state.json`）加入 `.gitignore`，仅通过 GitHub Secrets 传递
+- **云端发布数据自动脱敏**：云端发布的数据剔除价格、股数、佣金、均成本等敏感字段，仅保留结构与展示必需的脱敏数据。
+
+- **云端模式隐藏写操作**：云端只读模式下所有新增 / 修改 / 删除按钮与表单自动隐藏，防止误触写入接口。
+
+- **原始数据不入版本库**：交易、出入金、模型状态等原始数据不纳入版本控制，仅通过加密通道在本地与云端之间传递。
 
 ---
 
