@@ -66,6 +66,18 @@ _RE_CC_PREFIX = re.compile(
     re.IGNORECASE,
 )
 
+# 匹配紧跟 [Unreleased] 之后的 `> Theme: …` 行里的主题文字（不含前缀本身）
+_RE_THEME_TEXT = re.compile(
+    r"## \[Unreleased\](?:\([^)]*\))?[ \t]*\n"
+    r"[ \t]*\n"
+    r">[ \t]*Theme:[ \t]*([^\n]+)\n",
+    re.IGNORECASE,
+)
+
+# 版本标题摘要长度上限（按 Unicode 字符数；CJK 与拉丁一视同仁）
+# skill 规则："stand-alone concise sentence ≤ 30 Chinese chars / ~8 English words"
+_SUMMARY_MAX_CHARS = 40
+
 
 # ---------------------------------------------------------------------------
 # 读写
@@ -127,6 +139,53 @@ def strip_commit_prefix(subject: str) -> str:
     无前缀时原样返回。
     """
     return _RE_CC_PREFIX.sub("", subject, count=1)
+
+
+def extract_theme_summary(content: str) -> Optional[str]:
+    """若 [Unreleased] 下方存在 `> Theme: XXX` 行，返回 XXX 作为版本摘要候选。
+
+    skill 规则要求"Theme 折叠进标题"：release 时 Theme 的文字内容应成为版本
+    标题的摘要，而不是被丢弃；同时 Theme 行本身需从 released block 剥离
+    （由 `strip_theme_after_unreleased` 负责）。
+    """
+    m = _RE_THEME_TEXT.search(content)
+    if not m:
+        return None
+    return m.group(1).strip()
+
+
+def _looks_like_bullet_leakage(summary: str) -> bool:
+    """检测 summary 是否疑似从 bullet 内容粘贴而来。
+
+    skill 的"Heading-summary independence rule"禁止标题摘要从第一条 bullet 的
+    粗体标签复制。最可靠的信号是 summary 里出现 Markdown 粗体标记 `**`。
+    """
+    return "**" in summary
+
+
+def sanitize_summary(raw: Optional[str]) -> Optional[str]:
+    """对版本标题摘要做最终清洗：
+      - None / 空字符串 → None
+      - 含 `**` 粗体标记（bullet 泄漏迹象）→ 丢弃
+      - 超长 → 按 Unicode 字符截断到 _SUMMARY_MAX_CHARS，末尾加一个省略号
+      - 首尾空白 / 连续空白 → 归一化
+    """
+    if not raw:
+        return None
+
+    s = raw.strip()
+    if not s:
+        return None
+
+    if _looks_like_bullet_leakage(s):
+        return None
+
+    s = re.sub(r"\s+", " ", s)
+
+    if len(s) > _SUMMARY_MAX_CHARS:
+        s = s[: _SUMMARY_MAX_CHARS - 1].rstrip() + "…"
+
+    return s
 
 
 # ---------------------------------------------------------------------------
@@ -215,18 +274,25 @@ def bump(explicit_version: Optional[str] = None) -> Optional[Tuple[str, str]]:
         print("[CHANGELOG] [Unreleased] 部分无内容，跳过版本更新")
         return None
 
-    # skill 规则：Theme 仅能存在于 [Unreleased]，晋升前必须先剥离，
-    # 否则会遗留在新 released block 头顶造成摘要重复。
+    # skill 规则：Theme 优先 —— 先从 Unreleased 下方抽出 Theme 文字作为摘要
+    # 候选，再把 Theme 行从内容中剥离，避免遗留到 released block 造成重复。
+    theme_summary = extract_theme_summary(content)
     content = strip_theme_after_unreleased(content)
 
     prev_ver = get_latest_version(content)
     new_ver = compute_next_version(prev_ver, explicit_version)
     today = date.today().isoformat()
+
+    # 摘要优先级：显式版本号 → 无摘要；否则 Theme → commit subject。
+    # 最终一律经 sanitize_summary 过一遍（丢弃 bullet 泄漏、截长、归一化）。
     if explicit_version:
         summary = None
+    elif theme_summary:
+        summary = sanitize_summary(theme_summary)
     else:
         raw = get_commit_summary()
-        summary = strip_commit_prefix(raw) if raw else raw
+        candidate = strip_commit_prefix(raw) if raw else raw
+        summary = sanitize_summary(candidate)
 
     # 构建新标题
     unreleased_heading = build_unreleased_heading()

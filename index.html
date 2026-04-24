@@ -38,6 +38,41 @@
     .info-tip .info-tip-text::after { content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 4px solid transparent; border-top-color: #2d2a3e; }
     .info-tip:hover .info-tip-text { visibility: visible; opacity: 1; }
 
+    /* ===== 收益率历史新高徽章（俏皮庆祝）===== */
+    .ath-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 12px; border-radius: 999px;
+      font-family: 'Baskerville', 'Times New Roman', 'PingFang SC', 'Microsoft YaHei', serif;
+      font-size: 13px; font-weight: 600; letter-spacing: 0.3px;
+      color: #6a4a0f;
+      background: linear-gradient(135deg, #FFF7D6 0%, #FFE59A 45%, #E8C668 100%);
+      border: 1px solid rgba(191,169,96,0.55);
+      box-shadow: 0 2px 10px rgba(191,169,96,0.35), inset 0 1px 0 rgba(255,255,255,0.6);
+      text-shadow: 0 1px 0 rgba(255,255,255,0.4);
+      animation: ath-twinkle 2.4s ease-in-out infinite;
+      white-space: nowrap;
+    }
+    .ath-badge .ath-spark {
+      color: #C88A0E; font-size: 14px; line-height: 1;
+      animation: ath-spin 3.2s linear infinite;
+    }
+    .ath-badge .ath-kaomoji {
+      color: var(--deep-purple); font-weight: 700;
+      font-family: 'Segoe UI Symbol', 'PingFang SC', sans-serif;
+    }
+    @keyframes ath-twinkle {
+      0%, 100% { transform: translateY(0); box-shadow: 0 2px 10px rgba(191,169,96,0.35), inset 0 1px 0 rgba(255,255,255,0.6); }
+      50%      { transform: translateY(-1px); box-shadow: 0 5px 16px rgba(191,169,96,0.55), inset 0 1px 0 rgba(255,255,255,0.7); }
+    }
+    @keyframes ath-spin {
+      0%   { transform: rotate(0deg)   scale(1); }
+      50%  { transform: rotate(180deg) scale(1.15); }
+      100% { transform: rotate(360deg) scale(1); }
+    }
+    @media (max-width: 639px) {
+      .ath-badge { font-size: 12px; padding: 3px 10px; }
+    }
+
     /* ===== Decision Center Zone Layout ===== */
     .zone-group {
       background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 20px;
@@ -193,7 +228,11 @@
   <main class="container-main px-4 py-8">
     <!-- ========== 1. 收益概览（Vanguard 布局：卡片 → 时间筛选 → 走势图）========== -->
     <section id="section-returns" class="section-content">
-      <h2 class="text-lg font-semibold mb-4" style="color: var(--deep-purple);">收益概览 <span id="returnsDataAsOf" class="text-sm font-normal" style="color: var(--benchmark-gray);"></span></h2>
+      <h2 class="text-lg font-semibold mb-4 flex flex-wrap items-center gap-x-3 gap-y-1" style="color: var(--deep-purple);">
+        <span>收益概览</span>
+        <span id="returnsDataAsOf" class="text-sm font-normal" style="color: var(--benchmark-gray);"></span>
+        <span id="returnsAthBadge" class="ath-badge" style="display:none;"></span>
+      </h2>
       <div class="rounded-xl p-4 mb-6" style="background: rgba(74,61,124,0.04); border-left: 3px solid var(--deep-purple);">
         <p class="text-sm" style="color: #2d2a3e;">天府计划基于<strong>「现金流折算」与「波动率套利」</strong>。通过月度现金流（M）建立基础敞口，并利用风险事件（M1-M3）在市场定价失灵时捕捉非对称获利机会。</p>
         <p class="text-xs mt-1" style="color: var(--benchmark-gray);">核心优势：极端回撤下的成本修复能力 · 备弹池的防御边界 · 系统化消除情绪干扰</p>
@@ -1250,8 +1289,51 @@
       updateMwrrCompare(data.cards, rk);
       var asOfEl = document.getElementById('returnsDataAsOf');
       if (asOfEl) asOfEl.textContent = (data.data_as_of ? '数据基准日: ' + data.data_as_of : '') + (data.method ? ' | 方法: ' + data.method : '');
+      updateAthBadge(data);
       buildReturnsChart(currentPeriod);
       renderStrategyDriver(data.strategy_driver);
+    }
+
+    // 判断最新累计收益率是否为历史新高（since 期累计 TWR 序列的最大值 == 最新值）
+    function isAllTimeHigh(data) {
+      var s = data && data.chart && data.chart.since && data.chart.since.my;
+      if (!Array.isArray(s) || s.length < 2) return false;
+      var last = s[s.length - 1];
+      if (last == null || isNaN(last) || last <= 0) return false;
+      var maxVal = -Infinity;
+      for (var i = 0; i < s.length; i++) {
+        var v = s[i];
+        if (v != null && !isNaN(v) && v > maxVal) maxVal = v;
+      }
+      return last + 1e-6 >= maxVal;
+    }
+
+    // 俏皮祝贺文案（每次随机挑一条，增添趣味）
+    var __ATH_MESSAGES = [
+      '收益率冲破云霄啦！天府计划今日加冕 ٩(๑•̀ㅂ•́)و',
+      '历史新高达成 ✧(＊°▽°＊)✧ 复利的小船一路狂飙～',
+      'ATH 又刷新啦！(๑>◡<๑) 今天的涨幅属于坚持定投的你',
+      '新高新高新高！٩(◕‿◕｡)۶ 天府号卫星准时入轨',
+      '又一次登顶 (๑•̀ㅁ•́ฅ) 继续稳住节奏，乾坤在我手中'
+    ];
+    function pickAthMessage() {
+      return __ATH_MESSAGES[Math.floor(Math.random() * __ATH_MESSAGES.length)];
+    }
+
+    function updateAthBadge(data) {
+      var el = document.getElementById('returnsAthBadge');
+      if (!el) return;
+      if (!isAllTimeHigh(data)) { el.style.display = 'none'; el.innerHTML = ''; return; }
+      var since = data.chart.since;
+      var last = since.my[since.my.length - 1];
+      var pctTxt = (last >= 0 ? '+' : '') + Number(last).toFixed(2) + '%';
+      var msg = pickAthMessage();
+      el.innerHTML = '<span class="ath-spark">✦</span>'
+        + '<span>历史新高 ' + pctTxt + '</span>'
+        + '<span class="ath-kaomoji">·</span>'
+        + '<span>' + msg + '</span>';
+      el.style.display = 'inline-flex';
+      el.title = '累计 TWR 创 Since Inception 以来新高';
     }
 
     // ===== 策略驱动力饼图（PnL 贡献法）=====

@@ -131,11 +131,12 @@ def test_strip_commit_prefix(raw: str, want: str):
 
 
 def test_bump_strips_theme_and_commit_prefix(tmp_path, monkeypatch):
+    """Theme 存在时优先用 Theme 做摘要；Theme 行同时被剥离。"""
     changelog = tmp_path / "CHANGELOG.md"
     changelog.write_text(
         "# Changelog\n\n"
         "## [Unreleased]\n\n"
-        "> Theme: 主题应折叠进标题或被删除，绝不能遗留到 released block\n\n"
+        "> Theme: 云端推送更稳\n\n"
         "### Changed\n\n"
         "- **示例条目**：用于验证清洗\n\n"
         "## [0.1.0] - 2026-04-08 - 初版\n\n"
@@ -147,7 +148,7 @@ def test_bump_strips_theme_and_commit_prefix(tmp_path, monkeypatch):
     monkeypatch.setattr(
         bump_module,
         "get_commit_summary",
-        lambda: "feat: 云端只读模式隐藏出入金 tab",
+        lambda: "feat: 这是不会被用到的 commit subject",
     )
 
     result = bump_module.bump(explicit_version=None)
@@ -158,14 +159,85 @@ def test_bump_strips_theme_and_commit_prefix(tmp_path, monkeypatch):
     assert "> Theme:" not in after, (
         "违规 B：晋升后 released block 头顶绝不应遗留 `> Theme:` 行"
     )
-
-    assert "feat:" not in after, (
-        "违规 C：CHANGELOG 版本标题不应保留 Conventional Commits 前缀"
+    assert "feat:" not in after, "CHANGELOG 不应保留 Conventional Commits 前缀"
+    assert "云端推送更稳" in after, "Theme 内容应作为摘要进入标题"
+    assert "commit subject" not in after, (
+        "Theme 存在时，commit subject 不应用作摘要来源"
     )
-    assert "云端只读模式隐藏出入金 tab" in after, "摘要正文应被保留"
+    assert "## [Unreleased]\n\n## [0.1.0-" in after
 
-    assert "## [Unreleased]\n\n## [0.1.0-" in after, (
-        "新 [Unreleased] 应紧接一个新版本标题"
+
+def test_bump_falls_back_to_commit_subject_when_no_theme(tmp_path, monkeypatch):
+    """无 Theme 时使用剥前缀后的 commit subject 作为摘要。"""
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        "# Changelog\n\n"
+        "## [Unreleased]\n\n"
+        "### Changed\n\n"
+        "- **示例**：X\n\n"
+        "## [0.1.0] - 2026-04-08 - 初版\n\n"
+        "### Added\n\n"
+        "- **初版**：上线\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(bump_module, "CHANGELOG_PATH", changelog)
+    monkeypatch.setattr(
+        bump_module,
+        "get_commit_summary",
+        lambda: "feat: 云端推送顺序更稳",
+    )
+
+    bump_module.bump(explicit_version=None)
+    after = changelog.read_text(encoding="utf-8")
+    assert "feat:" not in after
+    assert "云端推送顺序更稳" in after
+
+
+def test_sanitize_summary_truncates_long_text():
+    """超长摘要按 Unicode 字符截断，末尾补省略号。"""
+    long_text = "这是一段很长的主题文字" * 10
+    out = bump_module.sanitize_summary(long_text)
+    assert out is not None
+    assert len(out) <= bump_module._SUMMARY_MAX_CHARS
+    assert out.endswith("…")
+
+
+def test_sanitize_summary_rejects_bullet_leakage():
+    """摘要里出现 `**` 粗体标记时判定为 bullet 泄漏，返回 None。"""
+    leaked = "**回程日景点与多段交通被整段漏抓**：像最后一天只在新宿"
+    assert bump_module.sanitize_summary(leaked) is None
+
+
+def test_sanitize_summary_handles_edge_cases():
+    assert bump_module.sanitize_summary(None) is None
+    assert bump_module.sanitize_summary("") is None
+    assert bump_module.sanitize_summary("   ") is None
+    assert bump_module.sanitize_summary("单句  带  连续空白") == "单句 带 连续空白"
+
+
+def test_bump_drops_bullet_leaked_commit_subject(tmp_path, monkeypatch):
+    """commit subject 若以粗体开头（说明是从 bullet 裁的），应被丢弃不入标题。"""
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        "# Changelog\n\n"
+        "## [Unreleased]\n\n"
+        "### Fixed\n\n"
+        "- **回程日景点漏抓**：详细描述\n\n"
+        "## [0.1.0] - 2026-04-08\n\n"
+        "### Added\n\n- **初版**：上线\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(bump_module, "CHANGELOG_PATH", changelog)
+    monkeypatch.setattr(
+        bump_module,
+        "get_commit_summary",
+        lambda: "**回程日景点漏抓**：详细描述",
+    )
+
+    bump_module.bump(explicit_version=None)
+    after = changelog.read_text(encoding="utf-8")
+    assert "**回程日景点漏抓**" not in after.split("## [0.1.0]")[0].split("\n## [Unreleased]")[0], (
+        "bullet-leaked subject 不应进入新版本标题"
     )
 
 
