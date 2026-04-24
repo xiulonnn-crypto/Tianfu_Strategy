@@ -736,15 +736,27 @@ python3 server.py
 **compute.yml**（现有）：
 
 ```yaml
-触发：push to main | UTC 22:00 周一-五 | workflow_dispatch
+触发：
+  - push to main
+  - schedule:
+      # 盘中每 30 min（EDT 9:00-17:30 / EST 8:00-16:30 覆盖）
+      - cron: '0,30 13-21 * * 1-5'
+      # 收盘后 2h 终版快照（EDT 18:00 / EST 17:00）
+      - cron: '0 22 * * 1-5'
+  - workflow_dispatch
 步骤：
   1. checkout
   2. setup-python 3.11 + pip cache
   3. pip install -r requirements.txt
   4. base64 -d Secrets → data/*.json
   5. python3 compute.py
-  6. git add data/computed/ && git commit && git push（[skip ci]）
+  6. git add data/computed/ && git commit（[skip ci]）
+  7. git push；失败则 git pull --rebase -X theirs 后重试（最多 5 次退避）
 ```
+
+盘中 cron 依赖 yfinance 对"今天"返回一行临时 Close（以最新成交价为收盘价），
+推进 `effective_end_date = trading_dates[-1]` 到当日；收盘终版再抓一次，避免
+Yahoo 延迟丢最终收盘价。周末与节假日因 `1-5` 与无新数据自然跳过。
 
 **test.yml**（规划）：
 
@@ -788,6 +800,51 @@ gh secret set MODEL_STATE_B64 < <(base64 -i data/model_state.json)
 
 `index.html` 在根目录，通过 `window.location.hostname === '<user>.github.io'` 自动切换为云端模式。
 
+### 6.5 CI 写回 main 的竞态守护
+
+**适用范围：** 任何 workflow 的 `git commit && git push` 写回 `main`。
+
+**为何必要：** 本仓库同时存在以下几条 push 路径，两两可能撞车：
+
+1. 用户自己 `git push origin main`
+2. `.githooks/pre-push` 的 CHANGELOG bump 触发的第二次 push
+3. `compute.yml` 在盘中 cron（`0,30 13-21 * * 1-5`）下每 30 min 一次的写回
+4. `compute.yml` 相邻两个 run 时间窗重叠时互相撞车
+
+任一对并发 push 都会让后者遭遇 `! [rejected] main -> main (fetch first)`，run 整次失败
+→ 线上数据当次刷新丢失。
+
+**守护模板（务必复用）：**
+
+```yaml
+- name: Commit computed data
+  run: |
+    set -e
+    git config user.name "github-actions[bot]"
+    git config user.email "github-actions[bot]@users.noreply.github.com"
+    git add <被写回的路径>
+    if git diff --cached --quiet; then
+      echo "No changes to commit"; exit 0
+    fi
+    git commit -m "chore: <describe> [skip ci]"
+    for attempt in 1 2 3 4 5; do
+      if git push; then exit 0; fi
+      echo "push rejected on attempt $attempt, rebase and retry..."
+      git fetch origin main
+      git pull --rebase -X theirs origin main
+      sleep $((attempt * 3))
+    done
+    exit 1
+```
+
+**语义要点：**
+
+- `-X theirs` 在 rebase 路径冲突时偏向 `origin` 版本——CI 的增值仅在写回的数据路径上，其它路径冲突应让远端胜出。
+- `set -e` + `if git push` 组合：`git push` 的失败被 `if` 吞掉进入 rebase 重试；`fetch` / `pull` 的硬失败（网络/真冲突）按 `set -e` 立即 fail-fast，交给人工处置。
+- 退避 `sleep $((attempt * 3))` 避免对远端做雷暴重试。
+
+**测试守护：** `tests/test_compute_workflow_cron.py::test_commit_step_has_push_retry` 静态断言 YAML 里 `for`/`rebase`/`fetch` 三要素齐备，防止未来被静默回滚。
+
 ---
 
 ## 7. 运维
@@ -796,7 +853,7 @@ gh secret set MODEL_STATE_B64 < <(base64 -i data/model_state.json)
 
 缓存文件 `data/price_cache.json` 按交易日自动失效，无需手动清理。
 
-若需强制刷新缓存，递增 `server.py` 中的 `_CACHE_VERSION` 常量（当前为 5）。
+若需强制刷新缓存，递增 `server.py` 中的 `_CACHE_VERSION` 常量（当前为 6）。
 
 ### 7.2 数据备份
 

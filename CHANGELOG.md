@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> Theme: 文档同步"盘中刷新节奏 + CI 写回竞态守护"约定
+
+### Changed
+
+- **架构与技术文档同步线上数据刷新节奏**：ARCHITECTURE.md 新增"线上数据刷新节奏"小节，用表格说明盘中每 30 分钟与收盘终版两条 cron 各自的作用与触发时间；TECHNICAL.md §6.2 改写 `compute.yml` 步骤清单，并新增 §6.5「CI 写回 main 的竞态守护」记录 5 次退避重试 + `git pull --rebase -X theirs` 的模板，供未来新增的"写回 main"类 workflow 复用。价格缓存小节的版本号从 5 更新为与实际一致的 6。
+
 ## [0.1.0-007] - 2026-04-24 - compute workflow 的 push 步骤加 retry+rebase，避开盘中刷新与并发 push 的竞态
 
 ### Fixed

@@ -187,7 +187,28 @@ sequenceDiagram
     Compute->>Compute: sanitize()（脱敏敏感字段）
     Compute->>Computed: 写入 *.json 文件
     GH->>GH: git commit data/computed/ [skip ci]
+    GH->>GH: git push（失败则 rebase 重试最多 5 次）
 ```
+
+### 线上数据刷新节奏
+
+`.github/workflows/compute.yml` 按两条节奏推进 `data/computed/*.json`，兼顾
+"盘中实时视图" 与 "收盘终版快照"：
+
+| cron (UTC) | 对应美东时间 | 节奏 | 作用 |
+|------------|------------|------|------|
+| `0,30 13-21 * * 1-5` | 盘中每半小时（EDT 9:00-17:30 / EST 8:00-16:30） | 高频 | 推进 `effective_end_date` 到当日，yfinance 会把今天最后一笔成交价作为临时 Close，前端「数据基准日」刷新到今天 |
+| `0 22 * * 1-5` | 每日 18:00 EDT / 17:00 EST（收盘后 2h） | 每日 | 终版快照，确保 Yahoo 延迟到位的最终收盘价被至少抓取一次 |
+
+周末与节假日不触发；节假日即便 cron 命中，yfinance 无新数据 → 无新
+commit，workflow 空跑无副作用。`data/price_cache.json` 在 `.gitignore`
+中，每个 run 从空缓存起跑，不会因前一轮缓存污染而错过刷新。
+
+> ⚠️ 高频 cron 下，`Commit computed data` 的 `git push` 会与并发 push（用户推送、
+> `.githooks/pre-push` 的 CHANGELOG bump、相邻 cron 的 run）发生 fast-forward
+> 竞态。workflow 的写回步骤内置 **5 次退避重试 + `git pull --rebase -X theirs`**，
+> 这类偶发撞车不会导致线上数据整次刷新丢失。新增任何"写回 main"的 workflow
+> 都应复用同一套 retry 模板——详见 [TECHNICAL.md §6.5](TECHNICAL.md#65-ci-写回-main-的竞态守护)。
 
 ---
 
