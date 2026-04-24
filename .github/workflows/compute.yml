@@ -47,13 +47,34 @@ jobs:
         run: python3 compute.py
 
       - name: Commit computed data
+        # 盘中高频 cron 下（0,30 13-21 * * 1-5），单个 run 的 push 很可能与
+        # 并发的用户 push / hook 自动 bump / 相邻的 cron 撞车，被远端以
+        # "! [rejected] main -> main (fetch first)" 拒绝。retry + rebase 守
+        # 护这条 race，避免一次 race 就丢掉当次数据刷新。
         run: |
+          set -e
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/computed/
           if git diff --cached --quiet; then
             echo "No changes to commit"
-          else
-            git commit -m "chore: update computed data [skip ci]"
-            git push
+            exit 0
           fi
+          git commit -m "chore: update computed data [skip ci]"
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              echo "push succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "push rejected on attempt $attempt, rebase on origin/main and retry..."
+            git fetch origin main
+            # --autostash 不需要（工作区已 clean）；-X theirs 在 data/computed/
+            # 出现同路径冲突时采用对端版本（生成的 JSON 本质是幂等再计算，
+            # 丢掉本地版本不是问题；若冲突发生在非 data/ 路径则 rebase 失败、
+            # 进入下一轮重试或最终 fail-fast）
+            git pull --rebase -X theirs origin main
+            # 小退避避免雷暴式连撞
+            sleep $((attempt * 3))
+          done
+          echo "ERROR: push still rejected after 5 retries, giving up"
+          exit 1

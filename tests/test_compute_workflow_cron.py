@@ -139,3 +139,36 @@ def test_cron_total_market_fires_at_least_10() -> None:
         f"盘中 cron 触发次数 {len(in_market)} 次，低于 10 次下限；"
         f"slots={sorted(in_market)}"
     )
+
+
+# ---------------- 并发安全守护 ----------------
+#
+# 高频 cron 下，run 的 `git push` 很容易与并发 push / hook bump / 相邻 cron
+# 撞车被拒（remote fast-forward 失败）。必须有 retry + rebase 机制，否则一次
+# race 就会让当次数据刷新失败。skill "Retry-wrap sequence rule" 要求 retry
+# 必须覆盖整条 fragile 序列，这里至少守住静态结构。
+
+
+def test_commit_step_has_push_retry() -> None:
+    """Commit computed data 步骤必须具备 push 失败后 rebase + 重试的能力。"""
+    raw = WORKFLOW_PATH.read_text(encoding="utf-8")
+    data = yaml.safe_load(raw)
+    jobs = data.get("jobs", {})
+    compute = jobs.get("compute", {})
+    steps = compute.get("steps", [])
+    commit_step = next(
+        (s for s in steps if s.get("name") == "Commit computed data"),
+        None,
+    )
+    assert commit_step is not None, "compute.yml 中未找到 'Commit computed data' 步骤"
+    body = commit_step.get("run", "")
+    # 必须包含循环/重试、rebase、fetch 三个信号，才能在 push 被拒时恢复
+    assert "for " in body or "while " in body, (
+        "Commit computed data 缺少重试循环（for/while）——一次 race 就会整次失败"
+    )
+    assert "rebase" in body, (
+        "Commit computed data 缺少 rebase；拒绝后需 git pull --rebase 才能前进"
+    )
+    assert "git fetch" in body or "pull --rebase" in body, (
+        "Commit computed data 缺少对 origin 的拉取；retry 前必须先同步远端"
+    )
