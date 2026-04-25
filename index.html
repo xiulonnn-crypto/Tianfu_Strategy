@@ -37,10 +37,18 @@
     .info-tip .info-tip-text { visibility: hidden; opacity: 0; position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: #2d2a3e; color: #fff; font-size: 11px; line-height: 1.5; padding: 6px 10px; border-radius: 6px; white-space: nowrap; z-index: 50; pointer-events: none; transition: opacity .15s; }
     .info-tip .info-tip-text::after { content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 4px solid transparent; border-top-color: #2d2a3e; }
     .info-tip:hover .info-tip-text { visibility: visible; opacity: 1; }
+    /* Review card info icon: desktop = above, right-aligned; mobile = below (cards near viewport top) */
+    .review-card-tip .info-tip-text { bottom: calc(100% + 6px); top: auto; left: auto; right: 0; transform: none; white-space: normal; width: 260px; max-width: 260px; }
+    .review-card-tip .info-tip-text::after { top: 100%; bottom: auto; left: auto; right: 8px; transform: none; border-top-color: #2d2a3e; border-bottom-color: transparent; }
+    @media (max-width: 639px) {
+      .review-card-tip .info-tip-text { bottom: auto; top: calc(100% + 6px); width: min(260px, calc(100vw - 24px)); max-width: calc(100vw - 24px); }
+      .review-card-tip .info-tip-text::after { top: auto; bottom: 100%; border-top-color: transparent; border-bottom-color: #2d2a3e; }
+    }
 
     /* ===== 收益率历史新高徽章（俏皮庆祝）===== */
     .ath-badge {
       display: inline-flex; align-items: center; gap: 6px;
+      flex-wrap: wrap;
       padding: 4px 12px; border-radius: 999px;
       font-family: 'Baskerville', 'Times New Roman', 'PingFang SC', 'Microsoft YaHei', serif;
       font-size: 13px; font-weight: 600; letter-spacing: 0.3px;
@@ -50,7 +58,6 @@
       box-shadow: 0 2px 10px rgba(191,169,96,0.35), inset 0 1px 0 rgba(255,255,255,0.6);
       text-shadow: 0 1px 0 rgba(255,255,255,0.4);
       animation: ath-twinkle 2.4s ease-in-out infinite;
-      white-space: nowrap;
     }
     .ath-badge .ath-spark {
       color: #C88A0E; font-size: 14px; line-height: 1;
@@ -1308,13 +1315,13 @@
       return last + 1e-6 >= maxVal;
     }
 
-    // 俏皮祝贺文案（每次随机挑一条，增添趣味）
+    // 俏皮祝贺文案（简短适配移动端，每次随机挑一条）
     var __ATH_MESSAGES = [
-      '收益率冲破云霄啦！天府计划今日加冕 ٩(๑•̀ㅂ•́)و',
-      '历史新高达成 ✧(＊°▽°＊)✧ 复利的小船一路狂飙～',
-      'ATH 又刷新啦！(๑>◡<๑) 今天的涨幅属于坚持定投的你',
-      '新高新高新高！٩(◕‿◕｡)۶ 天府号卫星准时入轨',
-      '又一次登顶 (๑•̀ㅁ•́ฅ) 继续稳住节奏，乾坤在我手中'
+      '新高冲破云霄 ٩(•̀ᴗ•́)و',
+      '新高达成 (＊°▽°＊) 复利狂飙',
+      'ATH 新高！(๑>◡<๑) 定投有回报',
+      '新高登顶 ✧ 天府号就位',
+      '再创新高 (•̀ㅁ•́ฅ) 稳住节奏'
     ];
     function pickAthMessage() {
       return __ATH_MESSAGES[Math.floor(Math.random() * __ATH_MESSAGES.length)];
@@ -1657,10 +1664,12 @@
       var activeSumBtn = document.querySelector('.sum-period-btn[style*="var(--deep-purple)"]');
       loadTradeSummary(activeSumBtn ? activeSumBtn.dataset.period : 'all');
       loadSignals();
+      __lazyLoaded.signals = true;
       var stressBlock = document.getElementById('stressResultBlock');
       if (stressBlock && !stressBlock.classList.contains('hidden')) loadStressTest();
       var activeRevBtn = document.querySelector('.review-period-btn[style*="var(--deep-purple)"]');
       loadStrategyReview(activeRevBtn ? activeRevBtn.dataset.rp : 'all');
+      __lazyLoaded.review = true;
     }
 
     // ========== 资产盈亏归因分析 ==========
@@ -2000,6 +2009,16 @@
       if (mobBtn) mobBtn.classList.add('mob-active');
       window.scrollTo(0, 0);
       if (!_skipHash && window.__updateRouteHash) window.__updateRouteHash(sectionId);
+      // 懒加载：首次切换到信号/复盘时才触发耗时 API
+      if (sectionId === 'signals' && !__lazyLoaded.signals) {
+        __lazyLoaded.signals = true;
+        loadSignals();
+      }
+      if (sectionId === 'review' && !__lazyLoaded.review) {
+        __lazyLoaded.review = true;
+        var activeRevBtn = document.querySelector('.review-period-btn[style*="var(--deep-purple)"]');
+        loadStrategyReview(activeRevBtn ? activeRevBtn.dataset.rp : 'all');
+      }
     }
 
     // ========== 交易历史子标签（支持 hash 路由同步；_skipHash=true 用于 __applyRoute 内部调用）==========
@@ -2350,6 +2369,9 @@
 
     // ========== 压力测试 & 蒙特卡洛 ==========
     var chartMonteCarlo = null;
+
+    // 懒加载状态：首次进入该标签才触发对应的耗时 API，避免每次页面加载都触发冷启动
+    var __lazyLoaded = { signals: false, review: false };
     async function loadStressTest() {
       var loadEl = document.getElementById('stressLoading');
       var resultEl = document.getElementById('stressResultBlock');
@@ -2454,24 +2476,34 @@
       // 指标卡片（含合规分 + 小字定义）
       var cards = document.getElementById('reviewCards');
       if (cards) {
+        var ds = data.discipline_score, cs = data.compliance_score, er = data.excess_return;
+        var be = data.bomb_efficiency, sr = data.safety_ratio;
         var items = [
-          {label:'纪律分', val: data.discipline_score + '%', color: data.discipline_score >= 90 ? '#0d9488' : '#f59e0b',
-           sub: '投弹 ' + data.total_bombs + ' 次', def: '(1 - 漏单率)%，衡量信号执行的完整度'},
-          {label:'合规分', val: data.compliance_score + '%', color: data.compliance_score >= 80 ? '#0d9488' : '#f59e0b',
-           sub: '最大偏离 ' + data.max_drift + '%', def: '100 - 最大风险资产偏离×2，衡量配置是否在目标轨道内'},
-          {label:'超额收益', val: (data.excess_return >= 0 ? '+' : '') + data.excess_return + '%', color: data.excess_return >= 0 ? '#0d9488' : '#dc2626',
-           sub: 'MWRR ' + (data.real_mwrr||data.real_twr) + '% / DCA ' + data.dca_return + '%', def: '实际组合 MWRR 减去等额定投 DCA 收益，正值=策略有效'},
-          {label:'投弹效率', val: data.bomb_efficiency != null ? data.bomb_efficiency + '%' : '--', color: data.bomb_efficiency != null && data.bomb_efficiency < 5 ? '#0d9488' : '#f59e0b',
-           sub: '偏离最低价', def: '投弹均价 / 投弹期间最低价 - 1，越接近 0 越精准'},
-          {label:'安全系数', val: data.safety_ratio != null ? data.safety_ratio + '×' : '--', color: data.safety_ratio != null && data.safety_ratio > 2 ? '#0d9488' : '#dc2626',
-           sub: '备弹池/压力回撤', def: '备弹池余额 / 极端情景（-15%）回撤金额，>2× 为安全'},
+          {label:'纪律分', val: ds + '%', color: ds >= 90 ? '#0d9488' : '#f59e0b',
+           sub: ds >= 90 ? '执行优秀' : ds >= 70 ? '执行良好' : '执行偏低',
+           eval: '信号触发后实际执行次数与应执行次数之比，反映策略执行完整度。' + (ds >= 90 ? '当前 ' + ds + '%，执行纪律优秀，信号落地完整' : ds >= 70 ? '当前 ' + ds + '%，执行纪律良好，偶有漏单' : '当前 ' + ds + '%，执行纪律偏低，漏单较多')},
+          {label:'合规分', val: cs + '%', color: cs >= 80 ? '#0d9488' : '#f59e0b',
+           sub: cs >= 80 ? '配置受控' : cs >= 60 ? '偏离偏大' : '配置超标',
+           eval: '各资产实际仓位偏离目标配置比例的综合评分，反映配置纪律。' + (cs >= 80 ? '当前 ' + cs + '%，仓位偏离受控，配置在目标轨道内' : cs >= 60 ? '当前 ' + cs + '%，仓位偏离偏大，建议关注再平衡' : '当前 ' + cs + '%，配置偏离超标，需优先纠偏')},
+          {label:'超额收益', val: (er >= 0 ? '+' : '') + er + '%', color: er >= 0 ? '#0d9488' : '#dc2626',
+           sub: er > 2 ? '显著跑赢基准' : er > 0 ? '小幅跑赢基准' : er === 0 ? '与基准持平' : '跑输基准',
+           eval: '实际收益率（MWRR）减去同期 DCA 定投基准的差值，衡量主动操作带来的额外收益。' + (er > 2 ? '超额 +' + er + '%，策略显著跑赢定投基准' : er > 0 ? '超额 +' + er + '%，策略小幅跑赢定投基准' : er === 0 ? '与定投基准持平，策略效果中性' : '落后 ' + Math.abs(er) + '%，策略跑输定投基准')},
+          {label:'投弹效率', val: be != null ? be + '%' : '--', color: be != null && be < 5 ? '#0d9488' : '#f59e0b',
+           sub: be == null ? '暂无数据' : be < 3 ? '买点精准' : be < 5 ? '买点良好' : be < 10 ? '买点一般' : '买点偏高',
+           eval: '实际买入价偏离同期区间最低价的百分比，越低代表买点越精准。' + (be == null ? '暂无数据' : be < 3 ? '偏离 ' + be + '%，买点精准，接近区间最低价' : be < 5 ? '偏离 ' + be + '%，买点良好，效率较高' : be < 10 ? '偏离 ' + be + '%，买点一般，在合理区间内' : '偏离 ' + be + '%，买点偏高，注意控制入场时机')},
+          {label:'安全系数', val: sr != null ? sr + '×' : '--', color: sr != null && sr > 2 ? '#0d9488' : '#dc2626',
+           sub: sr == null ? '暂无数据' : sr > 3 ? '备弹非常充裕' : sr > 2 ? '安全边际良好' : sr > 1 ? '备弹有限' : '备弹严重不足',
+           eval: '当前备弹池余额除以极端下行压力回撤所需资金之比，反映应对市场极端行情的储备能力。' + (sr == null ? '暂无数据' : sr > 3 ? '当前 ' + sr + '×，备弹非常充裕，应对极端行情有余' : sr > 2 ? '当前 ' + sr + '×，备弹充足，安全边际良好' : sr > 1 ? '当前 ' + sr + '×，备弹有限，需关注补充节奏' : '当前 ' + sr + '×，备弹严重不足，建议尽快补充')},
         ];
         cards.innerHTML = items.map(function(it) {
-          return '<div class="rounded-xl p-4" style="background:#fff;box-shadow:0 2px 12px rgba(74,61,124,0.06);">'
-            + '<div class="text-xs font-medium" style="color:var(--benchmark-gray);">' + it.label + '</div>'
+          return '<div class="rounded-xl p-4" style="background:#fff;box-shadow:0 2px 12px rgba(74,61,124,0.06);position:relative;">'
+            + '<span class="info-tip review-card-tip" style="position:absolute;top:10px;right:10px;margin-left:0;">'
+            + '<i class="fas fa-circle-info" style="font-size:13px;color:rgba(138,145,153,0.5);"></i>'
+            + '<span class="info-tip-text">' + it.eval + '</span>'
+            + '</span>'
+            + '<div class="text-xs font-medium" style="color:var(--benchmark-gray);padding-right:18px;">' + it.label + '</div>'
             + '<div class="text-2xl font-bold mt-1" style="color:' + it.color + ';">' + it.val + '</div>'
             + '<div class="text-xs mt-1" style="color:var(--benchmark-gray);">' + it.sub + '</div>'
-            + '<div class="text-xs mt-1" style="color:rgba(138,145,153,0.7);font-style:italic;">' + it.def + '</div>'
             + '</div>';
         }).join('');
       }
@@ -3450,8 +3482,18 @@
       loadFundRecords();
       loadTrades();
       loadTradeSummary('all');
-      loadSignals();
-      loadStrategyReview('all');
+      // 懒加载：仅在直接进入对应标签时才触发，否则推迟到用户首次切换时
+      var secSignals = document.getElementById('section-signals');
+      var secReview = document.getElementById('section-review');
+      if (secSignals && !secSignals.classList.contains('hidden')) {
+        __lazyLoaded.signals = true;
+        loadSignals();
+      }
+      if (secReview && !secReview.classList.contains('hidden')) {
+        __lazyLoaded.review = true;
+        var activeRevBtn = document.querySelector('.review-period-btn[style*="var(--deep-purple)"]');
+        loadStrategyReview(activeRevBtn ? activeRevBtn.dataset.rp : 'all');
+      }
     }
 
     bindEvents();

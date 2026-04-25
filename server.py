@@ -7,6 +7,7 @@
 import bisect
 import json
 import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -40,6 +41,9 @@ MODEL_STATE_FILE = DATA_DIR / "model_state.json"
 # 价格缓存：文件持久化，同一天内所有请求使用同一份数据，避免刷新时数据变化
 PRICE_CACHE_FILE = DATA_DIR / "price_cache.json"
 _CACHE_VERSION = 6  # 升级时递增，使旧缓存失效（6：各端点统一 fetch 区间键，命中同一 price_cache）
+
+# 分位数引擎缓存：文件持久化，避免服务重启后冷启动拉取 15 秒
+QUANTILE_CACHE_FILE = DATA_DIR / "quantile_cache.json"
 
 # 公司行为类交易类型：仅改股数、不改现金成本（MWRR/汇总/加仓散点等需排除）
 TYPE_DIVIDEND = "分红"
@@ -2287,135 +2291,161 @@ def _toundan_stats_from_trades(trades_list):
 # ---------- 1.1 分位数引擎 ----------
 
 _quantile_cache = {"date": None, "data": None}
+_quantile_lock = threading.Lock()
 
 
 def compute_quantile_engine():
     """
     拉取 3 年 + 缓冲日线，计算所有分位数指标。
-    同一天内缓存结果，避免重复拉取。
+    同一天内缓存结果，避免重复拉取。优先读取文件缓存，服务重启后仍可快速返回。
+    使用线程锁确保并发请求等待第一次计算完成，不重复拉取 Yahoo Finance。
     """
     import numpy as np
 
     today_str = datetime.now().strftime("%Y-%m-%d")
+
+    # 快速路径：进程内存缓存命中（无需加锁）
     if _quantile_cache["date"] == today_str and _quantile_cache["data"]:
         return _quantile_cache["data"]
 
-    dt = datetime.now()
-    start_3y = (dt - timedelta(days=3 * 365 + 60)).strftime("%Y-%m-%d")
-    end_d = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
+    # 慢路径：需要计算。加锁确保同一进程内只有一个线程执行 Yahoo 拉取，
+    # 其他线程等待锁释放后直接从内存/文件缓存命中。
+    with _quantile_lock:
+        # 双检锁：拿到锁后先再确认（另一线程可能已完成）
+        if _quantile_cache["date"] == today_str and _quantile_cache["data"]:
+            return _quantile_cache["data"]
 
-    # 需要拉取的标的：QQQM、^VIX、^TNX（10年期国债收益率）、IAU、SPY（PE 代理）
-    tickers_needed = ["QQQM", "^VIX", "^TNX", "IAU", "SPY"]
-    raw = _fetch_histories_raw(tickers_needed, start_3y, end_d)
+        # 文件缓存检查：服务重启后直接读文件，无需重新拉取 15 秒
+        try:
+            raw_file = load_json(QUANTILE_CACHE_FILE, None)
+            if raw_file and raw_file.get("date") == today_str and raw_file.get("data"):
+                _quantile_cache["date"] = today_str
+                _quantile_cache["data"] = raw_file["data"]
+                return raw_file["data"]
+        except Exception:
+            pass
 
-    result = {
-        "qqqm_price": None, "qqqm_prev_close": None, "qqqm_change_pct": None,
-        "qqqm_drop_3y_pctile": None,
-        "vix_price": None, "vix_3y_pctile": None,
-        "qqqm_ema200": None, "qqqm_above_ema200": None,
-        "qqqm_ema20": None, "qqqm_above_ema20": None,
-        "qqqm_low20": None,
-        "tnx_yield": None,
-        "iau_price": None, "iau_prev_close": None, "iau_change_pct": None,
-        "pe_10y_pctile": None, "pe_3y_pctile": None,
-        "ema200_deviation_3y_pctile": None,
-        "ema20_deviation_3y_pctile": None,
-        "vix_3y_median_s": None,
-    }
-
-    # --- QQQM ---
-    df_qqqm = raw.get("QQQM")
-    if df_qqqm is not None and not df_qqqm.empty and len(df_qqqm) > 5:
-        closes = df_qqqm["Close"].dropna()
-        if len(closes) > 1:
-            result["qqqm_price"] = round(float(closes.iloc[-1]), 2)
-            result["qqqm_prev_close"] = round(float(closes.iloc[-2]), 2)
-            pct_chg = (closes.iloc[-1] / closes.iloc[-2] - 1) * 100
-            result["qqqm_change_pct"] = round(float(pct_chg), 2)
-
-            # 日收益率序列
-            daily_ret = closes.pct_change().dropna()
-            if len(daily_ret) > 10:
-                today_ret = float(daily_ret.iloc[-1])
-                # 当日跌幅在 3 年历史日收益中的分位（越低 = 跌幅越罕见 = 分位值越高）
-                rank = float((daily_ret <= today_ret).sum()) / len(daily_ret)
-                # 反转：跌幅越深 → rank 越小 → (1-rank) 越大 → 分位越高
-                result["qqqm_drop_3y_pctile"] = round(1.0 - rank, 4)
-
-            # 200 日 EMA
-            if len(closes) > 200:
-                ema200 = closes.ewm(span=200, adjust=False).mean()
-                result["qqqm_ema200"] = round(float(ema200.iloc[-1]), 2)
-                result["qqqm_above_ema200"] = bool(closes.iloc[-1] > ema200.iloc[-1])
-
-                # 200 日偏离分位：(price/ema200 - 1) 在 3 年中的分位
-                deviation_200 = (closes / ema200 - 1.0).dropna()
-                if len(deviation_200) > 10:
-                    cur_dev = float(deviation_200.iloc[-1])
-                    pctile = float((deviation_200 <= cur_dev).sum()) / len(deviation_200)
-                    result["ema200_deviation_3y_pctile"] = round(pctile, 4)
-
-            # 20 日 EMA
-            if len(closes) > 20:
-                ema20 = closes.ewm(span=20, adjust=False).mean()
-                result["qqqm_ema20"] = round(float(ema20.iloc[-1]), 2)
-                result["qqqm_above_ema20"] = bool(closes.iloc[-1] > ema20.iloc[-1])
-
-                deviation_20 = (closes / ema20 - 1.0).dropna()
-                if len(deviation_20) > 10:
-                    cur_dev20 = float(deviation_20.iloc[-1])
-                    pctile20 = float((deviation_20 <= cur_dev20).sum()) / len(deviation_20)
-                    result["ema20_deviation_3y_pctile"] = round(pctile20, 4)
-
-            # 20 日最低价
-            if len(closes) >= 20:
-                result["qqqm_low20"] = round(float(closes.iloc[-20:].min()), 2)
-
-    # --- VIX ---
-    df_vix = raw.get("^VIX")
-    if df_vix is not None and not df_vix.empty and len(df_vix) > 5:
-        vix_closes = df_vix["Close"].dropna()
-        if len(vix_closes) > 1:
-            result["vix_price"] = round(float(vix_closes.iloc[-1]), 2)
-            rank_vix = float((vix_closes <= vix_closes.iloc[-1]).sum()) / len(vix_closes)
-            result["vix_3y_pctile"] = round(rank_vix, 4)
-
-    # --- ^TNX（10 年期国债收益率，作为 TIPS 近似）---
-    df_tnx = raw.get("^TNX")
-    if df_tnx is not None and not df_tnx.empty:
-        tnx_closes = df_tnx["Close"].dropna()
-        if len(tnx_closes) > 0:
-            result["tnx_yield"] = round(float(tnx_closes.iloc[-1]), 2)
-
-    # --- IAU ---
-    df_iau = raw.get("IAU")
-    if df_iau is not None and not df_iau.empty and len(df_iau) > 2:
-        iau_closes = df_iau["Close"].dropna()
-        if len(iau_closes) > 1:
-            result["iau_price"] = round(float(iau_closes.iloc[-1]), 2)
-            result["iau_prev_close"] = round(float(iau_closes.iloc[-2]), 2)
-            iau_pct = (iau_closes.iloc[-1] / iau_closes.iloc[-2] - 1) * 100
-            result["iau_change_pct"] = round(float(iau_pct), 2)
-
-    # --- PE 分位（用 SPY 价格/收益 简化代理：价格水位的百分位排名）---
-    df_spy = raw.get("SPY")
-    if df_spy is not None and not df_spy.empty and len(df_spy) > 20:
-        spy_closes = df_spy["Close"].dropna()
-        if len(spy_closes) > 20:
-            cur_spy = float(spy_closes.iloc[-1])
-            # 10 年分位：使用全部可用数据
-            result["pe_10y_pctile"] = round(float((spy_closes <= cur_spy).sum()) / len(spy_closes), 4)
-            # 3 年分位：截取最近 ~756 个交易日
-            spy_3y = spy_closes.iloc[-756:] if len(spy_closes) > 756 else spy_closes
-            result["pe_3y_pctile"] = round(float((spy_3y <= cur_spy).sum()) / len(spy_3y), 4)
-
-    # --- 月投合成信号 S 的 3 年中位数（用于 M 计算）---
-    # 简化：用当前 S 的组成因子估算历史中位，实际中 S ≈ 0.5 附近波动
-    result["vix_3y_median_s"] = 0.5
-
-    _quantile_cache["date"] = today_str
-    _quantile_cache["data"] = result
-    return result
+        dt = datetime.now()
+        start_3y = (dt - timedelta(days=3 * 365 + 60)).strftime("%Y-%m-%d")
+        end_d = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
+    
+        # 需要拉取的标的：QQQM、^VIX、^TNX（10年期国债收益率）、IAU、SPY（PE 代理）
+        tickers_needed = ["QQQM", "^VIX", "^TNX", "IAU", "SPY"]
+        raw = _fetch_histories_raw(tickers_needed, start_3y, end_d)
+    
+        result = {
+            "qqqm_price": None, "qqqm_prev_close": None, "qqqm_change_pct": None,
+            "qqqm_drop_3y_pctile": None,
+            "vix_price": None, "vix_3y_pctile": None,
+            "qqqm_ema200": None, "qqqm_above_ema200": None,
+            "qqqm_ema20": None, "qqqm_above_ema20": None,
+            "qqqm_low20": None,
+            "tnx_yield": None,
+            "iau_price": None, "iau_prev_close": None, "iau_change_pct": None,
+            "pe_10y_pctile": None, "pe_3y_pctile": None,
+            "ema200_deviation_3y_pctile": None,
+            "ema20_deviation_3y_pctile": None,
+            "vix_3y_median_s": None,
+        }
+    
+        # --- QQQM ---
+        df_qqqm = raw.get("QQQM")
+        if df_qqqm is not None and not df_qqqm.empty and len(df_qqqm) > 5:
+            closes = df_qqqm["Close"].dropna()
+            if len(closes) > 1:
+                result["qqqm_price"] = round(float(closes.iloc[-1]), 2)
+                result["qqqm_prev_close"] = round(float(closes.iloc[-2]), 2)
+                pct_chg = (closes.iloc[-1] / closes.iloc[-2] - 1) * 100
+                result["qqqm_change_pct"] = round(float(pct_chg), 2)
+    
+                # 日收益率序列
+                daily_ret = closes.pct_change().dropna()
+                if len(daily_ret) > 10:
+                    today_ret = float(daily_ret.iloc[-1])
+                    # 当日跌幅在 3 年历史日收益中的分位（越低 = 跌幅越罕见 = 分位值越高）
+                    rank = float((daily_ret <= today_ret).sum()) / len(daily_ret)
+                    # 反转：跌幅越深 → rank 越小 → (1-rank) 越大 → 分位越高
+                    result["qqqm_drop_3y_pctile"] = round(1.0 - rank, 4)
+    
+                # 200 日 EMA
+                if len(closes) > 200:
+                    ema200 = closes.ewm(span=200, adjust=False).mean()
+                    result["qqqm_ema200"] = round(float(ema200.iloc[-1]), 2)
+                    result["qqqm_above_ema200"] = bool(closes.iloc[-1] > ema200.iloc[-1])
+    
+                    # 200 日偏离分位：(price/ema200 - 1) 在 3 年中的分位
+                    deviation_200 = (closes / ema200 - 1.0).dropna()
+                    if len(deviation_200) > 10:
+                        cur_dev = float(deviation_200.iloc[-1])
+                        pctile = float((deviation_200 <= cur_dev).sum()) / len(deviation_200)
+                        result["ema200_deviation_3y_pctile"] = round(pctile, 4)
+    
+                # 20 日 EMA
+                if len(closes) > 20:
+                    ema20 = closes.ewm(span=20, adjust=False).mean()
+                    result["qqqm_ema20"] = round(float(ema20.iloc[-1]), 2)
+                    result["qqqm_above_ema20"] = bool(closes.iloc[-1] > ema20.iloc[-1])
+    
+                    deviation_20 = (closes / ema20 - 1.0).dropna()
+                    if len(deviation_20) > 10:
+                        cur_dev20 = float(deviation_20.iloc[-1])
+                        pctile20 = float((deviation_20 <= cur_dev20).sum()) / len(deviation_20)
+                        result["ema20_deviation_3y_pctile"] = round(pctile20, 4)
+    
+                # 20 日最低价
+                if len(closes) >= 20:
+                    result["qqqm_low20"] = round(float(closes.iloc[-20:].min()), 2)
+    
+        # --- VIX ---
+        df_vix = raw.get("^VIX")
+        if df_vix is not None and not df_vix.empty and len(df_vix) > 5:
+            vix_closes = df_vix["Close"].dropna()
+            if len(vix_closes) > 1:
+                result["vix_price"] = round(float(vix_closes.iloc[-1]), 2)
+                rank_vix = float((vix_closes <= vix_closes.iloc[-1]).sum()) / len(vix_closes)
+                result["vix_3y_pctile"] = round(rank_vix, 4)
+    
+        # --- ^TNX（10 年期国债收益率，作为 TIPS 近似）---
+        df_tnx = raw.get("^TNX")
+        if df_tnx is not None and not df_tnx.empty:
+            tnx_closes = df_tnx["Close"].dropna()
+            if len(tnx_closes) > 0:
+                result["tnx_yield"] = round(float(tnx_closes.iloc[-1]), 2)
+    
+        # --- IAU ---
+        df_iau = raw.get("IAU")
+        if df_iau is not None and not df_iau.empty and len(df_iau) > 2:
+            iau_closes = df_iau["Close"].dropna()
+            if len(iau_closes) > 1:
+                result["iau_price"] = round(float(iau_closes.iloc[-1]), 2)
+                result["iau_prev_close"] = round(float(iau_closes.iloc[-2]), 2)
+                iau_pct = (iau_closes.iloc[-1] / iau_closes.iloc[-2] - 1) * 100
+                result["iau_change_pct"] = round(float(iau_pct), 2)
+    
+        # --- PE 分位（用 SPY 价格/收益 简化代理：价格水位的百分位排名）---
+        df_spy = raw.get("SPY")
+        if df_spy is not None and not df_spy.empty and len(df_spy) > 20:
+            spy_closes = df_spy["Close"].dropna()
+            if len(spy_closes) > 20:
+                cur_spy = float(spy_closes.iloc[-1])
+                # 10 年分位：使用全部可用数据
+                result["pe_10y_pctile"] = round(float((spy_closes <= cur_spy).sum()) / len(spy_closes), 4)
+                # 3 年分位：截取最近 ~756 个交易日
+                spy_3y = spy_closes.iloc[-756:] if len(spy_closes) > 756 else spy_closes
+                result["pe_3y_pctile"] = round(float((spy_3y <= cur_spy).sum()) / len(spy_3y), 4)
+    
+        # --- 月投合成信号 S 的 3 年中位数（用于 M 计算）---
+        # 简化：用当前 S 的组成因子估算历史中位，实际中 S ≈ 0.5 附近波动
+        result["vix_3y_median_s"] = 0.5
+    
+        _quantile_cache["date"] = today_str
+        _quantile_cache["data"] = result
+        # 写入文件缓存，服务重启后可直接读取，无需重新拉取
+        try:
+            save_json(QUANTILE_CACHE_FILE, {"date": today_str, "data": result})
+        except Exception:
+            pass
+        return result
 
 
 # ---------- 1.2 风险预算 R → RR → K → T ----------
@@ -3371,4 +3401,27 @@ def api_stress_test():
 
 if __name__ == "__main__":
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _warmup_quantile():
+        """後台预热：服务启动时异步拉取分位数数据和市场行情，避免首次访问等待。
+        持有 _quantile_lock，使并发的首次请求等待本线程完成而非重复拉取 Yahoo。
+        """
+        try:
+            compute_quantile_engine()
+        except Exception:
+            pass
+        # 同步预热市场实时行情（api/signals 大盘概况区，4 并发约 3s）
+        market_syms = ("QQQ", "^VIX", "GLD", "^TNX")
+        try:
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                futures = [ex.submit(fetch_realtime_quote, s) for s in market_syms]
+                for f in futures:
+                    try:
+                        f.result()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    threading.Thread(target=_warmup_quantile, daemon=True).start()
     app.run(host="0.0.0.0", port=1001, debug=True)
