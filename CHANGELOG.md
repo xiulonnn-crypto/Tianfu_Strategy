@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> Theme: 策略复盘页面冷启动速度大幅提升
+## [0.1.0-008] - 2026-04-26 - 策略复盘页面冷启动速度大幅提升
 
 ### Changed
 
