@@ -995,10 +995,32 @@
       return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'v=' + encodeURIComponent(v);
     }
     window.__cloudVersionPromise = window.__cloudVersionPromise || null;
+    var _CC_VER_KEY = '__TF_cv';   // localStorage key: { v, t }
+    var _CC_DAT_PFX = '__TF_cd:';  // localStorage key prefix for data: { v, d }
+    var _CC_VER_TTL = 5 * 60 * 1000; // 5 分钟版本缓存有效期
+    function _ccGetVer() {
+      try { var o = JSON.parse(localStorage.getItem(_CC_VER_KEY) || 'null'); return (o && o.v && typeof o.t === 'number') ? o : null; } catch(e) { return null; }
+    }
+    function _ccSetVer(v) {
+      try { localStorage.setItem(_CC_VER_KEY, JSON.stringify({ v: v, t: Date.now() })); } catch(e) {}
+    }
+    function _ccGetDat(url) {
+      try { return JSON.parse(localStorage.getItem(_CC_DAT_PFX + url) || 'null'); } catch(e) { return null; }
+    }
+    function _ccSetDat(url, data) {
+      if (!window.__cloudDataVersion) return;
+      try { localStorage.setItem(_CC_DAT_PFX + url, JSON.stringify({ v: window.__cloudDataVersion, d: data })); } catch(e) {}
+    }
     function ensureCloudVersion() {
       if (!window.__isCloudMode) return Promise.resolve();
       if (window.__cloudDataVersion) return Promise.resolve();
       if (window.__cloudVersionPromise) return window.__cloudVersionPromise;
+      // 优先从 localStorage 读取 5 分钟内的缓存版本，避免每次访问都拉 version.json
+      var cv = _ccGetVer();
+      if (cv && (Date.now() - cv.t) < _CC_VER_TTL) {
+        window.__cloudDataVersion = cv.v;
+        return Promise.resolve();
+      }
       window.__cloudVersionPromise = (async function() {
         try {
           var u = './data/computed/version.json?t=' + Date.now();
@@ -1007,6 +1029,7 @@
             var j = await res.json();
             if (j && j.updated_at) {
               window.__cloudDataVersion = String(j.updated_at);
+              _ccSetVer(window.__cloudDataVersion);
               return;
             }
           }
@@ -1021,9 +1044,18 @@
         var staticUrl = _mapApiToStatic(path);
         if (!staticUrl) return null;
         if (!window.__cloudDataVersion) await ensureCloudVersion();
+        // 版本命中缓存：直接返回，无需网络请求
+        var cached = _ccGetDat(staticUrl);
+        if (cached && cached.v === window.__cloudDataVersion && cached.d != null) {
+          return cached.d;
+        }
         const res = await fetch(_withVersion(staticUrl)).catch(function(err) { return null; });
-        if (!res || !res.ok) return null;
-        try { return await res.json(); } catch(e) { return null; }
+        if (!res || !res.ok) return (cached && cached.d != null) ? cached.d : null;
+        try {
+          var data = await res.json();
+          _ccSetDat(staticUrl, data);
+          return data;
+        } catch(e) { return null; }
       }
       const url = API_BASE + path;
       const res = await fetch(url).catch(function (err) {
@@ -3445,6 +3477,7 @@
     }
 
     async function checkBackendVersion() {
+      if (window.__isCloudMode) return;
       var banner = document.getElementById('bannerRestartBackend');
       if (!banner) return;
       var data = await apiGet('/api/version');

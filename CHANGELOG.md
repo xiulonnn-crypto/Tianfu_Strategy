@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **展示页重复访问接近零等待**：在线展示页（GitHub Pages）每次打开都需重新从 CDN 拉取所有数据，受网络延迟影响需等待数秒。现在首次加载会将版本号与数据文件缓存至浏览器本地存储，同一次部署内的后续访问直接读取本地缓存、无需任何网络请求；仅当服务端数据更新（每日 CI 重算后）才重新拉取最新内容。
+
 ## [0.1.0-008] - 2026-04-26 - 策略复盘页面冷启动速度大幅提升
 
 ### Changed
