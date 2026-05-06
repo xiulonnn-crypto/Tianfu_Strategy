@@ -2219,23 +2219,67 @@ def save_model_state(state):
     save_json(MODEL_STATE_FILE, state)
 
 
-def compute_reserve_pool(trades_list, cash_position_value=0):
+def compute_reserve_pool(trades_list, cash_position_value=0, fund_records=None):
     """
-    备弹池余额 = 现金仓位（BOXX）市值（投弹入金后优先买入 BOXX）。
-    total_injected = 备弹池余额 + 已投弹总额。
-    year_max_reserve = total_injected（用于 T 公式分母，受 reserve_pool 钳制）。
+    备弹池采用现金流恒等式：
+
+        net_inflow          = 总入金（出入金净额，备注含"出金"或 amount<0 视为出金）
+        monthly_used        = "定投" 净买入（买入 - 卖出，按 price × shares）
+        total_toundan_used  = "投弹" 净买入（同上）
+        total_injected      = net_inflow - monthly_used        （投弹池规模 = 已投 + 未投）
+        reserve_pool        = total_injected - total_toundan_used  （投弹池中尚未投出的部分）
+        year_max_reserve    = total_injected                   （用于 T 公式分母）
+
+    语义说明：
+    - "定投"通道的资金不属于投弹池，应直接从总入金中扣除。
+    - "投弹"通道的已投出部分依然属于投弹池（只是从现金形态变成持仓形态），
+      所以从 total_injected 进入 total_toundan_used，但不再出现在 reserve_pool 里。
+    - BOXX / "现金管理" 类买卖视作通道内腾挪，不影响任何指标。
+
+    关键差异 vs 旧实现：
+    - 旧：reserve_pool 来自 BOXX 当前市值，依赖标的现价与持仓；
+          入金后必须等用户手动建仓 BOXX 才能反映。
+    - 新：所有数字来自现金流恒等式，入金登记后立即反映；不再依赖任何标的市值。
+
+    cash_position_value 形参保留向后兼容，新公式不再使用。
+    fund_records 缺省为空 → total_injected = 0，便于历史调用方在过渡期内运行
+    （但下游数字会全部为 0，请务必传入完整的 fund_records 列表）。
     """
-    total_toundan_used = sum(
-        float(t.get("price", 0)) * float(t.get("shares", 0))
-        for t in trades_list if (t.get("type") or "") == "投弹"
-    )
-    reserve_pool = round(cash_position_value, 2)
-    total_injected = reserve_pool + total_toundan_used
-    year_max_reserve = total_injected
+    del cash_position_value  # 形参保留，新公式不再依赖
+
+    fund_records = fund_records or []
+
+    net_inflow = 0.0
+    for r in fund_records:
+        amt = float(r.get("amount") or 0)
+        note = (r.get("note") or "").lower()
+        if "出金" in note and amt > 0:
+            net_inflow -= amt
+        else:
+            net_inflow += amt
+
+    def _net_buy_for_type(target_type):
+        net = 0.0
+        for t in trades_list:
+            if (t.get("type") or "") != target_type:
+                continue
+            shares = float(t.get("shares") or 0)
+            price = float(t.get("price") or 0)
+            action = t.get("action") or ""
+            if action == "买入":
+                net += shares * price
+            elif action == "卖出":
+                net -= shares * price
+        return net
+
+    monthly_used = _net_buy_for_type("定投")
+    total_toundan_used = _net_buy_for_type("投弹")
+    total_injected = net_inflow - monthly_used
+    reserve_pool = total_injected - total_toundan_used
 
     return {
-        "reserve_pool": reserve_pool,
-        "year_max_reserve": round(year_max_reserve, 2),
+        "reserve_pool": round(reserve_pool, 2),
+        "year_max_reserve": round(total_injected, 2),
         "total_injected": round(total_injected, 2),
         "total_toundan_used": round(total_toundan_used, 2),
     }
@@ -2786,9 +2830,9 @@ def api_signals():
         if sym.upper() == "QQQM":
             qqqm_value += v
 
-    # ===== 备弹池（BOXX 现金仓位驱动）=====
-    cash_val = sym_values.get("BOXX", 0)
-    rp_info = compute_reserve_pool(trades_list, cash_val)
+    # ===== 备弹池（现金流恒等式：总入金 - 月投净买入 - 投弹净买入）=====
+    fund_records_sig = get_fund_records()
+    rp_info = compute_reserve_pool(trades_list, fund_records=fund_records_sig)
     reserve_pool = rp_info["reserve_pool"]
     year_max_reserve = rp_info["year_max_reserve"]
     total_toundan_used = rp_info["total_toundan_used"]
@@ -3077,8 +3121,7 @@ def api_strategy_review():
 
         # 资金安全系数：备弹池 / 压力情景回撤金额（假设 -20% 回撤）
         pos = positions_at_date(trades_list, eff_end, perf_sr["position_timeline"], perf_sr["timeline_dates"])
-        boxx_val = (get_price_on_date("BOXX", eff_end, hc, pix) or 0) * pos.get("BOXX", 0)
-        rp_info = compute_reserve_pool(trades_list, boxx_val)
+        rp_info = compute_reserve_pool(trades_list, fund_records=fund_records)
         reserve_pool = rp_info["reserve_pool"]
         tv = sum((get_price_on_date(s, eff_end, hc, pix) or 0) * q for s, q in pos.items())
         max_dd_amount = tv * 0.15 if tv > 0 else 1
@@ -3270,8 +3313,8 @@ def api_stress_test():
     )
     prices_now = prices_at(list(pos.keys()), history_cache, effective_end_date, perf_st["price_index"])
 
-    boxx_val = (prices_now.get("BOXX") or 0) * pos.get("BOXX", 0)
-    rp_info = compute_reserve_pool(trades_list, boxx_val)
+    fund_records_st = get_fund_records()
+    rp_info = compute_reserve_pool(trades_list, fund_records=fund_records_st)
     reserve_pool = rp_info["reserve_pool"]
     year_max_reserve = rp_info["year_max_reserve"]
     v_now = portfolio_value_with_prices(pos, prices_now)
