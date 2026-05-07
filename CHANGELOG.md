@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> Theme: 收益页展示数据拉取时点（东八区）
+
+### Changed
+
+- **收益页时点文案**：「数据基准日」改为「数据更新时间」，在有时戳时展示东八区完整日期时间（含秒与 GMT+8），便于判断展示数据对应的拉取时刻；无时戳时仍仅显示行情日期。
+
 ## [0.1.0-009] - 2026-04-27 - localStorage cache for GH Pages version…
 
 ### Changed

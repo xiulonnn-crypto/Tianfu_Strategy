@@ -42,6 +42,14 @@ MODEL_STATE_FILE = DATA_DIR / "model_state.json"
 PRICE_CACHE_FILE = DATA_DIR / "price_cache.json"
 _CACHE_VERSION = 7  # 升级时递增，使旧缓存失效（7：写入 fetched_at UTC 时间戳供前端展示）
 
+# 进程内存缓存：比文件缓存再快一级，避免并发请求重复解析 JSON / 重复拉 Yahoo。
+# key: (frozenset(all_syms), start_date, end_date, today_str)
+# value: (hist_only, bench_cache, trading_dates) —— 与 fetch_histories_with_bench 返回值一致
+_PRICE_MEM_CACHE: dict = {}
+# 并发去重：同一 key 只允许一个线程向 Yahoo 拉取，其余等待结果。
+_PRICE_INFLIGHT_LOCK = threading.Lock()
+_PRICE_INFLIGHT: dict = {}  # key → threading.Event
+
 # 分位数引擎缓存：文件持久化，避免服务重启后冷启动拉取 15 秒
 QUANTILE_CACHE_FILE = DATA_DIR / "quantile_cache.json"
 
@@ -365,13 +373,14 @@ def _fetch_histories_raw(symbols, start_date, end_date):
     拉取多标的从 start_date 到 end_date 的日线，返回 {symbol: DataFrame}，DataFrame 含 Close 列、日期索引。
     使用 Ticker(symbol).history() 逐标的拉取，避免 yf.download 多标的下可能的数据串扰/错位。
     若 Ticker.history() 失败（Yahoo API 间歇性返回 None），回退到 yf.download。
+    网络 I/O 为主：多标的时线程池并行拉取，缩短冷启动时间。
     """
     if not symbols:
         return {}
     use_repair = _yfinance_repair_available()
-    out = {}
-    for s in symbols:
-        sy = yf_symbol(s)
+
+    def _pull_one(sym):
+        sy = yf_symbol(sym)
         data = None
         try:
             ticker = yf.Ticker(sy)
@@ -389,7 +398,16 @@ def _fetch_histories_raw(symbols, start_date, end_date):
                                    progress=False, auto_adjust=False)
             except Exception:
                 data = None
-        out[s] = _extract_close_series(data)
+        return sym, _extract_close_series(data)
+
+    if len(symbols) == 1:
+        s, series = _pull_one(symbols[0])
+        return {s: series}
+    max_workers = min(8, len(symbols))
+    out = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        for sym, series in ex.map(_pull_one, symbols):
+            out[sym] = series
     return out
 
 
@@ -501,21 +519,76 @@ def fetch_histories_with_bench(symbols, start_date, end_date):
     """
     拉取标的 + 纳指基准，返回 (history_cache, bench_cache, trading_dates)。
     统一入口，保证收益概览与资产配置使用同一份数据。
+
+    三级缓存策略（由快到慢）：
+      1. 进程内存缓存  — 纳秒级，零 I/O，解决同一进程内多次调用
+      2. 文件缓存      — 毫秒级，解决重启后当日首次调用
+      3. Yahoo Finance — 秒级，仅当日首次冷启动触发一次
+
+    并发去重：多线程同时冷启动时，只有一个线程真正发起网络拉取，
+    其余线程 wait 在 threading.Event 上，待拉取完成后直接读内存缓存，
+    避免同一行情被并行重复拉取（race condition on cold file cache）。
     """
     all_syms = sorted(set(symbols) | {BENCHMARK_SYMBOL})
-    cached = _load_price_cache(all_syms, start_date, end_date)
-    if cached:
-        hist, bench, dates = cached
-        hist_only = {k: v for k, v in hist.items() if k != BENCHMARK_SYMBOL}
-        return hist_only, bench, dates
-    history_cache = _fetch_histories_raw(symbols, start_date, end_date)
-    bench_cache = _fetch_histories_raw([BENCHMARK_SYMBOL], start_date, end_date)
-    trading_dates = get_trading_dates_from_cache(history_cache, bench_cache)
-    if trading_dates:
-        merged = dict(history_cache)
-        merged.update(bench_cache)
-        _save_price_cache(all_syms, start_date, end_date, merged, bench_cache, trading_dates)
-    return history_cache, bench_cache, trading_dates
+    today = datetime.now().strftime("%Y-%m-%d")
+    mem_key = (frozenset(all_syms), start_date, end_date, today)
+
+    # ── Level 1: 进程内存缓存，零 I/O ──
+    hit = _PRICE_MEM_CACHE.get(mem_key)
+    if hit is not None:
+        return hit
+
+    # ── 并发去重：决定当前线程是「拉取者」还是「等待者」──
+    with _PRICE_INFLIGHT_LOCK:
+        if mem_key in _PRICE_INFLIGHT:
+            we_fetch = False
+            evt = _PRICE_INFLIGHT[mem_key]
+        else:
+            we_fetch = True
+            evt = threading.Event()
+            _PRICE_INFLIGHT[mem_key] = evt
+
+    if not we_fetch:
+        # 等待拉取者完成（最多 35 秒），之后直接读内存缓存
+        evt.wait(timeout=35)
+        hit = _PRICE_MEM_CACHE.get(mem_key)
+        if hit is not None:
+            return hit
+        # 拉取者失败时，降级尝试文件缓存
+        fc = _load_price_cache(all_syms, start_date, end_date)
+        if fc:
+            hist, bench, dates = fc
+            return {k: v for k, v in hist.items() if k != BENCHMARK_SYMBOL}, bench, dates
+        return {}, {}, []
+
+    # ── 当前线程为拉取者 ──
+    result = None
+    try:
+        # Level 2: 文件缓存
+        fc = _load_price_cache(all_syms, start_date, end_date)
+        if fc:
+            hist, bench, dates = fc
+            hist_only = {k: v for k, v in hist.items() if k != BENCHMARK_SYMBOL}
+            result = (hist_only, bench, dates)
+        else:
+            # Level 3: Yahoo Finance — 标的与基准合并为一次并行拉取
+            all_fetched = _fetch_histories_raw(all_syms, start_date, end_date)
+            bench_cache = {BENCHMARK_SYMBOL: all_fetched.get(BENCHMARK_SYMBOL)}
+            history_cache = {k: v for k, v in all_fetched.items() if k != BENCHMARK_SYMBOL}
+            trading_dates = get_trading_dates_from_cache(history_cache, bench_cache)
+            if trading_dates:
+                merged = dict(all_fetched)
+                _save_price_cache(all_syms, start_date, end_date, merged, bench_cache, trading_dates)
+            result = (history_cache, bench_cache, trading_dates if trading_dates else [])
+
+        if result and result[2]:  # 有 trading_dates 才值得缓存
+            _PRICE_MEM_CACHE[mem_key] = result
+        return result if result else ({}, {}, [])
+    finally:
+        # 无论成功还是异常，都要通知等待者
+        with _PRICE_INFLIGHT_LOCK:
+            _PRICE_INFLIGHT.pop(mem_key, None)
+        evt.set()
 
 
 def portfolio_value_with_prices(positions, prices):
@@ -850,6 +923,7 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
 
     # 收集时段内的买入事件（仅风险资产，排除 BOXX 等现金管理标的）
     CASH_TICKERS_CHART = {"BOXX"}
+    label_index = {lbl: ix for ix, lbl in enumerate(labels)}
     buy_markers = []
     for t in trades_list:
         td = (t.get("date") or "")[:10]
@@ -861,14 +935,15 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
         if sym in CASH_TICKERS_CHART:
             continue
         label_key = td[5:]
-        if label_key in labels:
-            idx = labels.index(label_key)
-            buy_markers.append({
-                "idx": idx, "label": label_key,
-                "type": t.get("type") or "定投",
-                "symbol": sym,
-                "price_shares": round(float(t.get("price", 0)) * float(t.get("shares", 0)), 0),
-            })
+        idx = label_index.get(label_key)
+        if idx is None:
+            continue
+        buy_markers.append({
+            "idx": idx, "label": label_key,
+            "type": t.get("type") or "定投",
+            "symbol": sym,
+            "price_shares": round(float(t.get("price", 0)) * float(t.get("shares", 0)), 0),
+        })
 
     return {"labels": labels, "my": my_series, "bench": bench_series, "dca": dca_series, "buy_markers": buy_markers}
 
@@ -3473,5 +3548,21 @@ if __name__ == "__main__":
         except Exception:
             pass
 
+    def _warmup_price_cache():
+        """后台预热历史价格缓存，使首个真实请求（returns-overview / allocation 等）
+        直接命中进程内存缓存，而不是等待 Yahoo Finance 网络拉取（通常 3–5 秒）。"""
+        import time as _t
+        _t.sleep(0.5)  # 确保 Flask 完成初始化
+        try:
+            trades_list = get_trades()
+            syms = get_all_symbols(trades_list) if trades_list else []
+            if not syms:
+                return
+            start_fetch, end_fetch = _compute_fetch_range(trades_list)
+            fetch_histories_with_bench(syms, start_fetch, end_fetch)
+        except Exception:
+            pass
+
     threading.Thread(target=_warmup_quantile, daemon=True).start()
+    threading.Thread(target=_warmup_price_cache, daemon=True).start()
     app.run(host="0.0.0.0", port=1001, debug=True)

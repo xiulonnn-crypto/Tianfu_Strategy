@@ -910,6 +910,20 @@
           return tzAbbr ? core + ' ' + tzAbbr : core;
         } catch(e) { return isoUtc; }
       }
+      /** 收益页「数据更新时间」：固定按 Asia/Shanghai 展示，后缀 GMT+8（与 price_cache.fetched_at UTC 对应）。 */
+      window.__formatAsShanghaiGMT8 = function(isoUtc) {
+        if (!isoUtc) return '';
+        try {
+          var d = new Date(isoUtc);
+          var parts = {};
+          new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Asia/Shanghai',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+          }).formatToParts(d).forEach(function(p) { parts[p.type] = p.value; });
+          return parts.year + '-' + parts.month + '-' + parts.day + ' ' + parts.hour + ':' + parts.minute + ':' + parts.second + ' GMT+8';
+        } catch (e) { return isoUtc; }
+      }
       function __showRefreshToast(msg, ok) {
         var t = document.getElementById('toastRefresh');
         if (!t) return;
@@ -1358,7 +1372,7 @@
       }
     }
 
-    function updateRiskMetrics(risk) {
+    function updateRiskMetricsTexts(risk) {
       var elDD = document.getElementById('riskMaxDrawdown');
       var elSharpe = document.getElementById('riskSharpe');
       var elAlpha = document.getElementById('riskAlpha');
@@ -1404,26 +1418,46 @@
           elBetaNote.textContent = bLabel + ' · 相对纳指';
         } else { elBetaNote.textContent = '相对纳指'; }
       }
-
+    }
+    function updateRiskMetricsCharts(risk) {
       buildDrawdownChart(risk);
       renderTop3Drawdowns(risk && risk.top3_drawdowns);
+    }
+    function updateRiskMetrics(risk) {
+      updateRiskMetricsTexts(risk);
+      updateRiskMetricsCharts(risk);
+    }
+    /** 首屏先铺文字，下一帧再跑 Chart.js，避免阻塞 LCP/可交互时间 */
+    function scheduleReturnsChartWork(fn) {
+      if (typeof requestAnimationFrame !== 'undefined') {
+        requestAnimationFrame(function() { requestAnimationFrame(fn); });
+      } else { setTimeout(fn, 0); }
     }
     async function loadReturnsOverview() {
       const data = await apiGet('/api/returns-overview');
       if (!data) {
         setReturnsCardsNoData();
-        updateRiskMetrics(null);
+        updateRiskMetricsTexts(null);
         updateMwrrCompare(null, null);
-        buildReturnsChart(currentPeriod);
+        scheduleReturnsChartWork(function() {
+          updateRiskMetricsCharts(null);
+          buildReturnsChart(currentPeriod);
+          renderStrategyDriver(null);
+        });
         return;
       }
       returnsOverview = data;
       var rk = periodToRiskKey(currentPeriod);
       updateReturnsCards(data.cards || {});
-      updateRiskMetrics(data.risk_metrics ? data.risk_metrics[rk] : null);
+      updateRiskMetricsTexts(data.risk_metrics ? data.risk_metrics[rk] : null);
       updateMwrrCompare(data.cards, rk);
       var asOfEl = document.getElementById('returnsDataAsOf');
-      if (asOfEl) asOfEl.textContent = (data.data_as_of ? '数据基准日: ' + data.data_as_of : '') + (data.method ? ' | 方法: ' + data.method : '');
+      if (asOfEl) {
+        var _fmtSh = window.__formatAsShanghaiGMT8;
+        var _tsRet = (data.price_fetched_at && typeof _fmtSh === 'function') ? _fmtSh(data.price_fetched_at) : '';
+        var _line = _tsRet ? ('数据更新时间：' + _tsRet) : (data.data_as_of ? ('数据更新时间：' + data.data_as_of) : '');
+        asOfEl.textContent = _line + (data.method ? ' | 方法: ' + data.method : '');
+      }
       var hAsOf = document.getElementById('historyDataAsOf');
       if (hAsOf) {
         var _fmt = window.__formatAsLocal;
@@ -1431,8 +1465,11 @@
         hAsOf.textContent = '最新更新时间：' + (_ts || data.data_as_of || '--');
       }
       updateAthBadge(data);
-      buildReturnsChart(currentPeriod);
-      renderStrategyDriver(data.strategy_driver);
+      scheduleReturnsChartWork(function() {
+        buildReturnsChart(currentPeriod);
+        updateRiskMetricsCharts(data.risk_metrics ? data.risk_metrics[rk] : null);
+        renderStrategyDriver(data.strategy_driver);
+      });
     }
 
     // 判断最新累计收益率是否为历史新高（since 期累计 TWR 序列的最大值 == 最新值）
