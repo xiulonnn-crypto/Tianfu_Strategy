@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> Theme: 收益页展示数据拉取时点（东八区）
+## [0.1.0-010] - 2026-05-08 - 收益页展示数据拉取时点（东八区）
 
 ### Changed
 
