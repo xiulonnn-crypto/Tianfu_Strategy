@@ -407,6 +407,7 @@
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-lg font-semibold" style="color: var(--deep-purple);">交易历史</h2>
         <div class="flex items-center gap-2">
+          <span id="historyDataAsOf" class="text-xs" style="color: var(--benchmark-gray);"></span>
           <button type="button" id="btnRefreshData" class="hidden px-3 py-1.5 rounded text-sm transition" style="background: var(--champagne-gold); color: #2d2a3e;" onclick="if(window.__triggerRefresh)window.__triggerRefresh()"><i class="fas fa-rotate mr-1"></i>刷新数据</button>
           <button type="button" class="btn-toggle-sensitive px-4 py-2 rounded text-sm transition" style="background: #fff; color: var(--deep-purple); border: 1px solid var(--deep-purple);">一键隐藏</button>
         </div>
@@ -1404,6 +1405,8 @@
       updateMwrrCompare(data.cards, rk);
       var asOfEl = document.getElementById('returnsDataAsOf');
       if (asOfEl) asOfEl.textContent = (data.data_as_of ? '数据基准日: ' + data.data_as_of : '') + (data.method ? ' | 方法: ' + data.method : '');
+      var hAsOf = document.getElementById('historyDataAsOf');
+      if (hAsOf) hAsOf.textContent = data.data_as_of ? '最新更新时间：' + data.data_as_of : '';
       updateAthBadge(data);
       buildReturnsChart(currentPeriod);
       renderStrategyDriver(data.strategy_driver);
