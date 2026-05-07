@@ -10,7 +10,7 @@ import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -40,7 +40,7 @@ MODEL_STATE_FILE = DATA_DIR / "model_state.json"
 
 # 价格缓存：文件持久化，同一天内所有请求使用同一份数据，避免刷新时数据变化
 PRICE_CACHE_FILE = DATA_DIR / "price_cache.json"
-_CACHE_VERSION = 6  # 升级时递增，使旧缓存失效（6：各端点统一 fetch 区间键，命中同一 price_cache）
+_CACHE_VERSION = 7  # 升级时递增，使旧缓存失效（7：写入 fetched_at UTC 时间戳供前端展示）
 
 # 分位数引擎缓存：文件持久化，避免服务重启后冷启动拉取 15 秒
 QUANTILE_CACHE_FILE = DATA_DIR / "quantile_cache.json"
@@ -475,7 +475,7 @@ def _save_price_cache(symbols, start_date, end_date, history_cache, bench_cache,
     data = {
         "version": _CACHE_VERSION,
         "cache_date": datetime.now().strftime("%Y-%m-%d"),
-        "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ"),
+        "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "symbols": sorted(symbols),
         "start": start_date,
         "end": end_date,
