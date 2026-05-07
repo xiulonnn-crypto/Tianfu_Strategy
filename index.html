@@ -891,18 +891,23 @@
       }
 
       // ========== 云端"刷新数据"：localStorage PAT → GitHub workflow_dispatch ==========
-      function __formatAsET(isoUtc) {
+      /** 将 UTC ISO 字符串格式化为用户本机时区的日期时间（含秒与时区缩写）。 */
+      function __formatAsLocal(isoUtc) {
         if (!isoUtc) return '';
         try {
           var d = new Date(isoUtc);
           var parts = {};
           new Intl.DateTimeFormat('en-CA', {
-            timeZone: 'America/New_York',
             year: 'numeric', month: '2-digit', day: '2-digit',
             hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
           }).formatToParts(d).forEach(function(p) { parts[p.type] = p.value; });
-          var tzAbbr = d.toLocaleTimeString('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' }).split(' ').pop();
-          return parts.year + '-' + parts.month + '-' + parts.day + ' ' + parts.hour + ':' + parts.minute + ':' + parts.second + ' ' + tzAbbr;
+          var tzAbbr = '';
+          var tzParts = new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' }).formatToParts(d);
+          for (var i = 0; i < tzParts.length; i++) {
+            if (tzParts[i].type === 'timeZoneName') { tzAbbr = tzParts[i].value; break; }
+          }
+          var core = parts.year + '-' + parts.month + '-' + parts.day + ' ' + parts.hour + ':' + parts.minute + ':' + parts.second;
+          return tzAbbr ? core + ' ' + tzAbbr : core;
         } catch(e) { return isoUtc; }
       }
       function __showRefreshToast(msg, ok) {
@@ -1421,7 +1426,7 @@
       if (asOfEl) asOfEl.textContent = (data.data_as_of ? '数据基准日: ' + data.data_as_of : '') + (data.method ? ' | 方法: ' + data.method : '');
       var hAsOf = document.getElementById('historyDataAsOf');
       if (hAsOf) {
-        var _ts = data.price_fetched_at ? __formatAsET(data.price_fetched_at) : '';
+        var _ts = data.price_fetched_at ? __formatAsLocal(data.price_fetched_at) : '';
         hAsOf.textContent = '最新更新时间：' + (_ts || data.data_as_of || '--');
       }
       updateAthBadge(data);
