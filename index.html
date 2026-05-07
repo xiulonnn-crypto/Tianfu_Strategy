@@ -891,8 +891,8 @@
       }
 
       // ========== 云端"刷新数据"：localStorage PAT → GitHub workflow_dispatch ==========
-      /** 将 UTC ISO 字符串格式化为用户本机时区的日期时间（含秒与时区缩写）。 */
-      function __formatAsLocal(isoUtc) {
+      /** 将 UTC ISO 字符串格式化为用户本机时区的日期时间（含秒与时区缩写）。须挂 window：第二段 script 内 loadReturnsOverview 需调用。 */
+      window.__formatAsLocal = function(isoUtc) {
         if (!isoUtc) return '';
         try {
           var d = new Date(isoUtc);
@@ -1426,7 +1426,8 @@
       if (asOfEl) asOfEl.textContent = (data.data_as_of ? '数据基准日: ' + data.data_as_of : '') + (data.method ? ' | 方法: ' + data.method : '');
       var hAsOf = document.getElementById('historyDataAsOf');
       if (hAsOf) {
-        var _ts = data.price_fetched_at ? __formatAsLocal(data.price_fetched_at) : '';
+        var _fmt = window.__formatAsLocal;
+        var _ts = (data.price_fetched_at && typeof _fmt === 'function') ? _fmt(data.price_fetched_at) : '';
         hAsOf.textContent = '最新更新时间：' + (_ts || data.data_as_of || '--');
       }
       updateAthBadge(data);
