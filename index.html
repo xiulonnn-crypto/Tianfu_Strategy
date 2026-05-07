@@ -891,6 +891,20 @@
       }
 
       // ========== 云端"刷新数据"：localStorage PAT → GitHub workflow_dispatch ==========
+      function __formatAsET(isoUtc) {
+        if (!isoUtc) return '';
+        try {
+          var d = new Date(isoUtc);
+          var parts = {};
+          new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'America/New_York',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', hour12: false
+          }).formatToParts(d).forEach(function(p) { parts[p.type] = p.value; });
+          var tzAbbr = d.toLocaleTimeString('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' }).split(' ').pop();
+          return parts.year + '-' + parts.month + '-' + parts.day + ' ' + parts.hour + ':' + parts.minute + ' ' + tzAbbr;
+        } catch(e) { return isoUtc; }
+      }
       function __showRefreshToast(msg, ok) {
         var t = document.getElementById('toastRefresh');
         if (!t) return;
@@ -1406,7 +1420,10 @@
       var asOfEl = document.getElementById('returnsDataAsOf');
       if (asOfEl) asOfEl.textContent = (data.data_as_of ? '数据基准日: ' + data.data_as_of : '') + (data.method ? ' | 方法: ' + data.method : '');
       var hAsOf = document.getElementById('historyDataAsOf');
-      if (hAsOf) hAsOf.textContent = data.data_as_of ? '最新更新时间：' + data.data_as_of : '';
+      if (hAsOf) {
+        var _ts = data.price_fetched_at ? __formatAsET(data.price_fetched_at) : '';
+        hAsOf.textContent = '最新更新时间：' + (_ts || data.data_as_of || '--');
+      }
       updateAthBadge(data);
       buildReturnsChart(currentPeriod);
       renderStrategyDriver(data.strategy_driver);

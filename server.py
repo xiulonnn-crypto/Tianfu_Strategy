@@ -475,6 +475,7 @@ def _save_price_cache(symbols, start_date, end_date, history_cache, bench_cache,
     data = {
         "version": _CACHE_VERSION,
         "cache_date": datetime.now().strftime("%Y-%m-%d"),
+        "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ"),
         "symbols": sorted(symbols),
         "start": start_date,
         "end": end_date,
@@ -1568,10 +1569,16 @@ def api_returns_overview():
         "v_end": round(v_end, 2),
     }
 
+    try:
+        _cache_raw = load_json(PRICE_CACHE_FILE, {})
+        price_fetched_at = _cache_raw.get("fetched_at", "") if isinstance(_cache_raw, dict) else ""
+    except Exception:
+        price_fetched_at = ""
     return jsonify({
         "cards": cards,
         "chart": chart,
         "data_as_of": effective_end_date,
+        "price_fetched_at": price_fetched_at,
         "method": "MWRR",
         "risk_metrics": risk_metrics,
         "strategy_driver": strategy_driver,
