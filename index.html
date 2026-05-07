@@ -406,8 +406,12 @@
       </div>
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-lg font-semibold" style="color: var(--deep-purple);">交易历史</h2>
-        <button type="button" class="btn-toggle-sensitive px-4 py-2 rounded text-sm transition" style="background: #fff; color: var(--deep-purple); border: 1px solid var(--deep-purple);">一键隐藏</button>
+        <div class="flex items-center gap-2">
+          <button type="button" id="btnRefreshData" class="hidden px-3 py-1.5 rounded text-sm transition" style="background: var(--champagne-gold); color: #2d2a3e;" onclick="if(window.__triggerRefresh)window.__triggerRefresh()"><i class="fas fa-rotate mr-1"></i>刷新数据</button>
+          <button type="button" class="btn-toggle-sensitive px-4 py-2 rounded text-sm transition" style="background: #fff; color: var(--deep-purple); border: 1px solid var(--deep-purple);">一键隐藏</button>
+        </div>
       </div>
+      <div id="toastRefresh" class="hidden mb-3 px-3 py-2 rounded text-sm"></div>
       <!-- 交易汇总统计 -->
       <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4" id="tradeSummaryBar">
         <div class="rounded-xl p-3" style="background:#fff;box-shadow:0 2px 12px rgba(74,61,124,0.06);"><div class="text-xs" style="color:var(--benchmark-gray);">总入金</div><div class="text-lg font-bold mt-1" id="sumInflow" style="color:var(--deep-purple);">--</div></div>
@@ -803,6 +807,27 @@
     </div>
   </div>
 
+  <!-- GitHub PAT 触发 workflow 弹窗（云端模式"刷新数据"专用） -->
+  <div id="modalGhPat" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50" aria-hidden="true">
+    <div class="w-full max-w-md mx-4 p-6 rounded-xl shadow-xl" style="background: #fff;">
+      <h3 class="text-lg font-semibold mb-2" style="color: var(--deep-purple);">设置 GitHub Token</h3>
+      <p class="text-xs mb-4" style="color: var(--benchmark-gray);">用于从浏览器直接触发数据更新。请在 GitHub 创建一个 <strong>Fine-grained PAT</strong>，仅开启 <strong>Actions: Read and write</strong> 权限（仅限本仓库）。Token 仅保存在本浏览器 localStorage，不会上传至任何服务器。</p>
+      <div class="mb-1">
+        <label class="block text-xs mb-1" style="color: var(--benchmark-gray);">Personal Access Token</label>
+        <input type="password" id="inputGhPat" class="w-full rounded px-3 py-2 text-sm font-mono" style="border: 1px solid rgba(74,61,124,0.25);" placeholder="github_pat_…" autocomplete="off" />
+      </div>
+      <div class="flex items-center gap-1 mb-4">
+        <input type="checkbox" id="chkShowPat" style="cursor:pointer;">
+        <label for="chkShowPat" class="text-xs cursor-pointer select-none" style="color: var(--benchmark-gray);">显示 Token</label>
+      </div>
+      <div id="ghPatError" class="hidden mb-3 px-2 py-1.5 rounded text-xs" style="background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;"></div>
+      <div class="flex justify-end gap-2">
+        <button type="button" class="px-4 py-2 rounded transition" style="background: var(--light-purple-bg); color: var(--deep-purple);" onclick="if(window.__closeModal)window.__closeModal('modalGhPat')">取消</button>
+        <button type="button" id="btnSaveGhPat" class="px-4 py-2 rounded text-white transition" style="background: var(--deep-purple);">保存并触发</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Mobile Bottom Tab Bar -->
   <nav id="mobileTabBar" aria-label="移动端导航" style="position:fixed;bottom:0;left:0;width:100vw;z-index:9999;">
     <button type="button" class="mob-tab mob-active" data-section="returns" onclick="if(window.__navClick)window.__navClick('returns')"><i class="fas fa-chart-line"></i><span>收益</span></button>
@@ -860,7 +885,58 @@
       };
       if (window.__isCloudMode) {
         document.querySelectorAll('.btn-toggle-sensitive').forEach(function(b) { b.style.display = 'none'; });
+        var _btnRD = document.getElementById('btnRefreshData');
+        if (_btnRD) _btnRD.classList.remove('hidden');
       }
+
+      // ========== 云端"刷新数据"：localStorage PAT → GitHub workflow_dispatch ==========
+      function __showRefreshToast(msg, ok) {
+        var t = document.getElementById('toastRefresh');
+        if (!t) return;
+        t.textContent = msg;
+        t.style.background  = ok ? '#ecfdf5' : '#fef2f2';
+        t.style.border      = '1px solid ' + (ok ? '#0d9488' : '#fca5a5');
+        t.style.color       = ok ? '#0f766e' : '#991b1b';
+        t.classList.remove('hidden');
+        setTimeout(function() { t.classList.add('hidden'); }, ok ? 8000 : 6000);
+      }
+      window.__doTriggerWorkflow = function __doTriggerWorkflow(pat) {
+        var btn = document.getElementById('btnRefreshData');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>触发中…'; }
+        fetch('https://api.github.com/repos/xiulonnn-crypto/Tianfu_Strategy/actions/workflows/compute.yml/dispatches', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + pat, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ref: 'main' })
+        }).then(function(r) {
+          if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-rotate mr-1"></i>刷新数据'; }
+          if (r.status === 204) {
+            __showRefreshToast('✅ 已触发数据更新，约 1~2 分钟后生效，届时刷新页面即可。', true);
+          } else if (r.status === 401 || r.status === 403) {
+            localStorage.removeItem('__ghPatTianfu');
+            __showRefreshToast('❌ Token 无效或权限不足，已清除，请重新设置。', false);
+          } else {
+            r.text().then(function(t) {
+              __showRefreshToast('❌ 触发失败（HTTP ' + r.status + '）：' + t.slice(0, 80), false);
+            });
+          }
+        }).catch(function(e) {
+          if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-rotate mr-1"></i>刷新数据'; }
+          __showRefreshToast('❌ 网络错误：' + e.message, false);
+        });
+      }
+      window.__triggerRefresh = function() {
+        var pat = localStorage.getItem('__ghPatTianfu') || '';
+        if (!pat) {
+          var inp = document.getElementById('inputGhPat');
+          if (inp) inp.value = '';
+          var err = document.getElementById('ghPatError');
+          if (err) err.classList.add('hidden');
+          if (window.__openModal) window.__openModal('modalGhPat');
+          return;
+        }
+        window.__doTriggerWorkflow(pat);
+      };
+
       window.__historyTab = function(tab, _skipHash) {
         if (window.__isCloudMode && tab === 'fund') tab = 'trades';
         var tabs = document.querySelectorAll('.history-tab');
@@ -3240,6 +3316,25 @@
             return;
           }
           if (e.target.id === 'btnSubmitSmartPaste') { e.preventDefault(); e.stopPropagation(); submitSmartPaste(); return; }
+          if (e.target.id === 'btnSaveGhPat') {
+            e.preventDefault(); e.stopPropagation();
+            var _inp = document.getElementById('inputGhPat');
+            var _pat = (_inp && _inp.value.trim()) || '';
+            var _errEl = document.getElementById('ghPatError');
+            if (!_pat) {
+              if (_errEl) { _errEl.textContent = '请先粘贴 Token。'; _errEl.classList.remove('hidden'); }
+              return;
+            }
+            localStorage.setItem('__ghPatTianfu', _pat);
+            if (window.__closeModal) window.__closeModal('modalGhPat');
+            if (window.__doTriggerWorkflow) window.__doTriggerWorkflow(_pat);
+            return;
+          }
+          if (e.target.id === 'chkShowPat') {
+            var _patInp = document.getElementById('inputGhPat');
+            if (_patInp) _patInp.type = e.target.checked ? 'text' : 'password';
+            return;
+          }
           var sumPBtn = e.target.closest && e.target.closest('.sum-period-btn[data-period]');
           if (sumPBtn) {
             e.preventDefault(); e.stopPropagation();
