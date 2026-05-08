@@ -259,7 +259,7 @@ def main():
 
     # 策略复盘（3 个时段）
     print("[8/8] 策略复盘...")
-    for period in ("all", "1m", "3m"):
+    for period in ("all", "1m", "3m", "1y", "1y_roll"):
         get_json(f"/api/strategy-review?period={period}", f"strategy-review-{period}.json")
 
     print(f"\n=== 预计算完成 ===")

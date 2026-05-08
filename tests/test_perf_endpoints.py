@@ -28,7 +28,8 @@ def client_with_mock_yahoo():
     with patch.object(server, "_load_price_cache", return_value=None), \
          patch.object(server, "_save_price_cache"), \
          patch.object(server, "_fetch_histories_raw", side_effect=_fake_hist), \
-         patch.object(server, "fetch_realtime_quote", return_value=None):
+         patch.object(server, "fetch_realtime_quote", return_value=None), \
+         patch.object(server, "get_risk_free_us1y_annual_decimal", return_value=0.04):
         with server.app.test_client() as c:
             yield c
 

@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 """
 美股交易助手后端：持久化交易/出入金、拉取 Yahoo 股价、计算真实收益与资产配置。
 运行：pip install -r requirements.txt && python server.py
@@ -9,6 +11,8 @@ import json
 import os
 import threading
 import time
+import urllib.error
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -29,14 +33,21 @@ TRADES_FILE = DATA_DIR / "trades.json"
 
 # 纳指基准代码（Yahoo）
 BENCHMARK_SYMBOL = "^IXIC"
-# 无风险利率：美国3个月期国债年化收益率（用于夏普、Alpha），单位小数
-RISK_FREE_RATE = 0.021
+# 无风险利率：美国 1 年期国债恒定到期收益率（FRED DGS1，%）；拉取失败时的回退值（小数，与夏普/Alpha/Jensen 同口径）。
+# （与前端 index.html 中 DEFAULT_RISK_FREE_PCT_FALLBACK 占位需大致同步）
+RISK_FREE_RATE_FALLBACK = 0.0373
 
 # ===== 天府 v1.3.1 常量 =====
 YEARLY_RESERVE_INJECT = 40000  # 每年 1 月 1 日注入备弹池
 INITIAL_CAPITAL = 50000        # 初始备弹池（首年，即 2025 年）
 MONTHLY_BASE = 2000            # 月定投基数
 MODEL_STATE_FILE = DATA_DIR / "model_state.json"
+
+# FRED「1 年期国债恒定到期收益率」DGS1（日更），用于 Sharpe / Jensen Alpha 的无风险年化
+FRED_DGS1_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS1"
+
+# 内存缓存：(自然日 ISO 日期, 年化无风险小数)；按日失效，减少 FRED 命中
+_RISK_FREE_DGS1_CACHE: tuple[str, float] | None = None
 
 # 价格缓存：文件持久化，同一天内所有请求使用同一份数据，避免刷新时数据变化
 PRICE_CACHE_FILE = DATA_DIR / "price_cache.json"
@@ -52,6 +63,12 @@ _PRICE_INFLIGHT: dict = {}  # key → threading.Event
 
 # 分位数引擎缓存：文件持久化，避免服务重启后冷启动拉取 15 秒
 QUANTILE_CACHE_FILE = DATA_DIR / "quantile_cache.json"
+# 分位数逻辑或字段变更时递增，使当日旧缓存文件自动失效（3：串行化 yfinance + 指数串台校验）
+_QUANTILE_ENGINE_VERSION = 3
+
+# yfinance 的 yf.download 及部分 history 路径依赖模块级共享状态，多线程并发会串台（见 ranaroussi/yfinance#2557）。
+# 所有日线拉取在进程内必须互斥，避免 ^VIX/^TNX 等被写成 QQQM 收盘价。
+_YFIN_HISTORY_FETCH_LOCK = threading.Lock()
 
 # 公司行为类交易类型：仅改股数、不改现金成本（MWRR/汇总/加仓散点等需排除）
 TYPE_DIVIDEND = "分红"
@@ -65,6 +82,49 @@ ALLOWED_TRADE_TYPES = frozenset(
 # - 付息日偏移 5：Invesco / SPDR 等常见 ETF 的 ex-date → pay-date 近似工作日数
 DEFAULT_DIVIDEND_WITHHOLDING_RATE = 0.30
 DEFAULT_DIVIDEND_REINVEST_OFFSET_BD = 5
+
+
+def fetch_fred_dgs1_yield_pct_latest(timeout_sec: float = 8.0) -> float | None:
+    """读取 FRED DGS1（1 年期美债恒定到期收益率）CSV 的最后一笔有效观测，单位：百分比点数（如 3.73）。"""
+    req = urllib.request.Request(
+        FRED_DGS1_CSV_URL,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; us-stock-assistant/local)"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, OSError):
+        return None
+    for line in reversed(raw.strip().splitlines()):
+        line = line.strip()
+        if not line or line.lower().startswith("observation"):
+            continue
+        parts = line.split(",")
+        if len(parts) < 2:
+            continue
+        val_s = parts[-1].strip()
+        if val_s == "." or not val_s:
+            continue
+        try:
+            val = float(val_s)
+        except ValueError:
+            continue
+        if 0 < val < 20:
+            return val
+    return None
+
+
+def get_risk_free_us1y_annual_decimal() -> float:
+    """美国 1 年期国债年化无风险利率（小数），来自当日 FRED DGS1；抓取失败则用 RISK_FREE_RATE_FALLBACK。按自然日进程内缓存。"""
+    global _RISK_FREE_DGS1_CACHE
+    day_key = datetime.now().strftime("%Y-%m-%d")
+    if _RISK_FREE_DGS1_CACHE is not None and _RISK_FREE_DGS1_CACHE[0] == day_key:
+        return _RISK_FREE_DGS1_CACHE[1]
+    pct = fetch_fred_dgs1_yield_pct_latest()
+    dec = RISK_FREE_RATE_FALLBACK if pct is None else pct / 100.0
+    _RISK_FREE_DGS1_CACHE = (day_key, dec)
+    return dec
 
 
 def _is_corp_action(t):
@@ -282,8 +342,9 @@ def fetch_realtime_quote(symbol):
     names = {"QQQ": "纳斯达克100", "^VIX": "恐慌指数", "GLD": "黄金ETF", "^TNX": "10Y国债"}
     name = names.get(display_symbol, display_symbol)
     try:
-        ticker = yf.Ticker(sy)
-        hist = ticker.history(period="5d", auto_adjust=False)
+        with _YFIN_HISTORY_FETCH_LOCK:
+            ticker = yf.Ticker(sy)
+            hist = ticker.history(period="5d", auto_adjust=False)
         if hist is None or hist.empty or "Close" not in hist.columns:
             _REALTIME_QUOTE_CACHE[symbol] = (time.monotonic(), None)
             return None
@@ -373,7 +434,8 @@ def _fetch_histories_raw(symbols, start_date, end_date):
     拉取多标的从 start_date 到 end_date 的日线，返回 {symbol: DataFrame}，DataFrame 含 Close 列、日期索引。
     使用 Ticker(symbol).history() 逐标的拉取，避免 yf.download 多标的下可能的数据串扰/错位。
     若 Ticker.history() 失败（Yahoo API 间歇性返回 None），回退到 yf.download。
-    网络 I/O 为主：多标的时线程池并行拉取，缩短冷启动时间。
+    多标的按顺序拉取，且与 _YFIN_HISTORY_FETCH_LOCK 配合：yfinance 在并发下会污染模块级缓存，
+    曾导致 ^VIX/^TNX 与 QQQM 同价（如均显示 ~110）；禁止并行 history/download。
     """
     if not symbols:
         return {}
@@ -382,32 +444,29 @@ def _fetch_histories_raw(symbols, start_date, end_date):
     def _pull_one(sym):
         sy = yf_symbol(sym)
         data = None
-        try:
-            ticker = yf.Ticker(sy)
-            data = ticker.history(
-                start=start_date,
-                end=end_date,
-                auto_adjust=False,
-                repair=use_repair,
-            )
-        except Exception:
-            data = None
-        if data is None or data.empty:
+        with _YFIN_HISTORY_FETCH_LOCK:
             try:
-                data = yf.download(sy, start=start_date, end=end_date,
-                                   progress=False, auto_adjust=False)
+                ticker = yf.Ticker(sy)
+                data = ticker.history(
+                    start=start_date,
+                    end=end_date,
+                    auto_adjust=False,
+                    repair=use_repair,
+                )
             except Exception:
                 data = None
+            if data is None or data.empty:
+                try:
+                    data = yf.download(sy, start=start_date, end=end_date,
+                                       progress=False, auto_adjust=False)
+                except Exception:
+                    data = None
         return sym, _extract_close_series(data)
 
-    if len(symbols) == 1:
-        s, series = _pull_one(symbols[0])
-        return {s: series}
-    max_workers = min(8, len(symbols))
     out = {}
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        for sym, series in ex.map(_pull_one, symbols):
-            out[sym] = series
+    for sym in symbols:
+        s, series = _pull_one(sym)
+        out[s] = series
     return out
 
 
@@ -852,16 +911,20 @@ def compute_twr(trades_list, history_cache, period_start, period_end, all_tradin
 
 
 def compute_twr_chart(trades_list, history_cache, bench_cache,
-                      period_start, period_end, all_trading_dates, perf=None):
+                      period_start, period_end, all_trading_dates, perf=None,
+                      fund_records=None):
     """
     生成时段内每个交易日的累计 TWR 走势 + DCA 基准。
 
     my：组合累计 TWR（%）；bench：纳指涨跌幅（%）；dca：等额定投收益（%）。
-    DCA 模拟：将时段内实际总买入金额均匀分配到每个交易日，按组合加权价格买入。
+    my_mwrr：自 period_start 至各交易日的子区间 MWRR（%），与 /api/strategy-review
+    超额收益（MWRR − DCA）在同一终点口径可比；DCA 模式下图表应使用 my_mwrr 而非 my。
+    DCA 模拟：将时段内实际总买入金额均匀分配到每个交易日，按 QQQM 价格模拟。
     """
+    fr = fund_records if fund_records is not None else get_fund_records()
     dates_in_range = [d for d in all_trading_dates if period_start <= d <= period_end]
     if not dates_in_range:
-        return {"labels": [], "my": [], "bench": [], "dca": []}
+        return {"labels": [], "my": [], "bench": [], "dca": [], "my_mwrr": []}
 
     dates_before = [d for d in all_trading_dates if d < period_start]
     if period_start in all_trading_dates:
@@ -888,7 +951,7 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
     n_days = len(dates_in_range)
     daily_dca_amount = total_buy_amount / n_days if n_days > 0 and total_buy_amount > 0 else 0
 
-    labels, my_series, bench_series, dca_series = [], [], [], []
+    labels, my_series, bench_series, dca_series, my_mwrr_series = [], [], [], [], []
     cumulative_factor = 1.0
     dca_cum_shares = 0.0
     dca_cum_cost = 0.0
@@ -908,6 +971,11 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
             labels.append(curr_d[5:])
             my_series.append(round((cumulative_factor - 1) * 100, 2))
             bench_series.append(round((b_curr / b_base - 1) * 100, 2) if b_base > 0 else 0.0)
+
+            mwr_pt = compute_mwr(trades_list, fr, history_cache, period_start, curr_d, all_trading_dates, perf)
+            my_mwrr_series.append(
+                round(mwr_pt, 2) if mwr_pt is not None else my_series[-1],
+            )
 
             # DCA：每日等额买入，用 QQQM 价格模拟
             qqqm_p = get_price_on_date("QQQM", curr_d, history_cache, pix)
@@ -945,7 +1013,14 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
             "price_shares": round(float(t.get("price", 0)) * float(t.get("shares", 0)), 0),
         })
 
-    return {"labels": labels, "my": my_series, "bench": bench_series, "dca": dca_series, "buy_markers": buy_markers}
+    return {
+        "labels": labels,
+        "my": my_series,
+        "bench": bench_series,
+        "dca": dca_series,
+        "my_mwrr": my_mwrr_series,
+        "buy_markers": buy_markers,
+    }
 
 
 def _twr_daily_returns(trades_list, history_cache, bench_cache, dates_in_range, perf=None):
@@ -1056,14 +1131,77 @@ def _build_drawdown_series(r_port_list, dates_with_returns):
     return dd_pct_series, top3_result
 
 
+def _equivalent_daily_rf(rf_annual: float) -> float:
+    """年化无风险利率（小数）→ 等价日简单收益率（按 252 交易日复利拆分）。"""
+    return (1.0 + rf_annual) ** (1.0 / 252.0) - 1.0
+
+
+def _compound_horizon_rf(rf_annual: float, n_trading_days: int) -> float:
+    """n 个交易日、年化无风险 rf_annual 下的无风险复利区间总收益率（小数）。"""
+    return (1.0 + rf_annual) ** (n_trading_days / 252.0) - 1.0
+
+
+def _sharpe_beta_jensen_pct_from_daily(
+    rp_arr, rb_arr, rf_annual: float,
+):
+    """
+    由对齐的日简单收益序列计算：夏普（年化）、Beta（OLS 斜率）、Jensen Alpha（区间 %）。
+    Sharpe = sqrt(252) * mean(rp - rf_d) / std(rp, ddof=1)
+    Beta  = sum((rp-mean_rp)(rb-mean_rb)) / sum((rb-mean_rb)^2)
+    Alpha = R_p - Rf_h - Beta * (R_m - Rf_h)，其中 R 为区间内复利总收益。
+    返回 (sharpe_ratio, beta, alpha_pct)，任一项不可靠时为 None。
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        return None, None, None
+
+    rp = np.asarray(rp_arr, dtype=float)
+    rb = np.asarray(rb_arr, dtype=float)
+    n = int(rp.size)
+    if n < 2 or rb.size != n:
+        return None, None, None
+
+    rf_d = _equivalent_daily_rf(rf_annual)
+    excess_daily = rp - rf_d
+    mean_excess = float(np.mean(excess_daily))
+    sigma_daily = float(np.std(rp, ddof=1))
+    sharpe_ratio = None
+    if sigma_daily > 1e-12:
+        sharpe_ratio = round(mean_excess / sigma_daily * (252 ** 0.5), 1)
+
+    mean_rb = float(np.mean(rb))
+    mean_rp = float(np.mean(rp))
+    dev_b = rb - mean_rb
+    den_b = float(np.dot(dev_b, dev_b))
+    beta = None
+    if den_b > 1e-18:
+        beta_val = float(np.dot(rp - mean_rp, dev_b)) / den_b
+        beta = round(beta_val, 1)
+
+    R_period = float(np.prod(1.0 + rp) - 1.0)
+    R_bench = float(np.prod(1.0 + rb) - 1.0)
+    rf_h = _compound_horizon_rf(rf_annual, n)
+
+    alpha_pct = None
+    if beta is not None:
+        alpha_period = R_period - rf_h - beta * (R_bench - rf_h)
+        alpha_pct = round(alpha_period * 100, 1)
+
+    return sharpe_ratio, beta, alpha_pct
+
+
 def compute_risk_metrics(trades_list, history_cache, bench_cache,
-                         period_start, effective_end_date, all_trading_dates, perf=None):
+                         period_start, effective_end_date, all_trading_dates, perf=None,
+                         rf_annual: float | None = None):
     """
     风险指标（纳指为基准），均按所选时段 [period_start, effective_end_date] 计算：
     - 最大回撤 + 回撤序列 + Top-3 回撤明细（Duration / Recovery）。
-    - 夏普比 = (年化收益 - 2.1%) / 年化波动率（按 252 日年化）。
-    - Beta = cov(组合日收益, 基准日收益) / var(基准日收益)。
-    - Alpha（超额收益）= 组合区间收益 − β×基准区间收益。
+    - 夏普比：年化 = sqrt(252) × 日超额收益均值 / 样本标准差(组合日收益)；
+              无风险 R_f 为美国 1 年期国债（FRED DGS1，按日抓取；失败则用回退常数）。
+    - rf_annual：年化无风险小数；须与 `/api/returns-overview` 当次请求的 DGS1 一致。
+    - Beta：组合的日收益对基准日收益的 OLS 回归斜率。
+    - Jensen Alpha（%）：区间内 R_p - R_f - β×(R_m - R_f)，R_f 为同区间复利无风险总收益。
     """
     try:
         import numpy as np
@@ -1099,29 +1237,17 @@ def compute_risk_metrics(trades_list, history_cache, bench_cache,
             drawdown_labels = [d[5:] for d in dates_in_period]
             top3_drawdowns = top3
 
-    # ---------- 2. 夏普比、Alpha、Beta ----------
+    # ---------- 2. 夏普比、Jensen Alpha、Beta ----------
     sharpe_ratio = None
     alpha_pct = None
     beta = None
+    rf_use = rf_annual if rf_annual is not None else get_risk_free_us1y_annual_decimal()
     if len(dates_in_period) >= 2 and r_port_once is not None and r_bench_once is not None:
         r_port_period, r_bench_period = r_port_once, r_bench_once
         if len(r_port_period) >= 2 and len(r_port_period) == len(r_bench_period):
-            rp = np.array(r_port_period, dtype=float)
-            rb = np.array(r_bench_period, dtype=float)
-            n = len(rp)
-            R_period = float(np.prod(1.0 + rp) - 1.0)
-            R_ann = (1.0 + R_period) ** (252.0 / n) - 1.0 if n else 0.0
-            sigma_ann = float(np.std(rp)) * (252 ** 0.5)
-            if sigma_ann > 1e-12:
-                sharpe_ratio = round((R_ann - RISK_FREE_RATE) / sigma_ann, 1)
-            var_b = float(np.var(rb))
-            if var_b > 1e-12:
-                cov_pb = float(np.cov(rp, rb)[0, 1])
-                beta = round(cov_pb / var_b, 1)
-            R_bench_period_val = float(np.prod(1.0 + rb) - 1.0)
-            if beta is not None:
-                alpha_period = R_period - beta * R_bench_period_val
-                alpha_pct = round(alpha_period * 100, 1)
+            sharpe_ratio, beta, alpha_pct = _sharpe_beta_jensen_pct_from_daily(
+                r_port_period, r_bench_period, rf_use,
+            )
 
     bench_max_drawdown_pct = None
     if len(dates_in_period) >= 2 and r_bench_once:
@@ -1433,11 +1559,15 @@ def api_returns_overview():
     """
     trades_list = get_trades()
     symbols = get_all_symbols(trades_list)
+    rf_ann = get_risk_free_us1y_annual_decimal()
+    rf_pct = round(rf_ann * 100, 2)
     empty_risk = {"max_drawdown_pct": None, "sharpe_ratio": None, "alpha_pct": None, "beta": None}
     empty_resp = {
         "cards": {k: {"pct": 0, "usd": 0} for k in ["1d", "1m", "1y", "1y_roll", "since"]},
         "chart": {k: {"labels": [], "my": [], "bench": []} for k in ["1d", "1m", "1y", "1y_roll", "since"]},
         "risk_metrics": {k: dict(empty_risk) for k in ["1d", "1m", "1y", "1y_roll", "since"]},
+        "risk_free_rate_pct": rf_pct,
+        "risk_free_rate_series": "DGS1",
     }
     if not symbols or not trades_list:
         return jsonify(empty_resp)
@@ -1519,18 +1649,33 @@ def api_returns_overview():
             b1 = get_price_on_date(BENCHMARK_SYMBOL, effective_end_date, bench_cache, pix) or b0
             bench_1d = round((b1 / b0 - 1) * 100, 2) if b0 > 0 else 0.0
             twr_1d = twr_pct if twr_pct is not None else 0.0
+            mwrr_1d = compute_mwr(
+                trades_list, fund_records, history_cache,
+                prev_trading_date, effective_end_date, trading_dates, perf,
+            )
+            mwrr_tail = round(mwrr_1d, 2) if mwrr_1d is not None else twr_1d
             chart[key] = {
                 "labels": [prev_trading_date[5:], effective_end_date[5:]],
                 "my": [0, twr_1d],
                 "bench": [0, bench_1d],
                 "dca": [0, 0],
+                "my_mwrr": [0, mwrr_tail],
                 "buy_markers": [],
             }
         else:
             chart[key] = compute_twr_chart(
                 trades_list, history_cache, bench_cache,
-                p_start, effective_end_date, trading_dates, perf,
+                p_start, effective_end_date, trading_dates, perf, fund_records,
             )
+
+    # 与策略复盘一致的「超额」：同区间 MWRR − DCA 曲线终点（云端无 my_mwrr 时仍可核对）
+    for key in chart:
+        mwr = cards[key].get("mwr_pct")
+        dca_vals = chart[key].get("dca") or []
+        if mwr is not None and dca_vals:
+            chart[key]["excess_mwrr_minus_dca"] = round(float(mwr) - float(dca_vals[-1]), 2)
+        else:
+            chart[key]["excess_mwrr_minus_dca"] = None
 
     # 风险指标（含回撤序列 + Top3 回撤明细）
     risk_metrics = {}
@@ -1538,6 +1683,7 @@ def api_returns_overview():
         risk_metrics[key] = compute_risk_metrics(
             trades_list, history_cache, bench_cache,
             p_start, effective_end_date, trading_dates, perf,
+            rf_annual=rf_ann,
         )
 
     # ===== 策略驱动力归因（Since Inception）— PnL 贡献法 =====
@@ -1655,6 +1801,8 @@ def api_returns_overview():
         "data_as_of": effective_end_date,
         "price_fetched_at": price_fetched_at,
         "method": "MWRR",
+        "risk_free_rate_pct": rf_pct,
+        "risk_free_rate_series": "DGS1",
         "risk_metrics": risk_metrics,
         "strategy_driver": strategy_driver,
     })
@@ -2056,9 +2204,10 @@ def _fetch_open_price_on_or_after(symbol, date_str):
     end = (target + timedelta(days=15)).strftime("%Y-%m-%d")
     use_repair = _yfinance_repair_available()
     try:
-        df = yf.Ticker(yf_symbol(symbol)).history(
-            start=start, end=end, auto_adjust=False, repair=use_repair
-        )
+        with _YFIN_HISTORY_FETCH_LOCK:
+            df = yf.Ticker(yf_symbol(symbol)).history(
+                start=start, end=end, auto_adjust=False, repair=use_repair
+            )
     except Exception:
         return None
     if df is None or df.empty or "Open" not in df.columns:
@@ -2116,9 +2265,10 @@ def sync_corp_actions_from_yfinance(symbol_filter=None):
     for sym in symbols:
         sy = yf_symbol(sym)
         try:
-            tk = yf.Ticker(sy)
-            divs = tk.dividends
-            spls = tk.splits
+            with _YFIN_HISTORY_FETCH_LOCK:
+                tk = yf.Ticker(sy)
+                divs = tk.dividends
+                spls = tk.splits
         except Exception as e:
             skipped.append({"symbol": sym, "reason": f"yfinance: {e!s}"})
             continue
@@ -2416,7 +2566,73 @@ def _toundan_stats_from_trades(trades_list):
 
 # ---------- 1.1 分位数引擎 ----------
 
-_quantile_cache = {"date": None, "data": None}
+
+def _repair_quantile_vix_tnx_if_equity_leak(result, start_3y, end_d):
+    """
+    yfinance 曾在并发 yf.download 下把权益收盘价串到 ^VIX/^TNX；或与损坏缓存同现。
+    若 VIX/10Y 数值与 QQQM 股价异常接近或超出常识，丢弃并重拉单列行情。
+    """
+    q = result.get("qqqm_price")
+    if q is None or q < 20:
+        return
+
+    def _vix_implausible(v):
+        if v is None:
+            return False
+        if v > 150:
+            return True
+        # 与 QQQM 美元价「同数」串台（如均 110）；低价股与低 VIX 不触发
+        if q > 40 and v > 25 and abs(v - q) <= max(1.0, 0.015 * q):
+            return True
+        return False
+
+    def _tnx_implausible(t):
+        if t is None:
+            return False
+        if t > 30:
+            return True
+        if q > 40 and t > 3 and abs(t - q) <= max(1.0, 0.015 * q):
+            return True
+        return False
+
+    if _vix_implausible(result.get("vix_price")):
+        dfv = _fetch_histories_raw(["^VIX"], start_3y, end_d).get("^VIX")
+        if dfv is not None and not dfv.empty:
+            vc = dfv["Close"].dropna()
+            if len(vc) > 1:
+                lv = round(float(vc.iloc[-1]), 2)
+                if not _vix_implausible(lv):
+                    result["vix_price"] = lv
+                    result["vix_3y_pctile"] = round(
+                        float((vc <= vc.iloc[-1]).sum()) / len(vc), 4
+                    )
+                else:
+                    result["vix_price"] = None
+                    result["vix_3y_pctile"] = None
+            else:
+                result["vix_price"] = None
+                result["vix_3y_pctile"] = None
+        else:
+            result["vix_price"] = None
+            result["vix_3y_pctile"] = None
+
+    if _tnx_implausible(result.get("tnx_yield")):
+        dft = _fetch_histories_raw(["^TNX"], start_3y, end_d).get("^TNX")
+        if dft is not None and not dft.empty:
+            tc = dft["Close"].dropna()
+            if len(tc) > 0:
+                lt = round(float(tc.iloc[-1]), 2)
+                if not _tnx_implausible(lt):
+                    result["tnx_yield"] = lt
+                else:
+                    result["tnx_yield"] = None
+            else:
+                result["tnx_yield"] = None
+        else:
+            result["tnx_yield"] = None
+
+
+_quantile_cache = {"date": None, "data": None, "qe_version": None}
 _quantile_lock = threading.Lock()
 
 
@@ -2431,33 +2647,49 @@ def compute_quantile_engine():
     today_str = datetime.now().strftime("%Y-%m-%d")
 
     # 快速路径：进程内存缓存命中（无需加锁）
-    if _quantile_cache["date"] == today_str and _quantile_cache["data"]:
+    if (
+        _quantile_cache["date"] == today_str
+        and _quantile_cache["data"]
+        and _quantile_cache.get("qe_version") == _QUANTILE_ENGINE_VERSION
+    ):
         return _quantile_cache["data"]
 
     # 慢路径：需要计算。加锁确保同一进程内只有一个线程执行 Yahoo 拉取，
     # 其他线程等待锁释放后直接从内存/文件缓存命中。
     with _quantile_lock:
         # 双检锁：拿到锁后先再确认（另一线程可能已完成）
-        if _quantile_cache["date"] == today_str and _quantile_cache["data"]:
+        if (
+            _quantile_cache["date"] == today_str
+            and _quantile_cache["data"]
+            and _quantile_cache.get("qe_version") == _QUANTILE_ENGINE_VERSION
+        ):
             return _quantile_cache["data"]
 
         # 文件缓存检查：服务重启后直接读文件，无需重新拉取 15 秒
         try:
             raw_file = load_json(QUANTILE_CACHE_FILE, None)
-            if raw_file and raw_file.get("date") == today_str and raw_file.get("data"):
+            if (
+                raw_file
+                and raw_file.get("date") == today_str
+                and raw_file.get("data")
+                and raw_file.get("qe_version") == _QUANTILE_ENGINE_VERSION
+            ):
                 _quantile_cache["date"] = today_str
                 _quantile_cache["data"] = raw_file["data"]
+                _quantile_cache["qe_version"] = _QUANTILE_ENGINE_VERSION
                 return raw_file["data"]
         except Exception:
             pass
 
         dt = datetime.now()
         start_3y = (dt - timedelta(days=3 * 365 + 60)).strftime("%Y-%m-%d")
+        start_10y = (dt - timedelta(days=10 * 365 + 60)).strftime("%Y-%m-%d")
         end_d = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
     
-        # 需要拉取的标的：QQQM、^VIX、^TNX（10年期国债收益率）、IAU、SPY（PE 代理）
-        tickers_needed = ["QQQM", "^VIX", "^TNX", "IAU", "SPY"]
+        # 主窗口 ~3 年：QQQM、^VIX、^TNX、IAU。SPY 单独拉 ~10 年，否则 pe_10y 与 3 年窗口混用会扭曲 S/M。
+        tickers_needed = ["QQQM", "^VIX", "^TNX", "IAU"]
         raw = _fetch_histories_raw(tickers_needed, start_3y, end_d)
+        df_spy_long = _fetch_histories_raw(["SPY"], start_10y, end_d).get("SPY")
     
         result = {
             "qqqm_price": None, "qqqm_prev_close": None, "qqqm_change_pct": None,
@@ -2547,18 +2779,20 @@ def compute_quantile_engine():
                 result["iau_prev_close"] = round(float(iau_closes.iloc[-2]), 2)
                 iau_pct = (iau_closes.iloc[-1] / iau_closes.iloc[-2] - 1) * 100
                 result["iau_change_pct"] = round(float(iau_pct), 2)
-    
-        # --- PE 分位（用 SPY 价格/收益 简化代理：价格水位的百分位排名）---
-        df_spy = raw.get("SPY")
-        if df_spy is not None and not df_spy.empty and len(df_spy) > 20:
-            spy_closes = df_spy["Close"].dropna()
-            if len(spy_closes) > 20:
-                cur_spy = float(spy_closes.iloc[-1])
-                # 10 年分位：使用全部可用数据
-                result["pe_10y_pctile"] = round(float((spy_closes <= cur_spy).sum()) / len(spy_closes), 4)
-                # 3 年分位：截取最近 ~756 个交易日
-                spy_3y = spy_closes.iloc[-756:] if len(spy_closes) > 756 else spy_closes
-                result["pe_3y_pctile"] = round(float((spy_3y <= cur_spy).sum()) / len(spy_3y), 4)
+
+        _repair_quantile_vix_tnx_if_equity_leak(result, start_3y, end_d)
+
+        # --- PE 分位（SPY 收盘价水位作简化代理；10y/3y 必须基于对应长度的历史）---
+        spy_series = None
+        if df_spy_long is not None and not df_spy_long.empty and len(df_spy_long) > 20:
+            spy_series = df_spy_long["Close"].dropna()
+        if spy_series is not None and len(spy_series) > 20:
+            cur_spy = float(spy_series.iloc[-1])
+            # 10 年：10 年窗口拉取内的全部交易日
+            result["pe_10y_pctile"] = round(float((spy_series <= cur_spy).sum()) / len(spy_series), 4)
+            # 3 年：最近 ~756 个交易日
+            spy_3y = spy_series.iloc[-756:] if len(spy_series) > 756 else spy_series
+            result["pe_3y_pctile"] = round(float((spy_3y <= cur_spy).sum()) / len(spy_3y), 4)
     
         # --- 月投合成信号 S 的 3 年中位数（用于 M 计算）---
         # 简化：用当前 S 的组成因子估算历史中位，实际中 S ≈ 0.5 附近波动
@@ -2566,9 +2800,17 @@ def compute_quantile_engine():
     
         _quantile_cache["date"] = today_str
         _quantile_cache["data"] = result
+        _quantile_cache["qe_version"] = _QUANTILE_ENGINE_VERSION
         # 写入文件缓存，服务重启后可直接读取，无需重新拉取
         try:
-            save_json(QUANTILE_CACHE_FILE, {"date": today_str, "data": result})
+            save_json(
+                QUANTILE_CACHE_FILE,
+                {
+                    "date": today_str,
+                    "qe_version": _QUANTILE_ENGINE_VERSION,
+                    "data": result,
+                },
+            )
         except Exception:
             pass
         return result
@@ -3129,26 +3371,23 @@ def api_signals():
 def api_strategy_review():
     """
     策略复盘：纪律分、Alpha、投弹效率、资金安全系数、备弹池消耗率、AI 反思结论。
-    ?period=1m|3m|all
+    ?period=1m|3m|1y|1y_roll|all  — 与 /api/returns-overview 各 cards/chart 时段口径一致。
     """
     period = request.args.get("period", "all")
+    if period not in ("1m", "3m", "1y", "1y_roll", "all"):
+        period = "all"
     dt = datetime.now()
-    if period == "1m":
-        cutoff = dt.replace(day=1).strftime("%Y-%m-%d")
-    elif period == "3m":
-        quarter_month = ((dt.month - 1) // 3) * 3 + 1
-        cutoff = dt.replace(month=quarter_month, day=1).strftime("%Y-%m-%d")
-    else:
-        cutoff = "2000-01-01"
-    period_label = {"1m": "本月", "3m": "本季度", "all": "全部"}.get(period, period)
+    period_label = {
+        "1m": "本月",
+        "3m": "本季度",
+        "1y": "本年",
+        "1y_roll": "近一年滚动",
+        "all": "全部",
+    }.get(period, period)
 
     trades_list = get_trades()
-    # 期间内投弹记录
-    period_bombs = [
-        t for t in trades_list
-        if (t.get("type") or "") == "投弹" and (t.get("date") or "")[:10] >= cutoff
-    ]
-    total_bombs = len(period_bombs)
+    period_bombs = []
+    total_bombs = 0
 
     # 纪律分：当前无触发日志，以实际执行率 100% 为默认
     discipline_score = 100
@@ -3169,6 +3408,29 @@ def api_strategy_review():
         start_f, end_f = _compute_fetch_range(trades_list)
         hc, bc, td = fetch_histories_with_bench(symbols, start_f, end_f)
         eff_end = td[-1] if td else dt.strftime("%Y-%m-%d")
+        eff_end_dt = datetime.strptime(eff_end, "%Y-%m-%d")
+        month_start = dt.replace(day=1).strftime("%Y-%m-%d")
+        year_start = dt.replace(month=1, day=1).strftime("%Y-%m-%d")
+        one_year_ago_str = (eff_end_dt - timedelta(days=365)).strftime("%Y-%m-%d")
+
+        if period == "1m":
+            cutoff = month_start
+        elif period == "3m":
+            quarter_month = ((dt.month - 1) // 3) * 3 + 1
+            cutoff = dt.replace(month=quarter_month, day=1).strftime("%Y-%m-%d")
+        elif period == "1y":
+            cutoff = year_start
+        elif period == "1y_roll":
+            cutoff = one_year_ago_str
+        else:
+            cutoff = "2000-01-01"
+
+        period_bombs = [
+            t for t in trades_list
+            if (t.get("type") or "") == "投弹" and (t.get("date") or "")[:10] >= cutoff
+        ]
+        total_bombs = len(period_bombs)
+
         perf_sr = build_perf_bundle(trades_list, hc, bc, td)
         pix = perf_sr["price_index"]
 

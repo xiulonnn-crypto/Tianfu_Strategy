@@ -424,11 +424,11 @@ def _build_drawdown_series(portfolio_values):
 
 | 指标 | 计算公式 | 说明 |
 |------|----------|------|
-| 夏普比 | `(R_p - R_f) / σ_p × √252` | 年化，`R_f = RISK_FREE_RATE = 0.021` |
-| Alpha | `R_p - (R_f + β × (R_m - R_f))` | 相对纳指超额收益 |
-| Beta | `Cov(R_p, R_m) / Var(R_m)` | 与纳指的协方差比 |
+| 夏普比 | `√252 × mean(r_{p,d}-r_{f,d}) / std(r_{p,d}, ddof=1)` | `R_f` 为「美国 1 年期美债」FRED 序列 **DGS1** 最新有效值÷100（`/api/returns-overview` 按自然日内存缓存；抓取失败则用 `RISK_FREE_RATE_FALLBACK`） |
+| Alpha | `R_p - R_{f,h} - β × (R_m - R_{f,h})`（区间总收益，**%** 展示） | Jensen：同源 `R_f`；`R_{f,h}=(1+R_f)^{n/252}-1`，`n` 为样本交易日数 |
+| Beta | `Σ(r_p-\bar{r_p})(r_m-\bar{r_m}) / Σ(r_m-\bar{r_m})^2` | OLS 斜率，与样本协方差/方差比一致 |
 
-对应函数：`compute_risk_metrics()`（server.py:778）
+对应函数：`compute_risk_metrics()`、`_sharpe_beta_jensen_pct_from_daily()`（server.py）
 
 ---
 
@@ -888,7 +888,22 @@ cp data/model_state.json backups/model_state_$(date +%Y%m%d).json
 - yfinance 拉取失败：`print(f"Warning: failed to fetch {sym}: {e}")`
 - compute.py 端点失败：`print(f"ERROR {endpoint}: HTTP {status}")`
 
-### 8.3 未来规划
+### 8.3 yfinance 并发安全规则（已验证）
+
+yfinance 在多线程并发调用 `yf.download()` 时依赖模块级共享字典（`_DFS`/`_ERRORS`），会发生数据串台（见 [ranaroussi/yfinance#2557](https://github.com/ranaroussi/yfinance/issues/2557)）。典型症状：^VIX / ^TNX 被写成 QQQM 的股价（如三者均为 ~110）。
+
+**规则**：
+- 所有 yfinance 历史数据拉取（`Ticker.history` / `yf.download`）必须经过 `_YFIN_HISTORY_FETCH_LOCK` 互斥
+- `_fetch_histories_raw` 内部按顺序逐标的拉取，禁止再用 `ThreadPoolExecutor` 并行 `_pull_one`
+- `fetch_realtime_quote` 同样持锁（60 秒 TTL 缓存命中后不进入锁，无性能影响）
+- 引入任何新的并发拉取场景前，必须先核查目标库的线程安全状态
+
+**防御纵深**：
+1. `_YFIN_HISTORY_FETCH_LOCK` 进程级互斥（硬防）
+2. `_repair_quantile_vix_tnx_if_equity_leak` 语义校验 + 自动重拉（软防）
+3. `_QUANTILE_ENGINE_VERSION` 递增让当日磁盘缓存失效（缓存防护）
+
+### 8.4 未来规划
 
 - 引入 Python `logging` 模块替代 `print`，支持日志级别控制
 - 生产部署（若有）时关闭 `debug=True`
