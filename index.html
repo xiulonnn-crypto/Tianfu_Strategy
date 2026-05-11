@@ -608,8 +608,8 @@
           <div class="text-sm font-medium" style="color: var(--deep-purple);" id="backtestMetaTitle">天府计划 v1.3.1</div>
           <div class="text-xs mt-1" style="color: var(--benchmark-gray);" id="backtestMetaSub"></div>
         </div>
-        <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4" id="backtestCoreCards"></div>
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6" id="backtestSubCards"></div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4" id="backtestCoreCards"></div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6" id="backtestSubCards"></div>
         <div class="rounded-xl p-4 mb-4" style="background:#fff;box-shadow:0 2px 12px rgba(74,61,124,0.06);">
           <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
             <h3 id="backtestNavChartTitle" class="text-sm font-medium" style="color: var(--deep-purple);">净值曲线</h3>
@@ -2746,7 +2746,8 @@
       page: 1,
       pageSize: 50,
       lastTrades: null,
-      lastSummary: null
+      lastSummary: null,
+      lastNav: null
     };
     var chartBacktestNav = null;
     var chartBacktestDrawdown = null;
@@ -2756,9 +2757,39 @@
       var abs = Math.abs(Number(v));
       return (Number(v) >= 0 ? '+$' : '-$') + abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
-    function _btMoneyAlways(v) {
-      if (v == null || isNaN(v)) return '—';
-      return '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    function _backtestDailyReturns(navRows) {
+      if (!navRows || navRows.length < 2) return [];
+      var rets = [];
+      for (var i = 1; i < navRows.length; i++) {
+        var a = navRows[i - 1].nav, b = navRows[i].nav;
+        if (a == null || b == null || !(a > 0)) continue;
+        rets.push(b / a - 1.0);
+      }
+      return rets;
+    }
+    function _backtestSortinoFromNav(navRows) {
+      var rets = _backtestDailyReturns(navRows);
+      if (!rets.length) return null;
+      var mar = 0.0;
+      var dn = 0.0;
+      var nObs = rets.length;
+      for (var i = 0; i < rets.length; i++) {
+        var dd = Math.min(0.0, rets[i] - mar);
+        dn += dd * dd;
+      }
+      var ddev = Math.sqrt(dn / nObs) * Math.sqrt(252);
+      if (!ddev || ddev <= 1e-12 || !isFinite(ddev)) return null;
+      var prod = 1.0;
+      for (var j = 0; j < rets.length; j++) prod *= (1.0 + rets[j]);
+      var years = Math.max(rets.length / 252.0, 1e-6);
+      var annRet = Math.pow(Math.max(prod, 1e-18), 1.0 / years) - 1.0;
+      return annRet / ddev;
+    }
+    function _backtestCalmarFromSummary(m) {
+      if (!m || m.cagr_pct == null || m.max_drawdown_pct == null) return null;
+      var dd = Number(m.max_drawdown_pct);
+      if (!(dd > 1e-6)) return null;
+      return Number(m.cagr_pct) / dd;
     }
     function backtestBasePath() {
       return './data/backtest/v1.3.1-';
@@ -2866,6 +2897,7 @@
         var bundle = await loadBacktestBundle(period);
         __backtestState.lastTrades = bundle.trades;
         __backtestState.lastSummary = bundle.summary;
+        __backtestState.lastNav = bundle.nav;
         renderBacktestMeta(bundle.summary);
         renderBacktestCoreCards(bundle.summary);
         renderBacktestSubCards(bundle.summary);
@@ -2890,7 +2922,9 @@
       if (metaSub) {
         metaSub.innerHTML = '标的：' + syms + '<br/>'
           + '区间：' + (summary.start_date || '') + ' → ' + (summary.end_date || '') + '（' + rows + ' 个交易日）<br/>'
-          + '初始 ' + _btMoneyAlways(summary.initial_capital) + ' · 手续费 '
+          + '初始 ' + _btMoneyAlways(summary.initial_capital)
+          + ' · 最终 ' + _btMoneyAlways((summary.metrics || {}).final_capital)
+          + ' · 手续费 '
           + (summary.commission_rate != null ? (summary.commission_rate * 100).toFixed(2) + '%' : '—')
           + ' · 滑点 ' + (summary.slippage_bps != null ? summary.slippage_bps + ' bps' : '—');
       }
@@ -2903,12 +2937,10 @@
         { label: '累积收益', val: formatPct(m.cumulative_return_pct), color: (m.cumulative_return_pct >= 0) ? '#2d8a5e' : '#D64545' },
         { label: '年化收益', val: formatPct(m.cagr_pct), color: (m.cagr_pct >= 0) ? '#2d8a5e' : '#D64545' },
         { label: '最大回撤', val: m.max_drawdown_pct != null ? ('−' + m.max_drawdown_pct + '%') : '--', color: '#D64545' },
-        { label: '夏普比率', val: m.sharpe != null ? String(m.sharpe) : '--', color: 'var(--deep-purple)' },
-        { label: '最终资金', val: _btMoneyAlways(m.final_capital), color: 'var(--deep-purple)' }
+        { label: '夏普比率', val: m.sharpe != null ? String(m.sharpe) : '--', color: 'var(--deep-purple)' }
       ];
-      el.innerHTML = cards.map(function (c, idx) {
-        var span = idx === 4 ? 'col-span-2 sm:col-span-1' : '';
-        return '<div class="returns-card rounded-xl p-4 ' + span + '" style="background:#fff;box-shadow:0 2px 12px rgba(74,61,124,0.06);">'
+      el.innerHTML = cards.map(function (c) {
+        return '<div class="returns-card rounded-xl p-4" style="background:#fff;box-shadow:0 2px 12px rgba(74,61,124,0.06);">'
           + '<div class="text-xs" style="color:var(--benchmark-gray);">' + c.label + '</div>'
           + '<div class="text-xl font-bold mt-1" style="color:' + c.color + ';">' + c.val + '</div></div>';
       }).join('');
@@ -2918,11 +2950,15 @@
       var el = document.getElementById('backtestSubCards');
       if (!el) return;
       var ab = (m.alpha_pct != null ? m.alpha_pct : '—') + ' / ' + (m.beta != null ? m.beta : '—');
+      var sortino = _backtestSortinoFromNav(__backtestState.lastNav);
+      var calmar = _backtestCalmarFromSummary(m);
       var items = [
         { label: '胜率', val: m.win_rate_pct != null ? (Number(m.win_rate_pct).toFixed(2) + '%') : '--' },
         { label: '盈亏比', val: m.profit_loss_ratio != null ? String(m.profit_loss_ratio) : '--' },
         { label: '交易次数', val: m.trade_count != null ? String(m.trade_count) : '--' },
-        { label: 'Alpha / Beta', val: ab }
+        { label: 'Alpha / Beta', val: ab },
+        { label: 'Sortino', val: sortino != null && isFinite(sortino) ? sortino.toFixed(3) : '--' },
+        { label: 'Calmar', val: calmar != null && isFinite(calmar) ? calmar.toFixed(3) : '--' }
       ];
       el.innerHTML = items.map(function (c) {
         return '<div class="rounded-xl p-3" style="background:var(--light-purple-bg);">'

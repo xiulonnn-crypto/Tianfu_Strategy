@@ -26,6 +26,7 @@ def test_backtest_nav_and_trades_served_statically():
         "v1.3.1-10y-nav.json",
         "v1.3.1-10y-trades.json",
         "v1.3.1-20y-summary.json",
+        "v1.3.1-20y-nav.json",
         "v1.3.1-30y-summary.json",
     ):
         resp = c.get(f"/data/backtest/{name}")

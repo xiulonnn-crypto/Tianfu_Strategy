@@ -52,7 +52,7 @@
       "recovery_days": 46
     }
   ],
-  "nav_rows": 10062,
+  "nav_rows": 5218,
   "trade_rows": 2339,
   "benchmark": {
     "symbol": "QQQ",
@@ -61,7 +61,7 @@
     "proxy_days": 0,
     "dca_total": 50000.0,
     "dca_schedule": "monthly",
-    "first_qqq_date": "2006-01-03",
+    "first_qqq_date": null,
     "portfolio_curve": "nav_scaled_to_summary_cumulative_pct"
   }
 }
