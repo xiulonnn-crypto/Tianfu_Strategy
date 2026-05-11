@@ -2792,7 +2792,19 @@
       return Number(m.cagr_pct) / dd;
     }
     function backtestBasePath() {
-      return './data/backtest/v1.3.1-';
+      /* 使用 origin + 当前文档目录，避免 #hash 或 /index.html 等形态下 ./data 解析到错误路径 */
+      try {
+        var origin = window.location.origin;
+        var path = window.location.pathname || '/';
+        if (!origin || origin === 'null') return './data/backtest/v1.3.1-';
+        var seg = (path.split('/').pop() || '');
+        if (/\.[^./]+$/.test(seg)) path = path.replace(/\/[^/]+$/, '/');
+        else if (!path.endsWith('/')) path += '/';
+        if (!path.startsWith('/')) path = '/' + path;
+        return origin + path + 'data/backtest/v1.3.1-';
+      } catch (e) {
+        return './data/backtest/v1.3.1-';
+      }
     }
     function downsampleBacktestSeries(labels, data, maxPts) {
       if (!labels || labels.length <= maxPts) return { labels: labels, data: data };
@@ -2844,11 +2856,23 @@
     async function loadBacktestBundle(period) {
       if (__backtestState.cache[period]) return __backtestState.cache[period];
       var base = backtestBasePath() + period;
+      var fetchOpts = { cache: 'no-store' };
       var res = await Promise.all([
-        fetch(base + '-summary.json').then(function (r) { if (!r.ok) throw new Error('summary'); return r.json(); }),
-        fetch(base + '-nav.json').then(function (r) { if (!r.ok) throw new Error('nav'); return r.json(); }),
-        fetch(base + '-trades.json').then(function (r) { if (!r.ok) throw new Error('trades'); return r.json(); })
+        fetch(base + '-summary.json', fetchOpts).then(function (r) {
+          if (!r.ok) throw new Error('summary HTTP ' + r.status);
+          return r.json();
+        }),
+        fetch(base + '-nav.json', fetchOpts).then(function (r) {
+          if (!r.ok) throw new Error('nav HTTP ' + r.status);
+          return r.json();
+        }),
+        fetch(base + '-trades.json', fetchOpts).then(function (r) {
+          if (!r.ok) throw new Error('trades HTTP ' + r.status);
+          return r.json();
+        })
       ]);
+      if (!Array.isArray(res[1])) throw new Error('nav 非数组');
+      if (!Array.isArray(res[2])) throw new Error('trades 非数组');
       __backtestState.cache[period] = { summary: res[0], nav: res[1], trades: res[2] };
       return __backtestState.cache[period];
     }
@@ -2908,8 +2932,11 @@
         if (ph) ph.style.display = 'none';
         if (phd) phd.style.display = 'none';
       } catch (err) {
+        var hint = '加载失败：请确认 data/backtest 下存在 v1.3.1-*-{summary,nav,trades}.json；'
+          + '本地请使用本仓库内 python3 server.py（含 /data/backtest/ 路由）并 Ctrl+C 后重启。';
+        var detail = (err && err.message) ? (' (' + String(err.message) + ')') : '';
         if (ph) {
-          ph.textContent = '加载失败：请确认已运行 scripts/import_backtest.py 并提交 data/backtest/*.json';
+          ph.textContent = hint + detail;
           ph.style.display = 'flex';
         }
         if (phd) phd.style.display = 'flex';
