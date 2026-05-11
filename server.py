@@ -1191,6 +1191,83 @@ def _sharpe_beta_jensen_pct_from_daily(
     return sharpe_ratio, beta, alpha_pct
 
 
+def _sharpe_ratio_from_daily(r_arr, rf_annual: float):
+    """
+    单序列年化夏普：√252 × mean(r - rf_d) / std(r, ddof=1)。
+    口径与 `_sharpe_beta_jensen_pct_from_daily` 中组合夏普完全一致；
+    用于独立计算基准（如纳指）在同一时段、同一无风险口径下的夏普比率。
+    样本不足或波动近 0 时返回 None。
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    r = np.asarray(r_arr, dtype=float)
+    n = int(r.size)
+    if n < 2:
+        return None
+    rf_d = _equivalent_daily_rf(float(rf_annual))
+    sigma_daily = float(np.std(r, ddof=1))
+    if sigma_daily < 1e-12:
+        return None
+    mean_excess = float(np.mean(r - rf_d))
+    sharpe = mean_excess / sigma_daily * (252 ** 0.5)
+    return round(float(sharpe), 1)
+
+
+def _sortino_ratio_from_daily(rp_arr, rf_annual: float):
+    """
+    年化 Sortino：√252 × mean(rp - rf_d) / sqrt(mean(min(0, rp - rf_d)^2))
+    rf_d 与夏普同口径；下行偏差为日超额收益的均方根下行部分。
+    若全无下行超额（分母为 0）则返回 None。
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    rp = np.asarray(rp_arr, dtype=float)
+    n = int(rp.size)
+    if n < 2:
+        return None
+    rf_d = _equivalent_daily_rf(float(rf_annual))
+    excess = rp - rf_d
+    downside_sq = np.minimum(0.0, excess) ** 2
+    downside_dev = float(np.sqrt(np.mean(downside_sq)))
+    if downside_dev < 1e-12:
+        return None
+    mean_excess = float(np.mean(excess))
+    sortino = mean_excess / downside_dev * (252 ** 0.5)
+    return round(float(sortino), 2)
+
+
+def _calmar_ratio_from_daily(rp_arr, max_drawdown_pct: float | None):
+    """
+    Calmar = 年化几何收益 / 最大回撤（小数）。
+    年化：几何平均，年期 = 日收益个数/252（与历史回测页口径一致）。
+    max_drawdown_pct 为正值百分数（如 25.3 表示 25.3%）。
+    """
+    if max_drawdown_pct is None or max_drawdown_pct < 1e-6:
+        return None
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    rp = np.asarray(rp_arr, dtype=float)
+    n = int(rp.size)
+    if n < 1:
+        return None
+    prod = float(np.prod(1.0 + rp))
+    years = max(n / 252.0, 1e-9)
+    ann = prod ** (1.0 / years) - 1.0
+    dd = float(max_drawdown_pct) / 100.0
+    if dd < 1e-12:
+        return None
+    calmar = ann / dd
+    if not np.isfinite(calmar):
+        return None
+    return round(float(calmar), 2)
+
+
 def compute_risk_metrics(trades_list, history_cache, bench_cache,
                          period_start, effective_end_date, all_trading_dates, perf=None,
                          rf_annual: float | None = None):
@@ -1202,14 +1279,20 @@ def compute_risk_metrics(trades_list, history_cache, bench_cache,
     - rf_annual：年化无风险小数；须与 `/api/returns-overview` 当次请求的 DGS1 一致。
     - Beta：组合的日收益对基准日收益的 OLS 回归斜率。
     - Jensen Alpha（%）：区间内 R_p - R_f - β×(R_m - R_f)，R_f 为同区间复利无风险总收益。
+    - Sortino：组合年化超额/下行偏差；同期纳指 Sortino 用基准日收益同口径计算。
+    - Calmar：年化几何收益÷同期最大回撤（% 转为小数作分母）。
     """
     try:
         import numpy as np
     except ImportError:
-        return {"max_drawdown_pct": None, "sharpe_ratio": None, "alpha_pct": None, "beta": None,
+        return {"max_drawdown_pct": None, "sharpe_ratio": None, "bench_sharpe_ratio": None,
+                "sortino_ratio": None, "bench_sortino_ratio": None, "calmar_ratio": None,
+                "alpha_pct": None, "beta": None,
                 "drawdown_series": None, "top3_drawdowns": None}
 
-    empty = {"max_drawdown_pct": None, "sharpe_ratio": None, "alpha_pct": None, "beta": None,
+    empty = {"max_drawdown_pct": None, "sharpe_ratio": None, "bench_sharpe_ratio": None,
+             "sortino_ratio": None, "bench_sortino_ratio": None, "calmar_ratio": None,
+             "alpha_pct": None, "beta": None,
              "drawdown_series": None, "top3_drawdowns": None}
     if not parse_date(effective_end_date):
         return dict(empty)
@@ -1237,17 +1320,30 @@ def compute_risk_metrics(trades_list, history_cache, bench_cache,
             drawdown_labels = [d[5:] for d in dates_in_period]
             top3_drawdowns = top3
 
-    # ---------- 2. 夏普比、Jensen Alpha、Beta ----------
+    # ---------- 2. 夏普比、Sortino、Calmar、Jensen Alpha、Beta ----------
     sharpe_ratio = None
+    bench_sharpe_ratio = None
+    sortino_ratio = None
+    bench_sortino_ratio = None
+    calmar_ratio = None
     alpha_pct = None
     beta = None
     rf_use = rf_annual if rf_annual is not None else get_risk_free_us1y_annual_decimal()
-    if len(dates_in_period) >= 2 and r_port_once is not None and r_bench_once is not None:
-        r_port_period, r_bench_period = r_port_once, r_bench_once
-        if len(r_port_period) >= 2 and len(r_port_period) == len(r_bench_period):
-            sharpe_ratio, beta, alpha_pct = _sharpe_beta_jensen_pct_from_daily(
-                r_port_period, r_bench_period, rf_use,
-            )
+    if len(dates_in_period) >= 2 and r_port_once is not None:
+        r_port_period = r_port_once
+        if len(r_port_period) >= 2:
+            sortino_ratio = _sortino_ratio_from_daily(r_port_period, rf_use)
+        if len(r_port_period) >= 1:
+            calmar_ratio = _calmar_ratio_from_daily(r_port_period, max_drawdown_pct)
+        if r_bench_once is not None:
+            r_bench_period = r_bench_once
+            if len(r_bench_period) >= 2:
+                bench_sortino_ratio = _sortino_ratio_from_daily(r_bench_period, rf_use)
+                bench_sharpe_ratio = _sharpe_ratio_from_daily(r_bench_period, rf_use)
+            if len(r_port_period) >= 2 and len(r_port_period) == len(r_bench_period):
+                sharpe_ratio, beta, alpha_pct = _sharpe_beta_jensen_pct_from_daily(
+                    r_port_period, r_bench_period, rf_use,
+                )
 
     bench_max_drawdown_pct = None
     if len(dates_in_period) >= 2 and r_bench_once:
@@ -1259,6 +1355,10 @@ def compute_risk_metrics(trades_list, history_cache, bench_cache,
         "max_drawdown_pct": max_drawdown_pct,
         "bench_max_drawdown_pct": bench_max_drawdown_pct,
         "sharpe_ratio": sharpe_ratio,
+        "bench_sharpe_ratio": bench_sharpe_ratio,
+        "sortino_ratio": sortino_ratio,
+        "bench_sortino_ratio": bench_sortino_ratio,
+        "calmar_ratio": calmar_ratio,
         "alpha_pct": alpha_pct,
         "beta": beta,
         "drawdown_series": {"labels": drawdown_labels or [], "values": drawdown_series or []},
@@ -1561,7 +1661,11 @@ def api_returns_overview():
     symbols = get_all_symbols(trades_list)
     rf_ann = get_risk_free_us1y_annual_decimal()
     rf_pct = round(rf_ann * 100, 2)
-    empty_risk = {"max_drawdown_pct": None, "sharpe_ratio": None, "alpha_pct": None, "beta": None}
+    empty_risk = {
+        "max_drawdown_pct": None, "sharpe_ratio": None, "bench_sharpe_ratio": None,
+        "sortino_ratio": None, "bench_sortino_ratio": None,
+        "calmar_ratio": None, "alpha_pct": None, "beta": None,
+    }
     empty_resp = {
         "cards": {k: {"pct": 0, "usd": 0} for k in ["1d", "1m", "1y", "1y_roll", "since"]},
         "chart": {k: {"labels": [], "my": [], "bench": []} for k in ["1d", "1m", "1y", "1y_roll", "since"]},

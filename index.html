@@ -285,26 +285,31 @@
       </div>
       <!-- 风险指标 -->
       <p class="text-xs mb-2" style="color: var(--benchmark-gray);">以下指标随上方所选时段计算</p>
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+      <div class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-4 mb-6">
         <div class="rounded-xl shadow-sm p-4" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">最大回撤（Max Drawdown）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">从峰值到谷底的最大跌幅<br>衡量最坏情况下的亏损风险</span></span></div>
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">最大回撤（Max Drawdown）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">从峰值到谷底的最大跌幅<br>下方为同一时段纳斯达克指数的最大回撤，便于对比</span></span></div>
           <div class="text-lg font-bold mt-1" id="riskMaxDrawdown" style="color: #2d2a3e;">--</div>
           <div class="text-xs mt-0.5" id="riskDDCompare" style="color: var(--benchmark-gray);">--</div>
         </div>
         <div class="rounded-xl shadow-sm p-4" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">夏普比（Sharpe Ratio）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">年化 ≈√252×日超额收益均值÷日波动（样本标准差）<br>无风险为美国 1 年期美债 FRED·DGS1（按服务器自然日抓取，失败用回退常数），并按 252 交易日复利拆<br>&gt;1 优秀 · 0.5~1 良好 · &lt;0 偏弱</span></span></div>
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">夏普（Sharpe）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">年化 ≈√252×日超额收益均值÷日波动（样本标准差）<br>无风险取一年期美债，按 252 交易日复利拆为日利率<br>&gt;1 优秀 · 0.5~1 良好 · 0~0.5 一般 · &lt;0 偏弱</span></span></div>
           <div class="text-lg font-bold mt-1" id="riskSharpe" style="color: #2d2a3e;">--</div>
-          <div class="text-xs mt-0.5" id="riskSharpeNote" style="color: var(--benchmark-gray);">无风险 —</div>
+          <div class="text-xs mt-0.5" id="riskSharpeNote" style="color: var(--benchmark-gray);">--</div>
         </div>
         <div class="rounded-xl shadow-sm p-4" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">Alpha（阿尔法）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">Jensen Alpha：区间总收益相对 CAPM（含同期复利无风险）的超额<br>&gt;0 优于模型预期 · &lt;0 劣于模型预期</span></span></div>
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">Sortino（索提诺）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">与夏普类似，但波动只计「坏波动」——日收益低于无风险的部分；无风险取一年期美债，与夏普同口径。年化 ≈√252×日超额收益均值÷下行偏差。若时段内几乎没有低于无风险的交易日则无法定义，显示为 —。<br>下方为纳斯达克指数在同一时段、同一无风险口径下的 Sortino。</span></span></div>
+          <div class="text-lg font-bold mt-1" id="riskSortino" style="color: #2d2a3e;">--</div>
+          <div class="text-xs mt-0.5" id="riskSortinoBench" style="color: var(--benchmark-gray);">同期纳指 —</div>
+        </div>
+        <div class="rounded-xl shadow-sm p-4" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">Alpha（阿尔法）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">Jensen Alpha：区间总收益相对 CAPM（含同期复利无风险）的超额<br>无风险取一年期美债<br>&gt;0 优于模型预期 · &lt;0 劣于模型预期</span></span></div>
           <div class="text-lg font-bold mt-1" id="riskAlpha" style="color: #2d2a3e;">--</div>
           <div class="text-xs mt-0.5" id="riskAlphaNote" style="color: var(--benchmark-gray);">CAPM（含无风险）相对纳指，%</div>
         </div>
         <div class="rounded-xl shadow-sm p-4" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">Beta（贝塔）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">组合对纳指日收益的 OLS 回归斜率（协方差/方差与之一致）<br>=1 近似同步波动 · &lt;1 偏低波 · &gt;1 偏高波</span></span></div>
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">Beta（贝塔）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">组合对纳指日收益的 OLS 回归斜率（协方差/方差与之一致）<br>=1 近似同步波动 · &lt;1 偏低波 · &gt;1 偏高波<br>下方 Calmar 为组合在同期的卡玛比率（年化几何收益÷最大回撤）</span></span></div>
           <div class="text-lg font-bold mt-1" id="riskBeta" style="color: #2d2a3e;">--</div>
-          <div class="text-xs mt-0.5" id="riskBetaNote" style="color: var(--benchmark-gray);">相对纳指</div>
+          <div class="text-xs mt-0.5" id="riskBetaNote" style="color: var(--benchmark-gray);">--</div>
         </div>
       </div>
       <!-- 走势图 -->
@@ -1369,11 +1374,6 @@
       return (Math.round(n * 100) / 100).toString();
     }
 
-    function formatRiskFreeSeriesSuffix(riskFreeSeries) {
-      var lab = riskFreeSeries && String(riskFreeSeries).trim() ? String(riskFreeSeries).trim() : 'DGS1';
-      return '（' + lab + '）';
-    }
-
     function updateMwrrCompare(cards, periodKey) {
       var c = cards && cards[periodKey];
       var twrEl = document.getElementById('mwrrTwrValue');
@@ -1388,32 +1388,41 @@
       }
     }
 
-    function updateRiskMetricsTexts(risk, rfPct, riskFreeSeries) {
+    function updateRiskMetricsTexts(risk, rfPct) {
       var elDD = document.getElementById('riskMaxDrawdown');
       var elSharpe = document.getElementById('riskSharpe');
+      var elSharpeNote = document.getElementById('riskSharpeNote');
+      var elSortino = document.getElementById('riskSortino');
+      var elSortinoBench = document.getElementById('riskSortinoBench');
       var elAlpha = document.getElementById('riskAlpha');
       var elBeta = document.getElementById('riskBeta');
       var elDDCompare = document.getElementById('riskDDCompare');
-      var elSharpeNote = document.getElementById('riskSharpeNote');
       var elAlphaNote = document.getElementById('riskAlphaNote');
       var elBetaNote = document.getElementById('riskBetaNote');
       var rfLbl = formatRiskFreePctLabel(rfPct);
-      var rfSrc = formatRiskFreeSeriesSuffix(riskFreeSeries);
 
       if (elDD) elDD.textContent = (risk && risk.max_drawdown_pct != null) ? '−' + risk.max_drawdown_pct + '%' : '--';
       if (elDDCompare) {
         if (risk && risk.bench_max_drawdown_pct != null) {
-          elDDCompare.textContent = '同期纳指回撤 −' + risk.bench_max_drawdown_pct + '%';
+          elDDCompare.textContent = '同期基准回撤 −' + risk.bench_max_drawdown_pct + '%';
         } else { elDDCompare.textContent = '--'; }
       }
 
       if (elSharpe) elSharpe.textContent = (risk && risk.sharpe_ratio != null) ? risk.sharpe_ratio : '--';
       if (elSharpeNote) {
+        var benchSharpeStr = (risk && risk.bench_sharpe_ratio != null) ? String(risk.bench_sharpe_ratio) : '—';
         if (risk && risk.sharpe_ratio != null) {
-          var s = risk.sharpe_ratio;
+          var s = Number(risk.sharpe_ratio);
           var label = s >= 1 ? '优秀' : s >= 0.5 ? '良好' : s >= 0 ? '一般' : '偏弱';
-          elSharpeNote.textContent = label + ' · 无风险 ' + rfLbl + '%';
-        } else { elSharpeNote.textContent = '无风险 ' + rfLbl + '%'; }
+          elSharpeNote.textContent = label + ' · 同期基准夏普 ' + benchSharpeStr;
+        } else { elSharpeNote.textContent = '同期基准夏普 ' + benchSharpeStr; }
+      }
+
+      if (elSortino) elSortino.textContent = (risk && risk.sortino_ratio != null) ? String(risk.sortino_ratio) : '--';
+      if (elSortinoBench) {
+        if (risk && risk.bench_sortino_ratio != null) {
+          elSortinoBench.textContent = '同期纳指 ' + risk.bench_sortino_ratio;
+        } else { elSortinoBench.textContent = '同期纳指 —'; }
       }
 
       if (elAlpha) {
@@ -1425,25 +1434,28 @@
       if (elAlphaNote) {
         if (risk && risk.alpha_pct != null) {
           elAlphaNote.textContent = (risk.alpha_pct > 0 ? '优于 CAPM 预期' : risk.alpha_pct < 0 ? '劣于 CAPM 预期' : '符合 CAPM 预期')
-            + ' · 无风险 ' + rfLbl + '% ' + rfSrc;
-        } else { elAlphaNote.textContent = 'CAPM（含美国1Y ' + rfLbl + '% ' + rfSrc + '）相对纳指，%'; }
+            + ' · 无风险 ' + rfLbl + '%';
+        } else { elAlphaNote.textContent = 'CAPM（含美国1Y ' + rfLbl + '%）相对纳指，%'; }
       }
 
       if (elBeta) elBeta.textContent = (risk && risk.beta != null) ? risk.beta : '--';
       if (elBetaNote) {
+        var calStr = (risk && risk.calmar_ratio != null) ? String(risk.calmar_ratio) : '—';
         if (risk && risk.beta != null) {
           var b = risk.beta;
           var bLabel = b > 1.2 ? '高波动' : b >= 0.8 ? '同步市场' : b >= 0 ? '低波动' : '反向';
-          elBetaNote.textContent = bLabel + ' · OLS 斜率';
-        } else { elBetaNote.textContent = '对纳指日收益 OLS 斜率'; }
+          elBetaNote.textContent = bLabel + '，Calmar ' + calStr;
+        } else {
+          elBetaNote.textContent = '—，Calmar ' + calStr;
+        }
       }
     }
     function updateRiskMetricsCharts(risk) {
       buildDrawdownChart(risk);
       renderTop3Drawdowns(risk && risk.top3_drawdowns);
     }
-    function updateRiskMetrics(risk, rfPct, riskFreeSeries) {
-      updateRiskMetricsTexts(risk, rfPct, riskFreeSeries);
+    function updateRiskMetrics(risk, rfPct) {
+      updateRiskMetricsTexts(risk, rfPct);
       updateRiskMetricsCharts(risk);
     }
     /** 首屏先铺文字，下一帧再跑 Chart.js，避免阻塞 LCP/可交互时间 */
@@ -1456,7 +1468,7 @@
       const data = await apiGet('/api/returns-overview');
       if (!data) {
         setReturnsCardsNoData();
-        updateRiskMetricsTexts(null, null, null);
+        updateRiskMetricsTexts(null, null);
         updateMwrrCompare(null, null);
         scheduleReturnsChartWork(function() {
           updateRiskMetricsCharts(null);
@@ -1468,7 +1480,7 @@
       returnsOverview = data;
       var rk = periodToRiskKey(currentPeriod);
       updateReturnsCards(data.cards || {});
-      updateRiskMetricsTexts(data.risk_metrics ? data.risk_metrics[rk] : null, data.risk_free_rate_pct, data.risk_free_rate_series);
+      updateRiskMetricsTexts(data.risk_metrics ? data.risk_metrics[rk] : null, data.risk_free_rate_pct);
       updateMwrrCompare(data.cards, rk);
       var asOfEl = document.getElementById('returnsDataAsOf');
       if (asOfEl) {
@@ -1725,7 +1737,7 @@
       });
       buildReturnsChart(p);
       var rk = periodToRiskKey(p);
-      updateRiskMetrics(returnsOverview && returnsOverview.risk_metrics ? returnsOverview.risk_metrics[rk] : null, returnsOverview && returnsOverview.risk_free_rate_pct, returnsOverview && returnsOverview.risk_free_rate_series);
+      updateRiskMetrics(returnsOverview && returnsOverview.risk_metrics ? returnsOverview.risk_metrics[rk] : null, returnsOverview && returnsOverview.risk_free_rate_pct);
       updateMwrrCompare(returnsOverview && returnsOverview.cards, rk);
     }
 

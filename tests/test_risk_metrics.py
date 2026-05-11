@@ -48,3 +48,56 @@ def test_sharpe_near_zero_when_mean_daily_excess_is_zero() -> None:
     rb = rng.normal(0.0002, 0.01, 100)
     sh, _beta, _ = server._sharpe_beta_jensen_pct_from_daily(rp, rb, rf)
     assert sh is not None and abs(sh) < 0.05
+
+
+def test_sortino_undefined_when_no_downside_excess() -> None:
+    """日超额收益全为非负时下行偏差为 0，Sortino 不予定义。"""
+    rp = np.array([0.001, 0.002, 0.0015], dtype=float)
+    assert server._sortino_ratio_from_daily(rp, 0.0) is None
+
+
+def test_sortino_finite_with_mixed_excess() -> None:
+    rng = np.random.default_rng(4)
+    rp = rng.normal(0.0002, 0.012, 120)
+    s = server._sortino_ratio_from_daily(rp, 0.02)
+    assert s is not None and np.isfinite(s)
+
+
+def test_bench_sortino_uses_same_sortino_formula() -> None:
+    """纳指 Sortino 与组合共用 _sortino_ratio_from_daily（仅输入序列不同）。"""
+    rb = np.array([0.001, -0.002, 0.0015, -0.0005, 0.002], dtype=float)
+    rf = 0.025
+    s = server._sortino_ratio_from_daily(rb, rf)
+    assert s is not None and isinstance(s, float)
+
+
+def test_bench_sharpe_matches_portfolio_sharpe_when_inputs_equal() -> None:
+    """单序列基准夏普应与 _sharpe_beta_jensen_pct_from_daily 在 rp==rb 时的组合夏普一致。"""
+    rng = np.random.default_rng(7)
+    r = rng.normal(0.0003, 0.011, 120)
+    rf = 0.032
+    sh_pair, _beta, _alpha = server._sharpe_beta_jensen_pct_from_daily(r, r, rf)
+    sh_single = server._sharpe_ratio_from_daily(r, rf)
+    assert sh_pair is not None and sh_single is not None
+    assert abs(sh_pair - sh_single) < 1e-9
+
+
+def test_bench_sharpe_none_when_no_volatility() -> None:
+    """波动近 0 时基准夏普未定义。"""
+    r = np.array([0.0, 0.0, 0.0, 0.0], dtype=float)
+    assert server._sharpe_ratio_from_daily(r, 0.02) is None
+
+
+def test_calmar_ratio_matches_ann_over_max_drawdown_pct() -> None:
+    rp = np.array([0.01, -0.005, 0.02], dtype=float)
+    dd_pct = 15.0
+    n = len(rp)
+    prod = float(np.prod(1.0 + rp))
+    years = max(n / 252.0, 1e-9)
+    ann = prod ** (1.0 / years) - 1.0
+    expected = round(float(ann / (dd_pct / 100.0)), 2)
+    assert server._calmar_ratio_from_daily(rp, dd_pct) == expected
+
+
+def test_calmar_none_when_drawdown_too_small() -> None:
+    assert server._calmar_ratio_from_daily(np.array([0.01, 0.02]), 0.0) is None

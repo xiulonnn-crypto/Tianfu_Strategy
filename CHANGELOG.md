@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> Theme: 收益页风险指标改为五卡片布局
+
+### Changed
+
+- **风险指标五卡片**：收益页时段风险区由四格改为五格——最大回撤、夏普（数字+优秀/良好/一般/偏弱）、Sortino（数字+同期纳指 Sortino）、Alpha（CAPM 文案+无风险利率）、Beta（波动档位+组合 Calmar）。窄幅仍为两列，宽屏五列排布。
+
 ## [0.1.0-010] - 2026-05-08 - 收益页展示数据拉取时点（东八区）
 
 ### Changed
