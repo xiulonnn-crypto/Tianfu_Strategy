@@ -2757,6 +2757,10 @@
       var abs = Math.abs(Number(v));
       return (Number(v) >= 0 ? '+$' : '-$') + abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
+    function _btMoneyAlways(v) {
+      if (v == null || isNaN(v)) return '—';
+      return '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
     function _backtestDailyReturns(navRows) {
       if (!navRows || navRows.length < 2) return [];
       var rets = [];
