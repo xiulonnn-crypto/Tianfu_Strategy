@@ -318,7 +318,7 @@
           <button type="button" class="chart-cmp-btn px-3 py-1 rounded text-xs transition" data-mode="bench" style="background:var(--deep-purple);color:#fff;">Portfolio vs Nasdaq</button>
           <button type="button" class="chart-cmp-btn px-3 py-1 rounded text-xs transition" data-mode="dca" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">Portfolio vs 等额定投</button>
           <button type="button" class="chart-cmp-btn px-3 py-1 rounded text-xs transition" data-mode="all" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">全部对比</button>
-          <span id="dcaExplainNote" class="hidden text-xs ml-2" style="color:var(--benchmark-gray);">等额定投：将实际总投入金额均摊到每个交易日，按 QQQM 价格模拟普通 DCA 收益</span>
+          <span id="dcaExplainNote" class="hidden text-xs ml-2" style="color:var(--benchmark-gray);">等额定投：按每年计划投入总额（月投基数×12 + 年度投弹总额）均摊到各年交易日，按 QQQM 价格模拟普通 DCA 收益</span>
         </div>
         <div class="h-80 relative">
           <canvas id="chartReturns"></canvas>
@@ -867,7 +867,10 @@
         var mobBtn = document.querySelector('.mob-tab[data-section="' + id + '"]');
         if (mobBtn) addClass(mobBtn, 'mob-active');
         window.scrollTo(0, 0);
-        if (!_skipHash && window.__updateRouteHash) window.__updateRouteHash(id);
+        if (!_skipHash && window.__updateRouteHash) {
+          if (id === 'history' && window.__isCloudMode) window.__updateRouteHash(id, 'trades');
+          else window.__updateRouteHash(id);
+        }
       };
       window.__setPeriod = function(p) {
         var cards = document.querySelectorAll('.returns-card');
@@ -883,7 +886,7 @@
         if (window.__setPeriodChart) window.__setPeriodChart(p);
       };
       window.__isCloudMode = window.location.hostname.indexOf('github.io') !== -1;
-      window.__sensitiveHidden = window.__isCloudMode;
+      window.__sensitiveHidden = false;
       window.__toggleSensitive = function() {
         if (window.__isCloudMode) return;
         window.__sensitiveHidden = !window.__sensitiveHidden;
@@ -1023,7 +1026,9 @@
         var r = window.__parseHash(window.location.hash);
         window.__navClick(r.section, true);
         if (r.section === 'history') {
-          window.__historyTab(r.sub || 'fund', true);
+          var histSub = r.sub || (window.__isCloudMode ? 'trades' : 'fund');
+          if (window.__isCloudMode && histSub === 'fund') histSub = 'trades';
+          window.__historyTab(histSub, true);
         }
         if (r.section === 'review' && window.__reviewSubTab) {
           window.__reviewSubTab(r.sub || 'live', true);
@@ -1069,7 +1074,7 @@
     let allocationDataAsOf = '';  // 价格基准日
     if (typeof window.__sensitiveHidden === 'undefined') {
       window.__isCloudMode = window.location.hostname.indexOf('github.io') !== -1;
-      window.__sensitiveHidden = window.__isCloudMode;
+      window.__sensitiveHidden = false;
     }
 
     // ========== 请求封装（带错误处理）==========
@@ -2210,7 +2215,10 @@
       const mobBtn = document.querySelector('.mob-tab[data-section="' + sectionId + '"]');
       if (mobBtn) mobBtn.classList.add('mob-active');
       window.scrollTo(0, 0);
-      if (!_skipHash && window.__updateRouteHash) window.__updateRouteHash(sectionId);
+      if (!_skipHash && window.__updateRouteHash) {
+        if (sectionId === 'history' && window.__isCloudMode) window.__updateRouteHash(sectionId, 'trades');
+        else window.__updateRouteHash(sectionId);
+      }
       // 懒加载：首次切换到信号/复盘时才触发耗时 API
       if (sectionId === 'signals' && !__lazyLoaded.signals) {
         __lazyLoaded.signals = true;
@@ -3766,6 +3774,11 @@
         document.querySelectorAll('.cloud-hide-col').forEach(function(el) { el.style.display = 'none'; });
         var fundTabBtn = document.querySelector('.history-tab[data-tab="fund"]');
         if (fundTabBtn) fundTabBtn.style.display = 'none';
+        var route = window.__parseHash ? window.__parseHash(window.location.hash) : null;
+        if (!route || route.section === 'history') {
+          var histTab = (route && route.sub === 'fund') ? 'trades' : ((route && route.sub) || 'trades');
+          showHistoryTab(histTab, true);
+        }
         var bannerEl = document.getElementById('bannerRestartBackend');
         if (bannerEl) bannerEl.style.display = 'none';
         await ensureCloudVersion();

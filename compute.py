@@ -29,8 +29,9 @@ def _nullify(d, keys):
 
 
 def _sanitize_trades(data):
+    """云端交易明细保留 price/shares/commission，供 GitHub Pages 展示。"""
     for row in data:
-        _nullify(row, ("price", "shares", "commission", "gross_dividend_usd"))
+        _nullify(row, ("gross_dividend_usd",))
     return data
 
 

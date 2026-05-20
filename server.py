@@ -910,6 +910,11 @@ def compute_twr(trades_list, history_cache, period_start, period_end, all_tradin
     return round((cumulative_factor - 1) * 100, 2)
 
 
+def _yearly_planned_invest_amount() -> float:
+    """每年计划投入总额 = 月投基数×12 + 年度投弹总额（固定 2000×12 + 40000）。"""
+    return MONTHLY_BASE * 12 + YEARLY_RESERVE_INJECT
+
+
 def compute_twr_chart(trades_list, history_cache, bench_cache,
                       period_start, period_end, all_trading_dates, perf=None,
                       fund_records=None):
@@ -919,7 +924,7 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
     my：组合累计 TWR（%）；bench：纳指涨跌幅（%）；dca：等额定投收益（%）。
     my_mwrr：自 period_start 至各交易日的子区间 MWRR（%），与 /api/strategy-review
     超额收益（MWRR − DCA）在同一终点口径可比；DCA 模式下图表应使用 my_mwrr 而非 my。
-    DCA 模拟：将时段内实际总买入金额均匀分配到每个交易日，按 QQQM 价格模拟。
+    DCA 模拟：将每年计划投入总额（2000×12 + 40000）均摊到该年各交易日，按 QQQM 价格模拟。
     """
     fr = fund_records if fund_records is not None else get_fund_records()
     dates_in_range = [d for d in all_trading_dates if period_start <= d <= period_end]
@@ -940,16 +945,10 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
     tds = (perf or {}).get("timeline_dates")
     b_base = get_price_on_date(BENCHMARK_SYMBOL, chain[0], bench_cache, pix) or 1.0
 
-    # 计算时段内实际总买入金额（用于 DCA 模拟）；排除分红/拆股等非现金买入
-    total_buy_amount = sum(
-        float(t.get("price", 0)) * float(t.get("shares", 0))
-        for t in trades_list
-        if (t.get("action") or "") == "买入"
-        and period_start <= (t.get("date") or "")[:10] <= period_end
-        and not _is_corp_action(t)
-    )
-    n_days = len(dates_in_range)
-    daily_dca_amount = total_buy_amount / n_days if n_days > 0 and total_buy_amount > 0 else 0
+    trading_days_by_year: dict[str, int] = {}
+    for d in all_trading_dates:
+        y = d[:4]
+        trading_days_by_year[y] = trading_days_by_year.get(y, 0) + 1
 
     labels, my_series, bench_series, dca_series, my_mwrr_series = [], [], [], [], []
     cumulative_factor = 1.0
@@ -977,9 +976,14 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
                 round(mwr_pt, 2) if mwr_pt is not None else my_series[-1],
             )
 
-            # DCA：每日等额买入，用 QQQM 价格模拟
+            # DCA：按当年计划总额 / 当年交易日数，每日等额买入 QQQM
             qqqm_p = get_price_on_date("QQQM", curr_d, history_cache, pix)
             dca_price = qqqm_p if qqqm_p and qqqm_p > 0 else (b_curr if b_curr > 0 else 1)
+            n_year_days = trading_days_by_year.get(curr_d[:4], 0)
+            yearly_planned_invest = _yearly_planned_invest_amount()
+            daily_dca_amount = (
+                yearly_planned_invest / n_year_days if n_year_days > 0 else 0.0
+            )
             if daily_dca_amount > 0 and dca_price > 0:
                 dca_cum_shares += daily_dca_amount / dca_price
                 dca_cum_cost += daily_dca_amount
