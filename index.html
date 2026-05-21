@@ -27,6 +27,7 @@
     .priority-mid { border-left: 4px solid var(--champagne-gold); }
     .priority-low { border-left: 4px solid #2d8a5e; }
     table tbody tr:hover { background-color: rgba(245, 243, 251, 0.8); }
+    .hidden { display: none !important; }
     @media (min-width: 1024px) { .container-main { max-width: 1280px; margin: 0 auto; } }
     /* 收益卡片：大圆角、浅白底、柔和阴影 */
     .returns-card { background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(74, 61, 124, 0.08); border: 2px solid transparent; }
@@ -208,7 +209,7 @@
 
       /* --- Touch-friendly buttons --- */
       button, [type="button"], [type="submit"] { min-height: 36px; }
-      .nav-btn, .sum-period-btn, .review-period-btn, .chart-cmp-btn { min-height: 32px; }
+      .nav-btn, .sum-period-btn, .review-period-btn, .chart-cmp-btn, .trade-type-filter-btn { min-height: 32px; }
 
       /* --- Tooltips wrap on mobile --- */
       .info-tip .info-tip-text { white-space: normal; min-width: 180px; max-width: 220px; }
@@ -455,30 +456,32 @@
       </div>
       <!-- 交易明细 -->
       <div id="panel-trades" class="history-panel hidden">
-        <div class="mb-4 flex gap-2 flex-wrap">
-          <button type="button" id="btnAddTrade" class="px-4 py-2 rounded text-sm transition" style="background: var(--deep-purple); color: #fff;" onclick="if(window.__openModal)window.__openModal('modalTrade')"><i class="fas fa-plus mr-1"></i>添加交易</button>
-          <button type="button" id="btnSmartPaste" class="px-4 py-2 rounded text-sm transition" style="background: #fff; color: var(--deep-purple); border: 1px solid var(--deep-purple);" onclick="if(window.__openModal)window.__openModal('modalSmartPaste')"><i class="fas fa-paste mr-1"></i>智能粘贴</button>
-          <button type="button" id="btnSyncCorpActions" class="px-4 py-2 rounded text-sm transition" style="background: var(--champagne-gold); color: #2d2a3e; border: 1px solid rgba(191,169,96,0.5);" title="从 Yahoo Finance 拉取分红与拆股并写入交易表"><i class="fas fa-rotate mr-1"></i>同步分红/拆股</button>
-        </div>
         <div id="toastCorpSync" class="hidden mb-2 px-3 py-2 rounded text-sm" style="background:#ecfdf5;border:1px solid #0d9488;color:#0f766e;"></div>
-        <div class="mb-3 flex gap-3 flex-wrap items-center text-sm">
-          <div class="flex items-center gap-2">
-            <span style="color: var(--benchmark-gray);">标的</span>
-            <select id="tradeFilterSymbol" class="px-3 py-1.5 rounded-lg text-sm" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">
-              <option value="__all__">全部</option>
-            </select>
+        <div class="mb-3 flex gap-3 flex-wrap items-center justify-between text-sm">
+          <div class="flex gap-3 flex-wrap items-center min-w-0">
+            <div class="flex items-center gap-2">
+              <span style="color: var(--benchmark-gray);">标的</span>
+              <select id="tradeFilterSymbol" class="px-3 py-1.5 rounded-lg text-sm" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">
+                <option value="__all__">全部</option>
+              </select>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <span style="color: var(--benchmark-gray);">类型</span>
+              <div id="tradeFilterTypeGroup" class="flex gap-1 flex-wrap">
+                <button type="button" class="trade-type-filter-btn px-2 py-1 rounded text-xs transition" data-type="__all__" aria-pressed="false" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">全部</button>
+                <button type="button" class="trade-type-filter-btn px-2 py-1 rounded text-xs transition" data-type="定投" aria-pressed="false" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">定投</button>
+                <button type="button" class="trade-type-filter-btn px-2 py-1 rounded text-xs transition" data-type="投弹" aria-pressed="false" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">投弹</button>
+                <button type="button" class="trade-type-filter-btn px-2 py-1 rounded text-xs transition" data-type="投机" aria-pressed="false" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">投机</button>
+                <button type="button" class="trade-type-filter-btn px-2 py-1 rounded text-xs transition" data-type="现金管理" aria-pressed="false" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">现金管理</button>
+                <button type="button" class="trade-type-filter-btn px-2 py-1 rounded text-xs transition" data-type="分红" aria-pressed="false" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">分红</button>
+                <button type="button" class="trade-type-filter-btn px-2 py-1 rounded text-xs transition" data-type="合股拆股" aria-pressed="false" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">合股拆股</button>
+              </div>
+            </div>
           </div>
-          <div class="flex items-center gap-2">
-            <span style="color: var(--benchmark-gray);">类型</span>
-            <select id="tradeFilterType" class="px-3 py-1.5 rounded-lg text-sm" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">
-              <option value="__all__">全部</option>
-              <option value="定投">定投</option>
-              <option value="投弹">投弹</option>
-              <option value="投机">投机</option>
-              <option value="现金管理">现金管理</option>
-              <option value="分红">分红</option>
-              <option value="合股拆股">合股拆股</option>
-            </select>
+          <div class="flex gap-2 flex-wrap items-center justify-end shrink-0 ml-auto">
+            <button type="button" id="btnAddTrade" class="px-4 py-2 rounded text-sm transition whitespace-nowrap" style="background: var(--deep-purple); color: #fff;" onclick="if(window.__openModal)window.__openModal('modalTrade')"><i class="fas fa-plus mr-1"></i>添加交易</button>
+            <button type="button" id="btnSmartPaste" class="px-4 py-2 rounded text-sm transition whitespace-nowrap" style="background: #fff; color: var(--deep-purple); border: 1px solid var(--deep-purple);" onclick="if(window.__openModal)window.__openModal('modalSmartPaste')"><i class="fas fa-paste mr-1"></i>智能粘贴</button>
+            <button type="button" id="btnSyncCorpActions" class="px-4 py-2 rounded text-sm transition whitespace-nowrap" style="background: var(--champagne-gold); color: #2d2a3e; border: 1px solid rgba(191,169,96,0.5);" title="从 Yahoo Finance 拉取分红与拆股并写入交易表"><i class="fas fa-rotate mr-1"></i>同步分红/拆股</button>
           </div>
         </div>
         <div class="overflow-x-auto rounded-xl shadow-sm" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
@@ -870,6 +873,12 @@
         if (!_skipHash && window.__updateRouteHash) {
           if (id === 'history' && window.__isCloudMode) window.__updateRouteHash(id, 'trades');
           else window.__updateRouteHash(id);
+        }
+        if (id === 'history' && window.__historyTab) {
+          var hr = window.__parseHash ? window.__parseHash(window.location.hash) : null;
+          var hsub = (hr && hr.sub) || (window.__isCloudMode ? 'trades' : 'fund');
+          if (window.__isCloudMode && hsub === 'fund') hsub = 'trades';
+          window.__historyTab(hsub, true);
         }
       };
       window.__setPeriod = function(p) {
@@ -2134,6 +2143,48 @@
       var s = _typeTagStyle[t] || 'background:#e2e8f0;color:#475569;';
       return '<span class="px-2 py-0.5 rounded text-xs" style="'+s+'">' + (t||'--') + '</span>';
     }
+    var TRADE_TYPE_FILTER_OPTIONS = ['定投', '投弹', '投机', '现金管理', '分红', '合股拆股'];
+    var TRADE_TYPE_FILTER_DEFAULT = ['定投', '投弹', '投机'];
+    function _setTradeTypeFilterBtnStyle(btn, active) {
+      if (!btn) return;
+      if (active) {
+        btn.style.background = 'var(--deep-purple)';
+        btn.style.color = '#fff';
+        btn.style.border = '1px solid var(--deep-purple)';
+      } else {
+        btn.style.background = '#fff';
+        btn.style.color = 'var(--deep-purple)';
+        btn.style.border = '1px solid var(--deep-purple)';
+      }
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    }
+    function syncTradeTypeAllBtn() {
+      var allBtn = document.querySelector('.trade-type-filter-btn[data-type="__all__"]');
+      var typeBtns = document.querySelectorAll('.trade-type-filter-btn[data-type]:not([data-type="__all__"])');
+      var allActive = typeBtns.length > 0;
+      typeBtns.forEach(function (b) {
+        if (b.getAttribute('aria-pressed') !== 'true') allActive = false;
+      });
+      _setTradeTypeFilterBtnStyle(allBtn, allActive);
+    }
+    function setTradeTypeFilters(types) {
+      var set = {};
+      (types || []).forEach(function (t) { set[t] = true; });
+      document.querySelectorAll('.trade-type-filter-btn[data-type]:not([data-type="__all__"])').forEach(function (b) {
+        _setTradeTypeFilterBtnStyle(b, !!set[b.dataset.type]);
+      });
+      syncTradeTypeAllBtn();
+    }
+    function getSelectedTradeTypes() {
+      var selected = [];
+      document.querySelectorAll('.trade-type-filter-btn[data-type]:not([data-type="__all__"])').forEach(function (b) {
+        if (b.getAttribute('aria-pressed') === 'true') selected.push(b.dataset.type);
+      });
+      return selected;
+    }
+    function initTradeTypeFilters() {
+      setTradeTypeFilters(TRADE_TYPE_FILTER_DEFAULT);
+    }
     function refreshTradeSymbolOptions() {
       var sel = document.getElementById('tradeFilterSymbol');
       if (!sel) return;
@@ -2153,19 +2204,17 @@
       if (!tbody) return;
       const withIndex = trades.map(function (r, i) { return Object.assign({}, r, { _i: i }); });
       var symSel = document.getElementById('tradeFilterSymbol');
-      var typeSel = document.getElementById('tradeFilterType');
       var symFilter = symSel ? symSel.value : '__all__';
-      var typeFilter = typeSel ? typeSel.value : '__all__';
+      var typeFilters = getSelectedTradeTypes();
       var filtered = withIndex.filter(function (r) {
         if (symFilter !== '__all__' && r.symbol !== symFilter) return false;
-        if (typeFilter !== '__all__' && (r.type || '') !== typeFilter) return false;
+        if (!typeFilters.length) return false;
+        if (typeFilters.indexOf(r.type || '') < 0) return false;
         return true;
       });
       const sorted = sortByDateDesc(filtered, 'date');
       if (!sorted.length) {
-        var emptyText = (symFilter === '__all__' && typeFilter === '__all__')
-          ? '暂无交易明细'
-          : '当前筛选下无交易明细';
+        var emptyText = trades.length === 0 ? '暂无交易明细' : '当前筛选下无交易明细';
         tbody.innerHTML = '<tr><td colspan="8" class="p-3 text-center text-slate-500">' + emptyText + '</td></tr>';
         return;
       }
@@ -2218,6 +2267,12 @@
       if (!_skipHash && window.__updateRouteHash) {
         if (sectionId === 'history' && window.__isCloudMode) window.__updateRouteHash(sectionId, 'trades');
         else window.__updateRouteHash(sectionId);
+      }
+      if (sectionId === 'history') {
+        var hr = window.__parseHash ? window.__parseHash(window.location.hash) : null;
+        var hsub = (hr && hr.sub) || (window.__isCloudMode ? 'trades' : 'fund');
+        if (window.__isCloudMode && hsub === 'fund') hsub = 'trades';
+        showHistoryTab(hsub, true);
       }
       // 懒加载：首次切换到信号/复盘时才触发耗时 API
       if (sectionId === 'signals' && !__lazyLoaded.signals) {
@@ -3539,6 +3594,23 @@
           if (toggleBtn) { e.preventDefault(); e.stopPropagation(); toggleSensitive(); return; }
           var historyTab = e.target.closest && e.target.closest('.history-tab[data-tab]');
           if (historyTab) { e.preventDefault(); e.stopPropagation(); showHistoryTab(historyTab.dataset.tab); return; }
+          var typeFilterBtn = e.target.closest && e.target.closest('.trade-type-filter-btn[data-type]');
+          if (typeFilterBtn) {
+            e.preventDefault(); e.stopPropagation();
+            if (typeFilterBtn.dataset.type === '__all__') {
+              var allActive = typeFilterBtn.getAttribute('aria-pressed') === 'true';
+              document.querySelectorAll('.trade-type-filter-btn[data-type]:not([data-type="__all__"])').forEach(function (b) {
+                _setTradeTypeFilterBtnStyle(b, !allActive);
+              });
+              _setTradeTypeFilterBtnStyle(typeFilterBtn, !allActive);
+            } else {
+              var active = typeFilterBtn.getAttribute('aria-pressed') === 'true';
+              _setTradeTypeFilterBtnStyle(typeFilterBtn, !active);
+              syncTradeTypeAllBtn();
+            }
+            renderTradesTable();
+            return;
+          }
           if (e.target.id === 'btnAddFund') {
             e.preventDefault(); e.stopPropagation();
             fundEditIndex = null;
@@ -3685,7 +3757,7 @@
 
       document.addEventListener('change', function (e) {
         try {
-          if (e.target && (e.target.id === 'tradeFilterSymbol' || e.target.id === 'tradeFilterType')) {
+          if (e.target && e.target.id === 'tradeFilterSymbol') {
             renderTradesTable();
           }
         } catch (err) {}
@@ -3781,12 +3853,14 @@
         }
         var bannerEl = document.getElementById('bannerRestartBackend');
         if (bannerEl) bannerEl.style.display = 'none';
-        await ensureCloudVersion();
       }
+      if (window.__applyRoute) window.__applyRoute();
+      if (window.__isCloudMode) await ensureCloudVersion();
       checkBackendVersion();
       loadReturnsOverview();
       loadAllocation();
       loadFundRecords();
+      initTradeTypeFilters();
       loadTrades();
       loadTradeSummary('all');
       // 懒加载：仅在直接进入对应标签时才触发，否则推迟到用户首次切换时
@@ -3804,7 +3878,6 @@
     }
 
     bindEvents();
-    if (window.__applyRoute) window.__applyRoute();
     doInit();
 
     // ========== URL 参数自动录入交易 ==========
