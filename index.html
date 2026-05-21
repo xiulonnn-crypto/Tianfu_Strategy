@@ -110,6 +110,9 @@
     }
     #decisionSummary .ds-sep { color: rgba(255,255,255,0.35); margin: 0 8px; }
 
+    /* 云端模式：CSS 隐藏 cloud-hide-col，覆盖异步渲染的 tbody 单元格 */
+    html.cloud-mode .cloud-hide-col { display: none !important; }
+
     @media (min-width: 1024px) {
       .zone-row-3 {
         display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; align-items: start;
@@ -904,6 +907,7 @@
         if (window.__refreshAllViews) window.__refreshAllViews();
       };
       if (window.__isCloudMode) {
+        document.documentElement.classList.add('cloud-mode');
         document.querySelectorAll('.btn-toggle-sensitive').forEach(function(b) { b.style.display = 'none'; });
         var _btnRD = document.getElementById('btnRefreshData');
         if (_btnRD) _btnRD.classList.remove('hidden');
@@ -1085,6 +1089,7 @@
       window.__isCloudMode = window.location.hostname.indexOf('github.io') !== -1;
       window.__sensitiveHidden = window.__isCloudMode;
     }
+    if (window.__isCloudMode) document.documentElement.classList.add('cloud-mode');
 
     // ========== 请求封装（带错误处理）==========
     function _mapApiToStatic(path) {
@@ -2213,13 +2218,14 @@
         return true;
       });
       const sorted = sortByDateDesc(filtered, 'date');
-      if (!sorted.length) {
-        var emptyText = trades.length === 0 ? '暂无交易明细' : '当前筛选下无交易明细';
-        tbody.innerHTML = '<tr><td colspan="8" class="p-3 text-center text-slate-500">' + emptyText + '</td></tr>';
-        return;
-      }
       var hide = window.__sensitiveHidden;
       var cloud = window.__isCloudMode;
+      if (!sorted.length) {
+        var emptyText = trades.length === 0 ? '暂无交易明细' : '当前筛选下无交易明细';
+        var colSpan = cloud ? 5 : 8;
+        tbody.innerHTML = '<tr><td colspan="' + colSpan + '" class="p-3 text-center text-slate-500">' + emptyText + '</td></tr>';
+        return;
+      }
       tbody.innerHTML = sorted.map(function (r) {
         var autoBadge = r.auto ? ' <span class="text-xs px-1.5 py-0.5 rounded" style="background:#e0e7ff;color:#3730a3;">自动</span>' : '';
         var editBtn = (cloud || r.auto) ? '' : '<button type="button" class="btn-trade-edit px-2 py-1 rounded bg-slate-200 hover:bg-slate-300 text-sm whitespace-nowrap" data-index="' + r._i + '">编辑</button>';

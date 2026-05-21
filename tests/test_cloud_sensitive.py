@@ -42,13 +42,15 @@ def test_index_html_cloud_sensitive_default_mask():
 
 
 def test_index_html_trade_table_cloud_hides_shares_commission():
-    """交易明细表：股数/佣金列带 cloud-hide-col，价格不经 _m 掩码。"""
+    """交易明细表：股数/佣金列带 cloud-hide-col，价格不经 _m 掩码；CSS 覆盖异步 tbody。"""
     text = INDEX_HTML.read_text(encoding="utf-8")
     assert '<th class="text-right p-3 cloud-hide-col">股数</th>' in text
     assert 'col-commission cloud-hide-col">佣金(USD)</th>' in text
     assert "var priceStr = r.price != null ? '$' + Number(r.price).toFixed(2) : '--';" in text
     assert "cloud-hide-col\">' + sharesStr + '" in text
     assert "col-commission cloud-hide-col\">' + commStr + '" in text
+    assert "html.cloud-mode .cloud-hide-col { display: none !important; }" in text
+    assert "document.documentElement.classList.add('cloud-mode')" in text
 
 
 @pytest.mark.parametrize(
