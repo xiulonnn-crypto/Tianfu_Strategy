@@ -895,7 +895,7 @@
         if (window.__setPeriodChart) window.__setPeriodChart(p);
       };
       window.__isCloudMode = window.location.hostname.indexOf('github.io') !== -1;
-      window.__sensitiveHidden = false;
+      window.__sensitiveHidden = window.__isCloudMode;
       window.__toggleSensitive = function() {
         if (window.__isCloudMode) return;
         window.__sensitiveHidden = !window.__sensitiveHidden;
@@ -1083,7 +1083,7 @@
     let allocationDataAsOf = '';  // 价格基准日
     if (typeof window.__sensitiveHidden === 'undefined') {
       window.__isCloudMode = window.location.hostname.indexOf('github.io') !== -1;
-      window.__sensitiveHidden = false;
+      window.__sensitiveHidden = window.__isCloudMode;
     }
 
     // ========== 请求封装（带错误处理）==========
@@ -3839,6 +3839,7 @@
       window.__openModal = openModal;
       window.__closeModal = closeModal;
       if (window.__isCloudMode) {
+        window.__sensitiveHidden = true;
         document.querySelectorAll('.btn-toggle-sensitive').forEach(function(b) { b.style.display = 'none'; });
         ['btnAddFund','btnAddTrade','btnSmartPaste','btnSyncCorpActions'].forEach(function(id) {
           var el = document.getElementById(id); if (el) el.style.display = 'none';

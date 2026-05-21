@@ -684,11 +684,12 @@ MWRR：
   ✓ 当前价格在历史中处于 100% 分位时信号为极高
 ```
 
-#### compute.py 测试要点（test_compute.py）
+#### compute.py 测试要点（`tests/test_cloud_sensitive.py`）
 
 ```
 脱敏验证：
   ✓ trades 响应中 price/shares/commission 字段被置 None
+  ✓ index.html 云端 __sensitiveHidden 与 renderTradesTable 掩码 helpers（防回归）
   ✓ fund-records 响应中 amount 字段被置 None
   ✓ allocation 响应中 market_value/avg_cost 被置 None
   ✓ 脱敏后 symbol/date/action 等非敏感字段保留
