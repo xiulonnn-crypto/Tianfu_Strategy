@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-013] - 2026-05-22 - 云端交易明细默认掩码并脱敏 trades.json
+
 ### Fixed
 
 - **云端交易明细敏感字段**：GitHub Pages 模式下默认开启 `__sensitiveHidden`，交易明细 tab 的价格、股数、佣金显示为 `***`；预计算 `trades.json` 同步剔除上述字段，避免直接查看静态 JSON 泄露。
