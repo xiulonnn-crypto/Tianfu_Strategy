@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-015] - 2026-05-22 - 用 CSS 隐藏异步渲染的股数/佣金列
+
 ### Fixed
 
 - **云端交易明细列错位**：`doInit` 仅隐藏静态表头，异步渲染的股数/佣金单元格仍显示 `***` 导致列错位；改用 `html.cloud-mode .cloud-hide-col` CSS 统一隐藏。
