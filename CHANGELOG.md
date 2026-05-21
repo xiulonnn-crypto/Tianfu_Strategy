@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-012] - 2026-05-22 - 修复云端交易历史子标签；交易明细类型多选筛选
+
 ### Fixed
 
 - **云端交易历史子标签**：进入「交易历史」或通过 `#history/trades` 访问时，正确默认展示交易明细并隐藏出入金面板（此前仅更新 hash 未切换面板）。
