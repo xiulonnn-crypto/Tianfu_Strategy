@@ -492,8 +492,8 @@
                 <th class="text-left p-3">标的</th>
                 <th class="text-left p-3">操作</th>
                 <th class="text-right p-3">价格(USD)</th>
-                <th class="text-right p-3">股数</th>
-                <th class="text-right p-3 col-commission">佣金(USD)</th>
+                <th class="text-right p-3 cloud-hide-col">股数</th>
+                <th class="text-right p-3 col-commission cloud-hide-col">佣金(USD)</th>
                 <th class="text-left p-3 col-type">类型</th>
                 <th class="text-left p-3 w-28 cloud-hide-col">管理</th>
               </tr>
@@ -2225,7 +2225,10 @@
         var editBtn = (cloud || r.auto) ? '' : '<button type="button" class="btn-trade-edit px-2 py-1 rounded bg-slate-200 hover:bg-slate-300 text-sm whitespace-nowrap" data-index="' + r._i + '">编辑</button>';
         var delBtn = cloud ? '' : '<button type="button" class="btn-trade-delete px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-sm whitespace-nowrap" data-index="' + r._i + '">删除</button>';
         var ops = cloud ? '' : '<td class="p-3"><div class="flex justify-between items-center gap-2 whitespace-nowrap">' + editBtn + delBtn + '</div></td>';
-        return '<tr data-index="' + r._i + '"><td class="p-3">' + r.date + '</td><td class="p-3">' + r.symbol + '</td><td class="p-3">' + r.action + '</td><td class="p-3 text-right">' + _m('$' + Number(r.price).toFixed(2)) + '</td><td class="p-3 text-right">' + _m(r.shares) + '</td><td class="p-3 text-right col-commission">' + _m('$' + Number(r.commission || 0).toFixed(2)) + '</td><td class="p-3 col-type">' + _typeTag(r.type) + autoBadge + '</td>' + ops + '</tr>';
+        var priceStr = r.price != null ? '$' + Number(r.price).toFixed(2) : '--';
+        var sharesStr = hide ? '***' : (r.shares != null ? r.shares : '--');
+        var commStr = hide ? '***' : ('$' + Number(r.commission || 0).toFixed(2));
+        return '<tr data-index="' + r._i + '"><td class="p-3">' + r.date + '</td><td class="p-3">' + r.symbol + '</td><td class="p-3">' + r.action + '</td><td class="p-3 text-right">' + priceStr + '</td><td class="p-3 text-right cloud-hide-col">' + sharesStr + '</td><td class="p-3 text-right col-commission cloud-hide-col">' + commStr + '</td><td class="p-3 col-type">' + _typeTag(r.type) + autoBadge + '</td>' + ops + '</tr>';
       }).join('');
     }
     async function loadTradeSummary(period) {

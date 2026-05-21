@@ -29,9 +29,9 @@ def _nullify(d, keys):
 
 
 def _sanitize_trades(data):
-    """云端交易明细：保留日期/标的/操作/类型，剔除价格、股数、佣金等敏感字段。"""
+    """云端交易明细：保留日期/标的/操作/类型/成交价，剔除股数、佣金等敏感字段。"""
     for row in data:
-        _nullify(row, ("price", "shares", "commission", "amount", "gross_dividend_usd"))
+        _nullify(row, ("shares", "commission", "amount", "gross_dividend_usd"))
     return data
 
 

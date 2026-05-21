@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 INDEX_HTML = ROOT / "index.html"
 
 
-def test_sanitize_trades_strips_price_shares_commission():
-    """RED 替身：旧版 compute 保留 price/shares/commission 时本断言失败。"""
+def test_sanitize_trades_keeps_price_strips_shares_commission():
+    """云端 trades.json 保留成交价，剔除股数与佣金。"""
     raw = [
         {
             "date": "2026-01-15",
@@ -27,7 +27,8 @@ def test_sanitize_trades_strips_price_shares_commission():
     out = sanitize("trades.json", raw)
     row = out[0]
     assert row["symbol"] == "QQQM"
-    for key in ("price", "shares", "commission"):
+    assert row["price"] == 241.78
+    for key in ("shares", "commission"):
         assert row[key] is None, f"{key} should be nullified for cloud JSON"
 
 
@@ -40,13 +41,21 @@ def test_index_html_cloud_sensitive_default_mask():
     assert text.count("__sensitiveHidden = false") == 0
 
 
+def test_index_html_trade_table_cloud_hides_shares_commission():
+    """交易明细表：股数/佣金列带 cloud-hide-col，价格不经 _m 掩码。"""
+    text = INDEX_HTML.read_text(encoding="utf-8")
+    assert '<th class="text-right p-3 cloud-hide-col">股数</th>' in text
+    assert 'col-commission cloud-hide-col">佣金(USD)</th>' in text
+    assert "var priceStr = r.price != null ? '$' + Number(r.price).toFixed(2) : '--';" in text
+    assert "cloud-hide-col\">' + sharesStr + '" in text
+    assert "col-commission cloud-hide-col\">' + commStr + '" in text
+
+
 @pytest.mark.parametrize(
     "snippet",
     [
         "function _m(v) { return window.__sensitiveHidden ? '***' : v; }",
         "function renderTradesTable()",
-        "_m(r.shares)",
-        "_m('$' + Number(r.commission || 0).toFixed(2))",
     ],
 )
 def test_index_html_trade_table_uses_mask_helpers(snippet: str):

@@ -19,7 +19,7 @@
 
 - 改 `server.py` 后需重启服务（Ctrl+C → `python3 server.py`）
 - 新增 GET 端点时需同步更新 `compute.py` 的端点列表与脱敏逻辑
-- **云端敏感信息双保险**：① `index.html` 在 `github.io` 下必须 `__sensitiveHidden = true`（初始化与 `doInit` 各一处），表格金额/股数/佣金经 `_m()` / `_usd()` 显示 `***`；② `compute.py` 的 `_sanitize_trades` 须将 `price`、`shares`、`commission` 置 `null`，禁止在 `trades.json` 留明文。改任一层须跑 `pytest tests/test_cloud_sensitive.py`
+- **云端敏感信息双保险**：① `index.html` 在 `github.io` 下必须 `__sensitiveHidden = true`（初始化与 `doInit` 各一处）；交易明细 tab 保留价格列明文，股数/佣金列用 `cloud-hide-col` 直接隐藏；其余金额/股数经 `_m()` / `_usd()` 显示 `***`。② `compute.py` 的 `_sanitize_trades` 须将 `shares`、`commission` 置 `null`，保留 `price`。改任一层须跑 `pytest tests/test_cloud_sensitive.py`
 - 所有改动只在 `us-stock-trading-assistant/` 子目录中进行
 - **新 clone 或换机器后**运行一次 `git config core.hooksPath .githooks` 启用项目内的 pre-push 钩子；它负责 ① CHANGELOG 自动版本化 ② 推送 `main` 时调用 `./sync-secrets.sh` 同步原始数据到 GitHub Secrets。未启用时推送不会同步 Secrets，CI 重算 `data/computed/*.json` 会长期用旧数据
 

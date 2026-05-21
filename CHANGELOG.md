@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **云端交易明细列展示**：GitHub Pages 交易明细保留价格列明文；股数、佣金列直接隐藏（不再显示 `***`）；预计算 `trades.json` 仍剔除股数与佣金。
+
 ## [0.1.0-013] - 2026-05-22 - 云端交易明细默认掩码并脱敏 trades.json
 
 ### Fixed
