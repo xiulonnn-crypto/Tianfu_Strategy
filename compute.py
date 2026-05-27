@@ -44,11 +44,11 @@ def _sanitize_fund_records(data):
 def _sanitize_allocation(data):
     if isinstance(data, list):
         for row in data:
-            _nullify(row, ("amount", "avg_cost", "shares"))
+            _nullify(row, ("amount", "shares"))
         return data
     _nullify(data, ("total_value", "risk_total"))
     for row in data.get("rows", []):
-        _nullify(row, ("amount", "avg_cost", "shares"))
+        _nullify(row, ("amount", "shares"))
     return data
 
 
@@ -77,7 +77,7 @@ def _sanitize_signals(data):
     if nd:
         _nullify(nd, ("total_usd",))
         for alloc in nd.get("allocation", []):
-            _nullify(alloc, ("amount",))
+            _nullify(alloc, ("amount", "shares"))
     rb = data.get("risk_budget")
     if rb:
         _nullify(rb, ("T",))

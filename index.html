@@ -497,6 +497,7 @@
                 <th class="text-right p-3">价格(USD)</th>
                 <th class="text-right p-3 cloud-hide-col">股数</th>
                 <th class="text-right p-3 col-commission cloud-hide-col">佣金(USD)</th>
+                <th class="text-right p-3 cloud-hide-col">总额(USD)</th>
                 <th class="text-left p-3 col-type">类型</th>
                 <th class="text-left p-3 w-28 cloud-hide-col">管理</th>
               </tr>
@@ -542,11 +543,11 @@
           <div class="zone-inner-label">备弹池健康度</div>
           <div class="mb-4" id="toundanCashflowBlock">
             <div class="grid grid-cols-2 sm:grid-cols-5 gap-4 text-sm mb-3">
-              <div><span style="color: var(--benchmark-gray);">备弹池余额</span><div class="font-bold text-lg" id="reservePoolValue" style="color: var(--deep-purple);">--</div></div>
-              <div><span style="color: var(--benchmark-gray);">已投弹总额</span><div class="font-bold text-lg" id="totalToundanUsed" style="color: #2d2a3e;">--</div></div>
-              <div><span style="color: var(--benchmark-gray);">年度投弹总额</span><div class="font-bold text-lg" id="totalInjected" style="color: #2d2a3e;">--</div></div>
-              <div><span style="color: var(--benchmark-gray);">最大可投弹次数</span><div class="font-bold text-lg" id="maxToundanTimes" style="color: var(--champagne-gold);">--</div></div>
-              <div><span style="color: var(--benchmark-gray);">备弹 / 总资产</span><div class="font-bold text-lg" id="reserveHealthPct" style="color: #2d2a3e;">--</div></div>
+              <div><span style="color: var(--benchmark-gray);">备弹池余额<span class="info-tip review-card-tip" style="margin-left:3px;"><i class="fas fa-circle-question" style="font-size:11px;"></i><span class="info-tip-text">统计口径：总净入金 − 定投净买入 − 投弹净买入。采用现金流恒等式，与 BOXX 市值无关，入金登记后立即反映。代表当前可随时调配的子弹余量（现金形态）。</span></span></span><div class="font-bold text-lg" id="reservePoolValue" style="color: var(--deep-purple);">--</div></div>
+              <div><span style="color: var(--benchmark-gray);">已投弹总额<span class="info-tip review-card-tip" style="margin-left:3px;"><i class="fas fa-circle-question" style="font-size:11px;"></i><span class="info-tip-text">统计口径：所有「投弹」类型交易的净买入成本之和（买入 × 价格 − 卖出 × 价格）。已投出的子弹转为持仓形态，仍属投弹池范畴，不从总规模中扣除。</span></span></span><div class="font-bold text-lg" id="totalToundanUsed" style="color: #2d2a3e;">--</div></div>
+              <div><span style="color: var(--benchmark-gray);">投弹池规模<span class="info-tip review-card-tip" style="margin-left:3px;"><i class="fas fa-circle-question" style="font-size:11px;"></i><span class="info-tip-text">统计口径：总净入金 − 定投净买入，即专供投弹通道的全部资金规模（= 备弹池余额 + 已投弹总额）。同时作为风险预算公式 T = 投弹池规模 × K 的分母（year_max_reserve）。</span></span></span><div class="font-bold text-lg" id="totalInjected" style="color: #2d2a3e;">--</div></div>
+              <div><span style="color: var(--benchmark-gray);">最大可投弹次数<span class="info-tip review-card-tip" style="margin-left:3px;"><i class="fas fa-circle-question" style="font-size:11px;"></i><span class="info-tip-text">统计口径：备弹池余额 ÷ 单次风险预算 T（向下取整）。T = 投弹池规模 × min(K, 12%)，K 由 VIX 分位数与市场情绪驱动（0.05~0.12）。反映当前储备可支撑的最大触发次数上限。</span></span></span><div class="font-bold text-lg" id="maxToundanTimes" style="color: var(--champagne-gold);">--</div></div>
+              <div><span style="color: var(--benchmark-gray);">备弹 / 总资产<span class="info-tip review-card-tip" style="margin-left:3px;"><i class="fas fa-circle-question" style="font-size:11px;"></i><span class="info-tip-text">统计口径：备弹池余额 ÷ 当前持仓总市值 × 100%。衡量弹药储备相对总资产的比重。< 10% 红色预警，10%~20% 黄色警示，≥ 20% 健康（深紫色）。</span></span></span><div class="font-bold text-lg" id="reserveHealthPct" style="color: #2d2a3e;">--</div></div>
             </div>
             <div class="w-full rounded-full h-3 mb-2" style="background: rgba(74,61,124,0.1);"><div id="reserveBar" class="h-3 rounded-full transition-all" style="width:0;background:var(--deep-purple);"></div></div>
             <div id="reserveWarning" class="hidden text-sm font-medium mt-2" style="color: #dc2626;"></div>
@@ -1805,7 +1806,7 @@
         return '<tr class="cursor-pointer hover:bg-purple-50 transition" data-symbol="' + row.symbol + '" onclick="if(window.__loadAssetAnalysis)window.__loadAssetAnalysis(\'' + row.symbol + '\')">'
           + '<td class="p-3 font-medium" style="color:var(--deep-purple);">' + row.symbol + (row.is_cash ? ' <span class="text-xs" style="color:var(--benchmark-gray);">现金</span>' : ' <i class="fas fa-chart-line text-xs" style="color:var(--benchmark-gray);"></i>') + '</td>'
           + '<td class="p-3 text-right col-shares">' + (hide ? '***' : row.shares) + '</td>'
-          + '<td class="p-3 text-right col-avg text-slate-500">' + (hide ? '***' : avgStr) + '</td>'
+          + '<td class="p-3 text-right col-avg text-slate-500">' + avgStr + '</td>'
           + '<td class="p-3 text-right">' + priceStr + '</td>'
           + '<td class="p-3 text-right col-amount">' + (hide ? '***' : (row.amount != null ? '$' + Number(row.amount).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : '')) + '</td>'
           + '<td class="p-3 text-right" style="' + gainStyle + '">' + gainStr + '</td>'
@@ -2222,7 +2223,7 @@
       var cloud = window.__isCloudMode;
       if (!sorted.length) {
         var emptyText = trades.length === 0 ? '暂无交易明细' : '当前筛选下无交易明细';
-        var colSpan = cloud ? 5 : 8;
+        var colSpan = cloud ? 5 : 9;
         tbody.innerHTML = '<tr><td colspan="' + colSpan + '" class="p-3 text-center text-slate-500">' + emptyText + '</td></tr>';
         return;
       }
@@ -2234,7 +2235,9 @@
         var priceStr = r.price != null ? '$' + Number(r.price).toFixed(2) : '--';
         var sharesStr = hide ? '***' : (r.shares != null ? r.shares : '--');
         var commStr = hide ? '***' : ('$' + Number(r.commission || 0).toFixed(2));
-        return '<tr data-index="' + r._i + '"><td class="p-3">' + r.date + '</td><td class="p-3">' + r.symbol + '</td><td class="p-3">' + r.action + '</td><td class="p-3 text-right">' + priceStr + '</td><td class="p-3 text-right cloud-hide-col">' + sharesStr + '</td><td class="p-3 text-right col-commission cloud-hide-col">' + commStr + '</td><td class="p-3 col-type">' + _typeTag(r.type) + autoBadge + '</td>' + ops + '</tr>';
+        var totalAmt = (r.price != null && r.shares != null) ? r.price * r.shares : null;
+        var totalStr = hide ? '***' : (totalAmt != null ? '$' + totalAmt.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--');
+        return '<tr data-index="' + r._i + '"><td class="p-3">' + r.date + '</td><td class="p-3">' + r.symbol + '</td><td class="p-3">' + r.action + '</td><td class="p-3 text-right">' + priceStr + '</td><td class="p-3 text-right cloud-hide-col">' + sharesStr + '</td><td class="p-3 text-right col-commission cloud-hide-col">' + commStr + '</td><td class="p-3 text-right cloud-hide-col">' + totalStr + '</td><td class="p-3 col-type">' + _typeTag(r.type) + autoBadge + '</td>' + ops + '</tr>';
       }).join('');
     }
     async function loadTradeSummary(period) {
@@ -2498,10 +2501,17 @@
       var dingBlock = _$('nextDingtouBlock');
       if (dingBlock && data.next_dingtou) {
         var d = data.next_dingtou;
-        var alloc = (d.allocation || []).map(function (a) { return a.symbol + ' ' + a.pct + '% ' + _usd(a.amount); }).join('；');
+        var allocLines = (d.allocation || []).map(function (a) {
+          var sharesStr = a.shares != null ? ' ' + _m(a.shares.toFixed(1) + '股') : '';
+          return '<span style="display:inline-block;min-width:3.5em;font-weight:500;color:#2d2a3e;">' + a.symbol + '</span>'
+            + '<span style="display:inline-block;min-width:3.5em;text-align:right;">' + a.pct + '%</span>'
+            + '<span style="display:inline-block;min-width:5.5em;text-align:right;">' + _usd(a.amount) + '</span>'
+            + (sharesStr ? '<span style="display:inline-block;min-width:4.5em;text-align:right;">' + sharesStr + '</span>' : '');
+        }).join('<br>');
         var fadePct = d.fade ? (d.fade * 100).toFixed(0) : 0;
         var fuseTag = d.fuse_active ? ' <span class="text-xs px-2 py-0.5 rounded" style="background:#fef2f2;color:#dc2626;">渐进缩减 ' + fadePct + '%</span>' : '';
-        dingBlock.innerHTML = '<p class="text-sm" style="color:#2d2a3e;"><span class="font-medium">' + (d.date||'') + '</span> ' + (d.description||'') + ' 合计 ' + _usd(d.total_usd) + fuseTag + '</p><p class="text-sm mt-1" style="color:var(--benchmark-gray);">分配：' + alloc + '</p>';
+        dingBlock.innerHTML = '<p class="text-sm" style="color:#2d2a3e;"><span class="font-medium">' + (d.date||'') + '</span> ' + (d.description||'') + ' 合计 ' + _usd(d.total_usd) + fuseTag + '</p>'
+          + '<div class="text-sm mt-2 font-mono" style="color:var(--benchmark-gray);line-height:1.8;">' + allocLines + '</div>';
       }
 
       // --- 2.3 备弹池健康度（年度注入模型）---
@@ -2606,8 +2616,16 @@
         if (ins.action === 'open') actionStr = '<div class="mt-2 p-2 rounded text-xs" style="background:#ecfdf5;color:#0d9488;">' + ins.action_detail.reason + '</div>';
         else if (ins.action === 'roll') actionStr = '<div class="mt-2 p-2 rounded text-xs" style="background:#fffbeb;color:#a16207;">' + ins.action_detail.reason + '</div>';
         else if (ins.action && ins.action.startsWith('close')) actionStr = '<div class="mt-2 p-2 rounded text-xs" style="background:#fef2f2;color:#dc2626;">' + ins.action_detail.reason + '</div>';
-        insEl.innerHTML = '<div class="grid grid-cols-3 gap-4 text-sm">'
+        var openVix = ins.open_vix != null ? ins.open_vix : 12;
+        var curVix = ins.current_vix != null ? ins.current_vix : null;
+        var vixBelowTarget = curVix != null && curVix < openVix;
+        var vixColor = curVix == null ? 'var(--benchmark-gray)' : (vixBelowTarget ? '#0d9488' : '#dc2626');
+        var vixDisplay = curVix != null
+          ? '<span style="color:' + vixColor + ';font-weight:600;">' + curVix + '</span><span style="color:var(--benchmark-gray);font-size:11px;"> / 触发线 ' + openVix + '</span>'
+          : '<span style="color:var(--benchmark-gray);">--</span>';
+        insEl.innerHTML = '<div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">'
           + '<div><span style="color:var(--benchmark-gray);">Put 保险</span><div class="font-medium mt-1">' + posInfo + '</div></div>'
+          + '<div><span style="color:var(--benchmark-gray);">目标触发 VIX<span class="info-tip review-card-tip" style="margin-left:3px;"><i class="fas fa-circle-question" style="font-size:11px;"></i><span class="info-tip-text">开仓触发条件：当前 VIX 低于此阈值且年度预算未超支时，模型建议买入 Put 保护。默认 12，可在「参数调整建议」中修改（范围 8~20）。绿色表示当前 VIX 已达触发条件。</span></span></span><div class="font-medium mt-1">' + vixDisplay + '</div></div>'
           + '<div><span style="color:var(--benchmark-gray);">年度预算</span><div class="font-medium mt-1">' + _usd(ins.annual_budget) + '</div>' + budgetBar + '<div class="text-xs" style="color:var(--benchmark-gray);">已用 ' + ins.budget_utilization + '%</div></div>'
           + '<div><span style="color:var(--benchmark-gray);">已支出</span><div class="font-medium mt-1">' + _usd(ins.annual_spent) + '</div></div>'
           + '</div>' + actionStr;

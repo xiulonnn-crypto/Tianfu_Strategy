@@ -2754,10 +2754,14 @@ def compute_quantile_engine():
 
     today_str = datetime.now().strftime("%Y-%m-%d")
 
+    def _qe_cache_valid(data):
+        """缓存数据有效性校验：data 非空且核心 QQQM 价格字段不为 null（防止拉取失败的坏结果被持久命中）"""
+        return bool(data) and data.get("qqqm_price") is not None
+
     # 快速路径：进程内存缓存命中（无需加锁）
     if (
         _quantile_cache["date"] == today_str
-        and _quantile_cache["data"]
+        and _qe_cache_valid(_quantile_cache["data"])
         and _quantile_cache.get("qe_version") == _QUANTILE_ENGINE_VERSION
     ):
         return _quantile_cache["data"]
@@ -2768,7 +2772,7 @@ def compute_quantile_engine():
         # 双检锁：拿到锁后先再确认（另一线程可能已完成）
         if (
             _quantile_cache["date"] == today_str
-            and _quantile_cache["data"]
+            and _qe_cache_valid(_quantile_cache["data"])
             and _quantile_cache.get("qe_version") == _QUANTILE_ENGINE_VERSION
         ):
             return _quantile_cache["data"]
@@ -2779,7 +2783,7 @@ def compute_quantile_engine():
             if (
                 raw_file
                 and raw_file.get("date") == today_str
-                and raw_file.get("data")
+                and _qe_cache_valid(raw_file.get("data"))
                 and raw_file.get("qe_version") == _QUANTILE_ENGINE_VERSION
             ):
                 _quantile_cache["date"] = today_str
@@ -2939,6 +2943,7 @@ def _get_settings():
         "qqqm_soft_pct": s.get("qqqm_soft_pct", 70),
         "qqqm_hard_pct": s.get("qqqm_hard_pct", 85),
         "insurance_budget_pct": s.get("insurance_budget_pct", 0.02),
+        "insurance_open_vix": s.get("insurance_open_vix", 12),
         "dividend_withholding_rate": s.get(
             "dividend_withholding_rate", DEFAULT_DIVIDEND_WITHHOLDING_RATE),
         "dividend_reinvest_offset_bd": s.get(
@@ -3162,6 +3167,7 @@ def _compute_insurance(qe, model_state, total_value):
     annual_spent = model_state.get("annual_premium_spent", 0)
     budget_pct = settings["insurance_budget_pct"]
     annual_budget = total_value * budget_pct if total_value > 0 else 0
+    open_vix = settings["insurance_open_vix"]
 
     result = {
         "has_position": put_pos is not None,
@@ -3169,18 +3175,20 @@ def _compute_insurance(qe, model_state, total_value):
         "annual_budget": round(annual_budget, 2),
         "annual_spent": round(annual_spent, 2),
         "budget_utilization": round(annual_spent / annual_budget * 100, 1) if annual_budget > 0 else 0,
+        "open_vix": open_vix,
+        "current_vix": round(vix, 2),
         "action": None,
         "action_detail": None,
     }
 
     if put_pos is None:
-        # 开仓条件：VIX < 12 且年度预算未超支
-        if vix < 12 and annual_spent < annual_budget:
+        # 开仓条件：VIX < open_vix 且年度预算未超支
+        if vix < open_vix and annual_spent < annual_budget:
             remaining_budget = annual_budget - annual_spent
             suggested_premium = min(remaining_budget * 0.25, total_value * 0.005)
             result["action"] = "open"
             result["action_detail"] = {
-                "reason": f"VIX={vix} < 12，低波动窗口适合买入 Put 保护",
+                "reason": f"VIX={vix} < {open_vix}，低波动窗口适合买入 Put 保护",
                 "suggested_premium": round(suggested_premium, 2),
                 "suggested_strike": "SPY ATM -5%",
                 "suggested_dte": "90-120 天",
@@ -3320,6 +3328,16 @@ def api_signals():
                             "amount": round(M_amount * brk_pct / 100, 2)})
     ding_allocation.append({"symbol": "IAU", "pct": round(iau_pct, 1),
                             "amount": round(M_amount * iau_pct / 100, 2)})
+
+    # 每项补充估算股数（amount / 当日收盘价，保留 1 位小数）
+    _alloc_prices = {
+        "QQQM": qe.get("qqqm_price"),
+        "IAU": qe.get("iau_price"),
+        "BRK.B": get_price_on_date("BRK.B", effective_end_date, history_cache, pix_sig),
+    }
+    for _item in ding_allocation:
+        _p = _alloc_prices.get(_item["symbol"])
+        _item["shares"] = round(_item["amount"] / _p, 1) if _p and _p > 0 else None
 
     next_dingtou = {
         "date": next_ding_date,
@@ -3718,10 +3736,11 @@ def api_update_settings():
         "qqqm_soft_pct":               (40, 90),
         "qqqm_hard_pct":               (50, 95),
         "insurance_budget_pct":        (0.005, 0.05),
+        "insurance_open_vix":          (8, 20),
         "dividend_withholding_rate":   (0.0, 0.5),
         "dividend_reinvest_offset_bd": (0, 10),
     }
-    int_keys = {"dividend_reinvest_offset_bd"}
+    int_keys = {"dividend_reinvest_offset_bd", "insurance_open_vix"}
     for key, (lo, hi) in param_rules.items():
         if key in data:
             try:
