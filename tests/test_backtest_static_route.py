@@ -20,6 +20,15 @@ def test_backtest_summary_served_statically():
     assert payload["period"] == "10y"
 
 
+def test_frontend_module_js_served_statically():
+    """本地模式下 index.html 的 <script type=module src=js/main.js> 必须可加载。"""
+    c = _client()
+    resp = c.get("/js/main.js")
+    assert resp.status_code == 200, resp.status_code
+    assert resp.mimetype in ("application/javascript", "text/javascript")
+    assert b"loadReturnsOverview" in resp.data
+
+
 def test_backtest_nav_and_trades_served_statically():
     c = _client()
     for name in (

@@ -125,13 +125,18 @@ def _sanitize_strategy_review(data):
 def _sanitize_asset_analysis(data):
     metrics = data.get("metrics")
     if metrics:
-        _nullify(metrics, ("avg_cost", "total_shares"))
+        _nullify(metrics, ("total_shares",))
     for row in data.get("trade_attribution", []):
         _nullify(row, ("shares", "pnl"))
     for bp in data.get("buy_points", []):
         _nullify(bp, ("shares",))
     for cs in data.get("cost_series", []):
         _nullify(cs, ("vwac",))
+    return data
+
+
+def _sanitize_signal_history(data):
+    """信号历史不含金额；保留分位数与触发布尔态。"""
     return data
 
 
@@ -142,6 +147,7 @@ _SANITIZERS = {
     "returns-overview.json": _sanitize_returns_overview,
     "signals.json": _sanitize_signals,
     "stress-test.json": _sanitize_stress_test,
+    "signal-history.json": _sanitize_signal_history,
 }
 
 
@@ -229,6 +235,7 @@ def main():
     # 收益概览
     print("[3/8] 收益概览...")
     get_json("/api/returns-overview", "returns-overview.json")
+    get_json("/api/monthly-returns", "monthly-returns.json")
 
     # 资产配置
     print("[4/8] 资产配置...")
@@ -253,6 +260,17 @@ def main():
     # 模型信号
     print("[6/8] 模型信号...")
     get_json("/api/signals", "signals.json")
+    get_json("/api/signal-history", "signal-history.json")
+
+    # 信号历史追加（确保 CI 跑完有当日快照）
+    try:
+        from scripts.append_signal_history import main as append_signal_main
+        append_signal_main()
+        resp = client.get("/api/signal-history")
+        if resp.status_code == 200:
+            save("signal-history.json", resp.get_json())
+    except Exception as ex:
+        print(f"  警告：signal_history 追加失败：{ex}")
 
     # 压力测试
     print("[7/8] 压力测试...")

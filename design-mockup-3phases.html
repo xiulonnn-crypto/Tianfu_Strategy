@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>三期产品方案 · 设计稿 — 美股交易助手</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <style>
+    :root {
+      --deep-purple: #4A3D7C;
+      --light-purple-bg: #F5F3FB;
+      --champagne-gold: #BFA960;
+      --benchmark-gray: #8A9199;
+      --down-red: #D64545;
+      --up-green: #2d8a5e;
+      --teal: #0d9488;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      background: var(--light-purple-bg);
+      color: #2d2a3e;
+      margin: 0;
+    }
+    .container-main { max-width: 1280px; margin: 0 auto; padding: 0 1rem; }
+    .card { background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(74,61,124,0.08); border: 2px solid transparent; }
+    .phase-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 12px; font-weight: 700; letter-spacing: .5px;
+      padding: 4px 12px; border-radius: 999px; color: #fff;
+    }
+    .phase-1 { background: var(--deep-purple); }
+    .phase-2 { background: var(--teal); }
+    .phase-3 { background: var(--champagne-gold); color: #2d2a3e; }
+    .feature-card { background:#fff; border-radius:12px; box-shadow:0 2px 16px rgba(74,61,124,0.06); padding: 1.5rem; margin-bottom: 1.5rem; }
+    .why-note { font-size:12px; color:var(--benchmark-gray); background:rgba(74,61,124,0.04); border-left:3px solid var(--champagne-gold); padding:8px 12px; border-radius:6px; }
+    .preview-frame { border:1px dashed rgba(74,61,124,0.25); border-radius:10px; padding:1.25rem; margin-top:1rem; background:#fff; position:relative; }
+    .preview-tag { position:absolute; top:-10px; left:14px; font-size:11px; background:var(--deep-purple); color:#fff; padding:2px 8px; border-radius:4px; }
+    .info-tip { position:relative; display:inline-block; cursor:help; color:var(--benchmark-gray); margin-left:4px; }
+    .info-tip .info-tip-text {
+      visibility:hidden; opacity:0; transition:.15s; position:absolute; bottom:calc(100% + 6px); left:50%; transform:translateX(-50%);
+      background:#2d2a3e; color:#fff; font-size:11px; line-height:1.5; padding:6px 10px; border-radius:6px; width:220px; z-index:30; font-weight:400;
+    }
+    .info-tip:hover .info-tip-text { visibility:visible; opacity:1; }
+    /* 分位数横条 */
+    .pctile-row { display:grid; grid-template-columns: 130px 1fr 56px; align-items:center; gap:12px; margin-bottom:14px; }
+    .pctile-track { position:relative; height:10px; border-radius:6px; background:linear-gradient(90deg,#2d8a5e 0%,#BFA960 50%,#D64545 100%); opacity:.85; }
+    .pctile-track.rev { background:linear-gradient(90deg,#D64545 0%,#BFA960 50%,#2d8a5e 100%); }
+    .pctile-marker { position:absolute; top:-4px; width:4px; height:18px; border-radius:2px; background:#2d2a3e; box-shadow:0 0 0 2px #fff; }
+    .pctile-scale { display:flex; justify-content:space-between; font-size:10px; color:var(--benchmark-gray); margin-top:2px; }
+    /* 月度热力图 */
+    .heat-table { border-collapse:separate; border-spacing:3px; width:100%; }
+    .heat-table th { font-size:11px; color:var(--benchmark-gray); font-weight:600; padding:2px; }
+    .heat-cell { text-align:center; font-size:12px; font-weight:600; padding:8px 4px; border-radius:5px; color:#2d2a3e; min-width:46px; }
+    .heat-year { font-weight:700; color:var(--deep-purple); font-size:13px; text-align:left; padding-left:4px; }
+    .heat-ytd { font-weight:700; }
+    /* 交易日历 */
+    .cal-grid { display:grid; grid-template-rows:repeat(7,12px); grid-auto-flow:column; grid-auto-columns:12px; gap:3px; }
+    .cal-cell { width:12px; height:12px; border-radius:2px; background:#ebedf0; }
+    .cal-legend-cell { width:12px; height:12px; border-radius:2px; display:inline-block; vertical-align:middle; }
+    /* 状态条 */
+    .status-bar { display:flex; flex-wrap:wrap; align-items:center; gap:18px; font-size:12px; color:#fff; background:linear-gradient(135deg,#4A3D7C,#6B5CA5); padding:8px 16px; }
+    .status-dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:5px; }
+    .nav-btn { padding:8px 16px; border-radius:6px; font-size:14px; color:rgba(255,255,255,.85); }
+    .nav-btn.active { background:rgba(255,255,255,.2); color:#fff; }
+    .zone-c-purple { border-left:4px solid var(--deep-purple); }
+    .timeline-item { display:flex; gap:12px; padding:10px 0; border-bottom:1px solid rgba(74,61,124,.08); }
+    .tl-dot { flex:0 0 auto; width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff; font-size:12px; }
+  </style>
+</head>
+<body>
+  <!-- ===== Header（深紫，对齐线上导航） ===== -->
+  <header style="background:var(--deep-purple);">
+    <div class="container-main" style="display:flex; align-items:center; justify-content:space-between; padding-top:14px; padding-bottom:14px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <i class="fas fa-chart-line" style="color:var(--champagne-gold); font-size:20px;"></i>
+        <span style="color:#fff; font-weight:600; font-size:18px;">美股交易助手</span>
+        <span style="color:var(--champagne-gold); font-size:12px; border:1px solid var(--champagne-gold); padding:1px 8px; border-radius:999px;">设计稿</span>
+      </div>
+      <nav style="display:flex; gap:4px;">
+        <span class="nav-btn active">收益概览</span>
+        <span class="nav-btn">资产配置</span>
+        <span class="nav-btn">交易历史</span>
+        <span class="nav-btn">模型信号</span>
+        <span class="nav-btn">策略复盘</span>
+      </nav>
+    </div>
+    <!-- 【一期 2】全局数据新鲜度状态条 -->
+    <div class="status-bar">
+      <span><span class="status-dot" style="background:#7CFC9B;"></span>行情更新时间 2026-06-13 21:00 (GMT+8)</span>
+      <span><i class="fas fa-database" style="opacity:.8; margin-right:5px;"></i>数据版本 v2026.06.13-1</span>
+      <span><i class="fas fa-unlock" style="opacity:.8; margin-right:5px;"></i>本地全功能模式</span>
+      <span style="margin-left:auto; opacity:.75;">云端只读模式将显示：<span class="status-dot" style="background:var(--champagne-gold);"></span>只读 · 金额脱敏</span>
+    </div>
+  </header>
+
+  <!-- ===== 文档标题 ===== -->
+  <div class="container-main" style="padding-top:28px; padding-bottom:8px;">
+    <h1 style="font-size:26px; font-weight:700; color:var(--deep-purple); margin:0 0 6px;">三期产品方案 · 设计稿</h1>
+    <p style="font-size:14px; color:var(--benchmark-gray); margin:0;">基于 DESIGN.md 轻奢紫金主题。本稿展示 6 项优化的高保真组件预览，按交付期分区。所有数据为示意。</p>
+    <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
+      <span class="phase-badge phase-1"><i class="fas fa-bolt"></i> 一期 · 纯前端快赢</span>
+      <span class="phase-badge phase-2"><i class="fas fa-chart-area"></i> 二期 · 新增可视化</span>
+      <span class="phase-badge phase-3"><i class="fas fa-timeline"></i> 三期 · 信号历史与工程化</span>
+    </div>
+  </div>
+
+  <main class="container-main" style="padding-bottom:60px;">
+    <!-- =================================================================== -->
+    <!-- 一期 -->
+    <!-- =================================================================== -->
+    <section style="margin-top:28px;">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+        <span class="phase-badge phase-1"><i class="fas fa-bolt"></i> 一期</span>
+        <h2 style="font-size:20px; font-weight:700; color:var(--deep-purple); margin:0;">纯前端快赢 · 不改后端数据契约</h2>
+      </div>
+
+      <!-- 1.1 统一口径说明弹窗 -->
+      <div class="feature-card">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <h3 style="font-size:16px; font-weight:600; color:var(--deep-purple); margin:0;"><i class="fas fa-circle-info" style="color:var(--champagne-gold); margin-right:6px;"></i>1. 统一口径说明弹窗（跨 tab）</h3>
+          <span style="font-size:12px; color:var(--benchmark-gray);">复用 <code>__openModal</code> · 新增 <code>modalMethodology</code></span>
+        </div>
+        <p class="why-note" style="margin:10px 0;">为什么：Bloomberg/Morningstar 均有 Methodology 说明。集中说明指标口径，减少各 tooltip 重复，提升可信度。</p>
+        <div class="preview-frame">
+          <span class="preview-tag">弹窗预览</span>
+          <div style="max-width:520px; margin:0 auto;">
+            <div class="card" style="padding:1.5rem;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                <h4 style="font-size:18px; font-weight:600; color:var(--deep-purple); margin:0;">指标口径说明</h4>
+                <i class="fas fa-xmark" style="color:var(--benchmark-gray); cursor:pointer;"></i>
+              </div>
+              <div style="font-size:13px; line-height:1.7;">
+                <p style="margin:0 0 10px;"><strong style="color:var(--deep-purple);">TWR（时间加权）</strong>：排除出入金时机影响，反映纯策略表现，与走势图同口径。</p>
+                <p style="margin:0 0 10px;"><strong style="color:var(--deep-purple);">MWRR（资金加权）</strong>：考虑出入金时机，反映实际资金回报率。</p>
+                <p style="margin:0 0 10px;"><strong style="color:var(--deep-purple);">Sharpe / Sortino</strong>：无风险利率取一年期美债 <code>DGS1</code>，按 252 交易日复利拆为日利率；Sortino 仅计下行偏差。</p>
+                <p style="margin:0 0 10px;"><strong style="color:var(--deep-purple);">周期起点规则</strong>：各周期起点统一取 <code>max(时段起始日, 首次持仓日)</code>；1D 卡片保留日级涨跌语义。</p>
+                <p style="margin:0;"><strong style="color:var(--deep-purple);">分位数</strong>：取值 0–1（如 VIX 3y 分位 = 当前值在近 3 年分布中的百分位）。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 1.2 全局数据新鲜度状态条 -->
+      <div class="feature-card">
+        <h3 style="font-size:16px; font-weight:600; color:var(--deep-purple); margin:0 0 4px;"><i class="fas fa-signal" style="color:var(--champagne-gold); margin-right:6px;"></i>2. 全局数据新鲜度状态条（跨 tab）</h3>
+        <p class="why-note" style="margin:10px 0;">为什么：Bloomberg/Koyfin 都有数据时效标识。聚合 <code>price_fetched_at</code> + 云端只读标识 + <code>version.updated_at</code>，已在页面顶部呈现（见本稿 Header 下方紫色条）。</p>
+        <div class="preview-frame">
+          <span class="preview-tag">两种模式对照</span>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+            <div>
+              <div style="font-size:12px; color:var(--benchmark-gray); margin-bottom:6px;">本地全功能模式</div>
+              <div class="status-bar" style="border-radius:8px;">
+                <span><span class="status-dot" style="background:#7CFC9B;"></span>21:00 (GMT+8)</span>
+                <span>v2026.06.13-1</span>
+                <span><i class="fas fa-unlock" style="margin-right:4px;"></i>本地</span>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:12px; color:var(--benchmark-gray); margin-bottom:6px;">云端只读模式</div>
+              <div class="status-bar" style="border-radius:8px;">
+                <span><span class="status-dot" style="background:var(--champagne-gold);"></span>CI 22:00 UTC</span>
+                <span>v2026.06.13-1</span>
+                <span><i class="fas fa-lock" style="margin-right:4px;"></i>只读 · 脱敏</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 1.3 分位数引擎可视化横条 -->
+      <div class="feature-card">
+        <h3 style="font-size:16px; font-weight:600; color:var(--deep-purple); margin:0 0 4px;"><i class="fas fa-ruler-horizontal" style="color:var(--champagne-gold); margin-right:6px;"></i>3. 分位数引擎可视化横条（模型信号）</h3>
+        <p class="why-note" style="margin:10px 0;">为什么：Koyfin/PV 用「当前值在历史分布中的位置」横条替代数字卡，更直观。数据已就绪（<code>quantile_engine</code>，0–1）。</p>
+        <div class="preview-frame">
+          <span class="preview-tag">分位数引擎</span>
+          <div style="max-width:640px;">
+            <div class="pctile-row">
+              <div style="font-size:13px;">VIX 3年分位 <span class="info-tip"><i class="fas fa-circle-question" style="font-size:11px;"></i><span class="info-tip-text">当前 VIX 在近 3 年分布中的百分位。越高代表恐慌越极端，越利于投弹触发。</span></span></div>
+              <div><div class="pctile-track"><div class="pctile-marker" style="left:82%;"></div></div><div class="pctile-scale"><span>0</span><span>50</span><span>100</span></div></div>
+              <div style="text-align:right; font-weight:700; color:var(--down-red);">82</div>
+            </div>
+            <div class="pctile-row">
+              <div style="font-size:13px;">PE 10年分位</div>
+              <div><div class="pctile-track rev"><div class="pctile-marker" style="left:64%;"></div></div><div class="pctile-scale"><span>0</span><span>50</span><span>100</span></div></div>
+              <div style="text-align:right; font-weight:700; color:var(--champagne-gold);">64</div>
+            </div>
+            <div class="pctile-row">
+              <div style="font-size:13px;">PE 3年分位</div>
+              <div><div class="pctile-track rev"><div class="pctile-marker" style="left:48%;"></div></div><div class="pctile-scale"><span>0</span><span>50</span><span>100</span></div></div>
+              <div style="text-align:right; font-weight:700; color:#2d2a3e;">48</div>
+            </div>
+            <div class="pctile-row">
+              <div style="font-size:13px;">EMA200 偏离分位</div>
+              <div><div class="pctile-track rev"><div class="pctile-marker" style="left:30%;"></div></div><div class="pctile-scale"><span>0</span><span>50</span><span>100</span></div></div>
+              <div style="text-align:right; font-weight:700; color:var(--up-green);">30</div>
+            </div>
+            <div class="pctile-row">
+              <div style="font-size:13px;">EMA20 偏离分位</div>
+              <div><div class="pctile-track rev"><div class="pctile-marker" style="left:22%;"></div></div><div class="pctile-scale"><span>0</span><span>50</span><span>100</span></div></div>
+              <div style="text-align:right; font-weight:700; color:var(--up-green);">22</div>
+            </div>
+            <p style="font-size:11px; color:var(--benchmark-gray); margin-top:6px;">竖线为当前分位位置。VIX 越靠右越极端（红）；估值/偏离类越靠左越便宜（绿）。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- 二期 -->
+    <!-- =================================================================== -->
+    <section style="margin-top:36px;">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+        <span class="phase-badge phase-2"><i class="fas fa-chart-area"></i> 二期</span>
+        <h2 style="font-size:20px; font-weight:700; color:var(--deep-purple); margin:0;">新增只读可视化端点</h2>
+      </div>
+
+      <!-- 2.4 月度收益热力图 -->
+      <div class="feature-card">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <h3 style="font-size:16px; font-weight:600; color:var(--deep-purple); margin:0;"><i class="fas fa-table-cells" style="color:var(--champagne-gold); margin-right:6px;"></i>4. 月度收益热力图（收益概览）</h3>
+          <span style="font-size:12px; color:var(--benchmark-gray);">新端点 <code>/api/monthly-returns</code>（后端按自然月聚合）</span>
+        </div>
+        <p class="why-note" style="margin:10px 0;">为什么：quantstats/PV 的标志性视图。年×月矩阵一眼看出季节性与最差月份，信息密度极高。</p>
+        <div class="preview-frame">
+          <span class="preview-tag">年 × 月收益矩阵（TWR %）</span>
+          <div style="overflow-x:auto;">
+            <table class="heat-table" id="heatTable"></table>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; margin-top:10px; font-size:11px; color:var(--benchmark-gray);">
+            <span>亏损</span>
+            <span class="cal-legend-cell" style="background:#D64545;"></span>
+            <span class="cal-legend-cell" style="background:#e88f8f;"></span>
+            <span class="cal-legend-cell" style="background:#f3f3f3;"></span>
+            <span class="cal-legend-cell" style="background:#8fc6a8;"></span>
+            <span class="cal-legend-cell" style="background:#2d8a5e;"></span>
+            <span>盈利</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2.5 交易日历热力图 -->
+      <div class="feature-card">
+        <h3 style="font-size:16px; font-weight:600; color:var(--deep-purple); margin:0 0 4px;"><i class="fas fa-calendar-days" style="color:var(--champagne-gold); margin-right:6px;"></i>5. 交易日历热力图（交易历史）</h3>
+        <p class="why-note" style="margin:10px 0;">为什么：GitHub 贡献图式日历，快速看定投纪律是否执行，与复盘「纪律分」呼应。云端按笔数着色、本地按金额着色。</p>
+        <div class="preview-frame">
+          <span class="preview-tag">2026 交易频次日历</span>
+          <div style="display:flex; gap:14px; align-items:flex-start; overflow-x:auto;">
+            <div style="display:flex; flex-direction:column; gap:3px; font-size:10px; color:var(--benchmark-gray); padding-top:2px;">
+              <span style="height:12px;"></span><span style="height:12px;">一</span><span style="height:12px;"></span><span style="height:12px;">三</span><span style="height:12px;"></span><span style="height:12px;">五</span><span style="height:12px;"></span>
+            </div>
+            <div class="cal-grid" id="calGrid"></div>
+          </div>
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-top:10px; font-size:11px; color:var(--benchmark-gray); flex-wrap:wrap; gap:8px;">
+            <span>color: 当日交易笔数（本地模式可切换为金额强度）</span>
+            <span style="display:flex; align-items:center; gap:6px;">少
+              <span class="cal-legend-cell" style="background:#ebedf0;"></span>
+              <span class="cal-legend-cell" style="background:#c9c0e3;"></span>
+              <span class="cal-legend-cell" style="background:#9b8bc9;"></span>
+              <span class="cal-legend-cell" style="background:#6b5ca5;"></span>
+              <span class="cal-legend-cell" style="background:#4A3D7C;"></span>
+            多</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================================================================== -->
+    <!-- 三期 -->
+    <!-- =================================================================== -->
+    <section style="margin-top:36px;">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+        <span class="phase-badge phase-3"><i class="fas fa-timeline"></i> 三期</span>
+        <h2 style="font-size:20px; font-weight:700; color:var(--deep-purple); margin:0;">信号历史（混合）与工程化</h2>
+      </div>
+
+      <!-- 3.6 信号历史时间线 -->
+      <div class="feature-card">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <h3 style="font-size:16px; font-weight:600; color:var(--deep-purple); margin:0;"><i class="fas fa-wave-square" style="color:var(--champagne-gold); margin-right:6px;"></i>6. 信号历史时间线（模型信号 ↔ 复盘）</h3>
+          <span style="font-size:12px; color:var(--benchmark-gray);">混合：CI 向前积累 + price_cache 回填分位数</span>
+        </div>
+        <p class="why-note" style="margin:10px 0;">为什么：TradingView/QuantConnect 都保留信号时间线。把 M1/M2/M3 触发与月投信号叠加到收益曲线，事后验证信号有效性。</p>
+        <div class="preview-frame">
+          <span class="preview-tag">信号 × 收益曲线叠加</span>
+          <div style="height:280px; position:relative;">
+            <canvas id="signalChart"></canvas>
+          </div>
+          <div style="font-size:11px; color:var(--benchmark-gray); margin-top:6px;">
+            <span style="color:var(--down-red);">●</span> 投弹触发（M1/M2/M3）　
+            <span style="color:var(--teal);">●</span> 月投信号　
+            <span style="color:var(--benchmark-gray);">▦ 灰色区段 = 回填数据（仅分位数可精确复原，触发态留空）</span>
+          </div>
+        </div>
+        <div class="preview-frame" style="margin-top:14px;">
+          <span class="preview-tag">信号事件时间线</span>
+          <div id="timelineList"></div>
+        </div>
+      </div>
+
+      <!-- 3.x 工程化 -->
+      <div class="feature-card zone-c-purple">
+        <h3 style="font-size:16px; font-weight:600; color:var(--deep-purple); margin:0 0 4px;"><i class="fas fa-cubes" style="color:var(--champagne-gold); margin-right:6px;"></i>7. 按 tab 拆分 JS 模块（工程债 · 无 UI 变化）</h3>
+        <p style="font-size:13px; color:#2d2a3e; margin:8px 0 0;">将 <code>index.html</code> 内联约 2870 行主逻辑拆为原生 ES module（不引入构建链）：<code>returns.js / allocation.js / history.js / signals.js / review.js</code>，第一段 IIFE 保留为 bootstrap。逐 tab 验证防止渲染覆盖。此项无可视化稿。</p>
+      </div>
+    </section>
+
+  </main>
+
+  <footer style="border-top:1px solid rgba(74,61,124,.12); text-align:center; padding:20px; font-size:12px; color:var(--benchmark-gray);">
+    美股交易助手 · 三期产品方案设计稿 · 仅供评审，非生产页面
+  </footer>
+  <script>
+    // ---------- 颜色工具 ----------
+    function heatColor(v) {
+      // v: 月收益百分比，正绿负红，强度随幅度
+      var max = 12;
+      var t = Math.max(-1, Math.min(1, v / max));
+      if (v === null || v === undefined) return '#f3f3f3';
+      if (t >= 0) {
+        // 白 -> 绿
+        var g = [45,138,94];
+        return mix([243,243,243], g, t);
+      } else {
+        var r = [214,69,69];
+        return mix([243,243,243], r, -t);
+      }
+    }
+    function mix(a, b, t) {
+      var c = a.map(function(x,i){ return Math.round(x + (b[i]-x)*t); });
+      return 'rgb(' + c.join(',') + ')';
+    }
+
+    // ---------- 月度热力图 ----------
+    var months = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+    var heatData = {
+      '2024': [2.1, -3.4, 4.8, -1.2, 3.9, 1.5, -2.8, 5.6, 1.1, -0.7, 6.3, 2.4],
+      '2025': [-5.1, 3.2, 1.8, 7.4, 2.2, -1.9, 4.1, -3.3, 2.7, 5.0, 1.4, -2.1],
+      '2026': [3.5, -1.1, 8.2, 2.0, -4.6, 1.9, null, null, null, null, null, null]
+    };
+    (function renderHeat(){
+      var t = document.getElementById('heatTable');
+      var head = '<thead><tr><th class="heat-year">年份</th>';
+      months.forEach(function(m){ head += '<th>'+m+'</th>'; });
+      head += '<th style="color:var(--deep-purple);">全年</th></tr></thead>';
+      var body = '<tbody>';
+      Object.keys(heatData).forEach(function(y){
+        body += '<tr><td class="heat-year">'+y+'</td>';
+        var ytd = 1;
+        heatData[y].forEach(function(v){
+          if (v === null) { body += '<td class="heat-cell" style="background:#fafafa; color:#ccc;">·</td>'; }
+          else {
+            ytd *= (1 + v/100);
+            body += '<td class="heat-cell" style="background:'+heatColor(v)+';">'+(v>0?'+':'')+v.toFixed(1)+'</td>';
+          }
+        });
+        var ytdPct = (ytd - 1) * 100;
+        body += '<td class="heat-cell heat-ytd" style="background:'+heatColor(ytdPct/2)+'; color:'+(ytdPct>=0?'#1b5e3a':'#8a1f1f')+';">'+(ytdPct>0?'+':'')+ytdPct.toFixed(1)+'</td>';
+        body += '</tr>';
+      });
+      body += '</tbody>';
+      t.innerHTML = head + body;
+    })();
+
+    // ---------- 交易日历 ----------
+    (function renderCal(){
+      var grid = document.getElementById('calGrid');
+      var colors = ['#ebedf0','#c9c0e3','#9b8bc9','#6b5ca5','#4A3D7C'];
+      var html = '';
+      // 53 周 x 7 天
+      for (var w=0; w<53; w++){
+        for (var d=0; d<7; d++){
+          var lvl = 0;
+          // 每月初定投 + 偶发投弹的模拟分布
+          var rnd = Math.random();
+          if (d>=1 && d<=5) { // 工作日才有交易
+            if (w % 4 === 0 && d === 1) lvl = 3;          // 月初定投
+            else if (rnd > 0.93) lvl = 4;                  // 投弹
+            else if (rnd > 0.85) lvl = 2;
+            else if (rnd > 0.72) lvl = 1;
+          }
+          html += '<span class="cal-cell" style="background:'+colors[lvl]+';"></span>';
+        }
+      }
+      grid.innerHTML = html;
+    })();
+
+    // ---------- 信号 × 收益曲线 ----------
+    (function renderSignal(){
+      var labels = [];
+      var port = [];
+      var base = 0;
+      for (var i=0; i<60; i++){
+        labels.push('W'+(i+1));
+        base += (Math.sin(i/6)*1.4 + (Math.random()-0.4)*1.6);
+        port.push(parseFloat(base.toFixed(2)));
+      }
+      // 信号点
+      var triggers = {12:'M1', 28:'M2', 41:'M3'};
+      var monthly = [4, 17, 30, 43, 56];
+      var trigPts = port.map(function(v,i){ return triggers[i] ? v : null; });
+      var monPts = port.map(function(v,i){ return monthly.indexOf(i)>=0 ? v : null; });
+
+      var ctx = document.getElementById('signalChart');
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [
+            { label:'组合 TWR (%)', data:port, borderColor:'#4A3D7C', backgroundColor:'rgba(74,61,124,0.08)', borderWidth:2, fill:true, tension:.3, pointRadius:0 },
+            { label:'投弹触发', data:trigPts, borderColor:'transparent', backgroundColor:'#D64545', pointRadius:7, pointStyle:'triangle', showLine:false },
+            { label:'月投信号', data:monPts, borderColor:'transparent', backgroundColor:'#0d9488', pointRadius:6, pointStyle:'rectRot', showLine:false }
+          ]
+        },
+        options: {
+          responsive:true, maintainAspectRatio:false,
+          plugins:{ legend:{ labels:{ font:{ size:11 }, color:'#8A9199', usePointStyle:true } } },
+          scales:{
+            x:{ ticks:{ color:'#8A9199', maxTicksLimit:8, font:{size:10} }, grid:{ display:false } },
+            y:{ ticks:{ color:'#8A9199', font:{size:10}, callback:function(v){return v+'%';} }, grid:{ color:'rgba(74,61,124,0.06)' } }
+          }
+        }
+      });
+    })();
+
+    // ---------- 信号事件时间线 ----------
+    (function renderTimeline(){
+      var events = [
+        { d:'2026-05-18', t:'M1', c:'var(--down-red)', icon:'crosshairs', title:'M1 投弹触发', desc:'VIX<25 且单日跌幅 -2.3% · 预算 T=$1,200 · 已执行', tag:'触发' },
+        { d:'2026-05-01', t:'月投', c:'var(--teal)', icon:'calendar-check', title:'月度定投信号 S=0.62', desc:'合成强度偏积极 · 计划买入 QQQM/IAU/BRK.B · 已执行', tag:'定投' },
+        { d:'2026-04-09', t:'M2', c:'var(--down-red)', icon:'crosshairs', title:'M2 投弹触发', desc:'回撤加深至 -8% · 预算 T=$2,400 · 已执行', tag:'触发' },
+        { d:'2026-04-01', t:'月投', c:'var(--teal)', icon:'calendar-check', title:'月度定投信号 S=0.71', desc:'估值分位走低 · 加码定投 · 已执行', tag:'定投' },
+        { d:'2026-03-01', t:'回填', c:'var(--benchmark-gray)', icon:'clock-rotate-left', title:'分位数回填', desc:'上线前历史 · 仅 VIX/估值分位可复原，触发态未记录', tag:'回填' }
+      ];
+      var html = '';
+      events.forEach(function(e){
+        html += '<div class="timeline-item">'
+          + '<div class="tl-dot" style="background:'+e.c+';"><i class="fas fa-'+e.icon+'"></i></div>'
+          + '<div style="flex:1;">'
+          + '<div style="display:flex; justify-content:space-between; gap:8px;"><span style="font-weight:600; color:var(--deep-purple); font-size:13px;">'+e.title+'</span><span style="font-size:11px; color:var(--benchmark-gray);">'+e.d+'</span></div>'
+          + '<div style="font-size:12px; color:#2d2a3e; margin-top:2px;">'+e.desc+'</div>'
+          + '</div></div>';
+      });
+      document.getElementById('timelineList').innerHTML = html;
+    })();
+
+  </script>
+</body>
+</html>

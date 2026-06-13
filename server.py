@@ -63,6 +63,7 @@ _PRICE_INFLIGHT: dict = {}  # key → threading.Event
 
 # 分位数引擎缓存：文件持久化，避免服务重启后冷启动拉取 15 秒
 QUANTILE_CACHE_FILE = DATA_DIR / "quantile_cache.json"
+SIGNAL_HISTORY_FILE = DATA_DIR / "signal_history.json"
 # 分位数逻辑或字段变更时递增，使当日旧缓存文件自动失效（3：串行化 yfinance + 指数串台校验）
 _QUANTILE_ENGINE_VERSION = 3
 
@@ -1051,6 +1052,139 @@ def _twr_daily_returns(trades_list, history_cache, bench_cache, dates_in_range, 
     return r_port, r_bench
 
 
+def compute_monthly_returns(trades_list, history_cache, bench_cache, all_trading_dates, perf=None):
+    """
+    按自然月聚合日 TWR 收益（连乘），返回年×月矩阵数据。
+    months 为长度 12 的列表，无数据月份为 null；ytd 为当年已实现月份的复利收益（%）。
+    """
+    if not trades_list or not all_trading_dates:
+        return {"rows": [], "data_as_of": None, "since_date": None, "method": "TWR"}
+
+    since_date = min(t["date"][:10] for t in trades_list)
+    dates_in_range = [d for d in all_trading_dates if since_date <= d]
+    if len(dates_in_range) < 2:
+        return {
+            "rows": [],
+            "data_as_of": dates_in_range[-1] if dates_in_range else None,
+            "since_date": since_date,
+            "method": "TWR",
+        }
+
+    pix = (perf or {}).get("price_index")
+    tl = (perf or {}).get("position_timeline")
+    tds = (perf or {}).get("timeline_dates")
+
+    monthly_factors: dict[tuple[int, int], float] = {}
+    for i in range(1, len(dates_in_range)):
+        prev_d, curr_d = dates_in_range[i - 1], dates_in_range[i]
+        pos = positions_at_date(trades_list, prev_d, tl, tds)
+        if not pos:
+            continue
+        syms = list(pos.keys())
+        v_prev = portfolio_value_with_prices(pos, prices_at(syms, history_cache, prev_d, pix))
+        v_curr = portfolio_value_with_prices(pos, prices_at(syms, history_cache, curr_d, pix))
+        if not v_prev or v_prev <= 1e-6:
+            continue
+        r = (v_curr / v_prev) - 1.0
+        year, month = int(curr_d[:4]), int(curr_d[5:7])
+        key = (year, month)
+        monthly_factors[key] = monthly_factors.get(key, 1.0) * (1.0 + r)
+
+    years = sorted({k[0] for k in monthly_factors})
+    rows = []
+    for year in years:
+        months = [None] * 12
+        ytd_factor = 1.0
+        has_data = False
+        for m in range(1, 13):
+            key = (year, m)
+            if key in monthly_factors:
+                pct = round((monthly_factors[key] - 1.0) * 100, 2)
+                months[m - 1] = pct
+                ytd_factor *= monthly_factors[key]
+                has_data = True
+        rows.append({
+            "year": year,
+            "months": months,
+            "ytd": round((ytd_factor - 1.0) * 100, 2) if has_data else None,
+        })
+
+    return {
+        "rows": rows,
+        "data_as_of": dates_in_range[-1],
+        "since_date": since_date,
+        "method": "TWR",
+    }
+
+
+def _signal_history_snapshot(signals_payload: dict, date_str: str | None = None) -> dict:
+    """从 /api/signals 响应提取可持久化的非金额快照。"""
+    today = date_str or datetime.now().strftime("%Y-%m-%d")
+    qe = signals_payload.get("quantile_engine") or {}
+    rb = signals_payload.get("risk_budget") or {}
+    ms = signals_payload.get("monthly_signal") or {}
+    triggers = signals_payload.get("triggers") or {}
+    trig_out = {}
+    for lv in ("M1", "M2", "M3", "IAU"):
+        t = triggers.get(lv)
+        if isinstance(t, dict):
+            trig_out[lv] = {
+                "triggered": bool(t.get("triggered")),
+                "can_fire": bool(t.get("can_fire")),
+                "status": t.get("status"),
+            }
+    return {
+        "date": today,
+        "S": ms.get("S"),
+        "RR": rb.get("RR"),
+        "K": rb.get("K"),
+        "R": rb.get("R"),
+        "vix_3y_pctile": qe.get("vix_3y_pctile"),
+        "pe_10y_pctile": qe.get("pe_10y_pctile"),
+        "pe_3y_pctile": qe.get("pe_3y_pctile"),
+        "ema200_deviation_3y_pctile": qe.get("ema200_deviation_3y_pctile"),
+        "ema20_deviation_3y_pctile": qe.get("ema20_deviation_3y_pctile"),
+        "qqqm_drop_3y_pctile": qe.get("qqqm_drop_3y_pctile"),
+        "triggers": trig_out,
+        "backfilled": False,
+    }
+
+
+def load_signal_history() -> dict:
+    raw = load_json(SIGNAL_HISTORY_FILE, {"entries": [], "version": 1})
+    if not isinstance(raw, dict):
+        return {"entries": [], "version": 1}
+    entries = raw.get("entries")
+    if not isinstance(entries, list):
+        raw["entries"] = []
+    return raw
+
+
+def save_signal_history(data: dict) -> None:
+    save_json(SIGNAL_HISTORY_FILE, data)
+
+
+def append_signal_history_entry(signals_payload: dict, date_str: str | None = None) -> None:
+    """追加当日信号快照（同日覆盖更新）。"""
+    snap = _signal_history_snapshot(signals_payload, date_str)
+    hist = load_signal_history()
+    entries = hist.setdefault("entries", [])
+    if entries and entries[-1].get("date") == snap["date"]:
+        entries[-1] = snap
+    else:
+        # 去重：若历史中已有该日则更新
+        replaced = False
+        for i, e in enumerate(entries):
+            if e.get("date") == snap["date"]:
+                entries[i] = snap
+                replaced = True
+                break
+        if not replaced:
+            entries.append(snap)
+    entries.sort(key=lambda x: x.get("date") or "")
+    save_signal_history(hist)
+
+
 def _build_drawdown_series(r_port_list, dates_with_returns):
     """
     根据日 TWR 收益序列构建回撤序列，并识别 Top-3 回撤区间。
@@ -1292,12 +1426,12 @@ def compute_risk_metrics(trades_list, history_cache, bench_cache,
         return {"max_drawdown_pct": None, "sharpe_ratio": None, "bench_sharpe_ratio": None,
                 "sortino_ratio": None, "bench_sortino_ratio": None, "calmar_ratio": None,
                 "alpha_pct": None, "beta": None,
-                "drawdown_series": None, "top3_drawdowns": None}
+                "drawdown_series": None, "bench_drawdown_series": None, "top3_drawdowns": None}
 
     empty = {"max_drawdown_pct": None, "sharpe_ratio": None, "bench_sharpe_ratio": None,
              "sortino_ratio": None, "bench_sortino_ratio": None, "calmar_ratio": None,
              "alpha_pct": None, "beta": None,
-             "drawdown_series": None, "top3_drawdowns": None}
+             "drawdown_series": None, "bench_drawdown_series": None, "top3_drawdowns": None}
     if not parse_date(effective_end_date):
         return dict(empty)
 
@@ -1350,10 +1484,12 @@ def compute_risk_metrics(trades_list, history_cache, bench_cache,
                 )
 
     bench_max_drawdown_pct = None
+    bench_drawdown_series = None
     if len(dates_in_period) >= 2 and r_bench_once:
         r_bench_dd = r_bench_once
         bench_dd_series, _ = _build_drawdown_series(r_bench_dd, dates_in_period)
         bench_max_drawdown_pct = round(min(bench_dd_series) * -1, 1) if bench_dd_series else None
+        bench_drawdown_series = bench_dd_series
 
     return {
         "max_drawdown_pct": max_drawdown_pct,
@@ -1366,6 +1502,7 @@ def compute_risk_metrics(trades_list, history_cache, bench_cache,
         "alpha_pct": alpha_pct,
         "beta": beta,
         "drawdown_series": {"labels": drawdown_labels or [], "values": drawdown_series or []},
+        "bench_drawdown_series": {"labels": drawdown_labels or [], "values": bench_drawdown_series or []},
         "top3_drawdowns": top3_drawdowns or [],
     }
 
@@ -1413,6 +1550,12 @@ def compute_value_growth_chart(trades_list, history_cache, bench_cache,
 def index():
     """前端单页"""
     return send_from_directory(".", "index.html")
+
+
+@app.route("/js/<path:filename>", methods=["GET"])
+def serve_frontend_js(filename: str):
+    """本地模式下直出前端模块文件。"""
+    return send_from_directory(BASE_DIR / "js", filename)
 
 
 @app.route("/data/backtest/<path:filename>", methods=["GET"])
@@ -1913,6 +2056,35 @@ def api_returns_overview():
         "risk_free_rate_series": "DGS1",
         "risk_metrics": risk_metrics,
         "strategy_driver": strategy_driver,
+    })
+
+
+@app.route("/api/monthly-returns", methods=["GET"])
+def api_monthly_returns():
+    """月度 TWR 收益矩阵（年×月），供收益概览热力图使用。"""
+    trades_list = get_trades()
+    symbols = get_all_symbols(trades_list)
+    empty = {"rows": [], "data_as_of": None, "since_date": None, "method": "TWR"}
+    if not symbols or not trades_list:
+        return jsonify(empty)
+
+    start_fetch, end_fetch = _compute_fetch_range(trades_list)
+    history_cache, bench_cache, trading_dates = fetch_histories_with_bench(symbols, start_fetch, end_fetch)
+    if not trading_dates:
+        return jsonify(empty)
+
+    perf = build_perf_bundle(trades_list, history_cache, bench_cache, trading_dates)
+    return jsonify(compute_monthly_returns(trades_list, history_cache, bench_cache, trading_dates, perf))
+
+
+@app.route("/api/signal-history", methods=["GET"])
+def api_signal_history():
+    """信号历史时间线（向前积累 + 可选回填），不含金额字段。"""
+    hist = load_signal_history()
+    return jsonify({
+        "entries": hist.get("entries", []),
+        "version": hist.get("version", 1),
+        "updated_at": hist.get("updated_at"),
     })
 
 
@@ -3470,7 +3642,7 @@ def api_signals():
     single_T = risk_budget["T"] if risk_budget["T"] > 0 else 1
     max_toundan_times = int(reserve_pool / single_T) if single_T > 0 else 0
 
-    return jsonify({
+    signals_resp = {
         "model_name": "天府 v1.3.1",
         "version": "1.3.1",
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -3490,7 +3662,12 @@ def api_signals():
         "position_alerts": position_alerts,
         "history_7d": h7,
         "insurance": insurance,
-    })
+    }
+    try:
+        append_signal_history_entry(signals_resp)
+    except Exception:
+        pass
+    return jsonify(signals_resp)
 
 
 @app.route("/api/strategy-review", methods=["GET"])

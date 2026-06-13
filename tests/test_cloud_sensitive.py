@@ -9,6 +9,11 @@ from compute import sanitize
 
 ROOT = Path(__file__).resolve().parents[1]
 INDEX_HTML = ROOT / "index.html"
+MAIN_JS = ROOT / "js" / "main.js"
+
+
+def _frontend_bundle() -> str:
+    return INDEX_HTML.read_text(encoding="utf-8") + MAIN_JS.read_text(encoding="utf-8")
 
 
 def test_sanitize_trades_keeps_price_strips_shares_commission():
@@ -32,25 +37,40 @@ def test_sanitize_trades_keeps_price_strips_shares_commission():
         assert row[key] is None, f"{key} should be nullified for cloud JSON"
 
 
+def test_sanitize_asset_analysis_keeps_avg_cost_strips_shares():
+    """云端 asset-analysis 保留均价/现价，剔除总股数。"""
+    raw = {
+        "metrics": {"avg_cost": 250.12, "current_price": 291.05, "total_shares": 120},
+        "trade_attribution": [{"shares": 10, "pnl": 500, "buy_price": 240.0}],
+    }
+    out = sanitize("asset-analysis-QQQM.json", raw)
+    assert out["metrics"]["avg_cost"] == 250.12
+    assert out["metrics"]["current_price"] == 291.05
+    assert out["metrics"]["total_shares"] is None
+    assert out["trade_attribution"][0]["shares"] is None
+    assert out["trade_attribution"][0]["pnl"] is None
+
+
 def test_index_html_cloud_sensitive_default_mask():
     """云端须用 __isCloudMode 初始化 __sensitiveHidden，且 doInit 再次强制 true。"""
-    text = INDEX_HTML.read_text(encoding="utf-8")
+    text = _frontend_bundle()
     assert "__sensitiveHidden = window.__isCloudMode" in text
     assert "if (window.__isCloudMode) {\n        window.__sensitiveHidden = true;" in text
-    # 禁止在模式检测后写死 false（曾导致交易明细明文）
     assert text.count("__sensitiveHidden = false") == 0
 
 
 def test_index_html_trade_table_cloud_hides_shares_commission():
     """交易明细表：股数/佣金列带 cloud-hide-col，价格不经 _m 掩码；CSS 覆盖异步 tbody。"""
-    text = INDEX_HTML.read_text(encoding="utf-8")
-    assert '<th class="text-right p-3 cloud-hide-col">股数</th>' in text
-    assert 'col-commission cloud-hide-col">佣金(USD)</th>' in text
-    assert "var priceStr = r.price != null ? '$' + Number(r.price).toFixed(2) : '--';" in text
-    assert "cloud-hide-col\">' + sharesStr + '" in text
-    assert "col-commission cloud-hide-col\">' + commStr + '" in text
-    assert "html.cloud-mode .cloud-hide-col { display: none !important; }" in text
-    assert "document.documentElement.classList.add('cloud-mode')" in text
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    bundle = _frontend_bundle()
+    assert '<th class="text-right p-3 cloud-hide-col">股数</th>' in html
+    assert 'col-commission cloud-hide-col">佣金(USD)</th>' in html
+    assert "var priceStr = r.price != null ? '$' + Number(r.price).toFixed(2) : '--';" in bundle
+    assert "cloud-hide-col\">' + sharesStr + '" in bundle
+    assert "col-commission cloud-hide-col\">' + commStr + '" in bundle
+    assert "html.cloud-mode .cloud-hide-col { display: none !important; }" in html
+    assert "document.documentElement.classList.add('cloud-mode')" in bundle
+    assert "均价 $'+Number(m.avg_cost).toFixed(2)+' → 现价 $'+m.current_price" in bundle
 
 
 @pytest.mark.parametrize(
@@ -61,5 +81,4 @@ def test_index_html_trade_table_cloud_hides_shares_commission():
     ],
 )
 def test_index_html_trade_table_uses_mask_helpers(snippet: str):
-    text = INDEX_HTML.read_text(encoding="utf-8")
-    assert snippet in text
+    assert snippet in MAIN_JS.read_text(encoding="utf-8")

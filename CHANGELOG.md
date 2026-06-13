@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **本地收益页无数据**：Flask 本地模式补充 `/js/*` 前端模块静态路由，避免 `js/main.js` 404 导致收益概览停留在初始「暂无数据」。
+- **渲染管线中断防护**：三期新增的分位数横条、信号历史、交易日历渲染若抛错，将不再中断其后的风险预算、月投仪表盘、收益图、信号区等核心渲染（`loadSignals`/`refreshAllViews`/`loadTrades` 内对新增渲染步骤独立 try/catch 隔离）。
+- **交易日历畸形日期**：`renderTradeCalendar` 对无效交易日期做防御，避免 `toISOString` 抛 `RangeError` 与潜在死循环。
+- **全局状态条行情时间**：`updateGlobalStatusBar` 修正越界引用，正确以上海时区格式展示行情更新时间（此前恒回退为原始 `data_as_of`）。
+
 ## [0.1.0-015] - 2026-05-22 - 用 CSS 隐藏异步渲染的股数/佣金列
 
 ### Fixed

@@ -4,6 +4,7 @@
 data/trades.json
 data/fund_records.json
 data/model_state.json
+data/signal_history.json
 data/price_cache.json
 data/quantile_cache.json
 data/*.bak
