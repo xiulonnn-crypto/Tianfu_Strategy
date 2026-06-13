@@ -611,8 +611,8 @@
             <div class="w-full rounded-full h-3 mb-2" style="background: rgba(74,61,124,0.1);"><div id="reserveBar" class="h-3 rounded-full transition-all" style="width:0;background:var(--deep-purple);"></div></div>
             <div id="reserveWarning" class="hidden text-sm font-medium mt-2" style="color: #dc2626;"></div>
           </div>
-          <div class="zone-inner-label">投弹预估</div>
-          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="toundanList"></div>
+          <div class="zone-inner-label" id="toundanEstimateToggle" style="cursor:pointer;user-select:none;"><i class="fas fa-chevron-right" id="toundanEstimateChevron" style="font-size:10px;margin-right:5px;transition:transform 0.2s;"></i>投弹预估</div>
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="toundanList" style="display:none;"></div>
         </div>
 
         <!-- 定投区 -->
@@ -638,7 +638,15 @@
       <!-- 信号历史时间线 -->
       <div class="zone-group mt-6">
         <div class="zone-title zone-c-purple"><i class="fas fa-timeline"></i> 信号历史时间线</div>
-        <p class="text-xs mb-3" style="color:var(--benchmark-gray);">M1/M2/M3 投弹触发与月投信号历史；灰色标记为回填数据（仅分位数可精确复原）。</p>
+        <p class="text-xs mb-3" style="color:var(--benchmark-gray);">事件按策略逻辑回溯重放：月投（每月最后一个交易日，对齐实际执行；对比<b>信号推荐倍率</b>与<b>实际执行倍率</b>＝当月定投<b>净投入值</b>（买入−卖出）÷月投基准）与投弹执行对比：<b>投弹事件锚定你的实际投弹订单日</b>（你的投弹为自主择时，不按固定阈值回放），并标注<b>档位</b>（IAU 标的→IAU；QQQM 等：当日 VIX>50→M3、单日跌幅≤-2% 急跌→M1、其余高 VIX/一般→M2）。同日对比<b>策略当日推荐预算 K%</b>（信号建议比例：M1/IAU 档固定 5%、M2/M3 档按 RR 风险预算 10%+，不再「全是 10%」）与<b>实际投入占比</b>，二者统一以<b>年度投弹总额 year_max_reserve（＝总净入金 − 定投净买入，决策中心同口径）</b>为分母，同基准可比。执行差距在 1 个百分点内显示「持平」。图表为<b>双轴时间线</b>：左轴月投信号倍率 M（每月月末折线，限幅 0.25~2.0x），右轴<b>投弹推荐 K%</b>（实际投弹日红色散点）；时间线起点对齐第一个信号。信号、实际两侧均标注<b>金额</b>；金额与实际执行仅本地模式可见，云端脱敏。</p>
+        <div class="rounded-xl p-4 mb-4" style="background:var(--light-purple-bg);box-shadow:0 2px 12px rgba(74,61,124,0.06);">
+          <div class="text-xs font-semibold mb-2" style="color:var(--deep-purple);"><i class="fas fa-square-root-variable mr-1"></i>月投合成信号 S 计算公式</div>
+          <div class="text-sm" style="color:#2d2a3e;line-height:2.1;overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">
+            S = 0.20·(1−PE<sub>10y</sub>) + 0.15·(1−PE<sub>3y</sub>) + 0.45·VIX<sub>3y</sub> + 0.10·(1−EMA200<sub>偏离</sub>) + 0.10·(1−EMA20<sub>偏离</sub>)
+            <br>M = clip( 1 + 2·(S − S<sub>median</sub>),&nbsp; 0.25,&nbsp; 2.0 )
+          </div>
+          <p class="text-xs mt-2" style="color:var(--benchmark-gray);line-height:1.7;">各分量均为 0~1 分位数。VIX 分位直接取（恐慌越高 → S 越大 → 越利于加仓）；PE 估值与 EMA 偏离取 <b>1−分位</b>（越高位 → 贡献越低）。<b>S 越大越偏恐惧、利于加仓；越小越偏贪婪、谨慎加仓</b>。M 为月投倍率，由 S 相对滚动 36 月中位数 S<sub>median</sub> 偏离放大，限幅 [0.25, 2.0]。</p>
+        </div>
         <div class="rounded-xl p-4 mb-4" style="background:#fff;box-shadow:0 2px 12px rgba(74,61,124,0.06);">
           <div class="h-56 relative">
             <canvas id="chartSignalHistory"></canvas>

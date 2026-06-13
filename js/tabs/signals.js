@@ -97,14 +97,13 @@
             + '<div class="absolute top-2 right-3 freshness-timer text-xs" style="color:var(--benchmark-gray);"></div>'
             + '<div class="flex justify-between items-center pr-16"><span class="font-bold" style="color:var(--deep-purple);">' + lv + '</span><span style="color:'+si.color+';'+(si.bold?'font-weight:700;':'')+'">' + si.text + '</span></div>'
             + '<div class="text-xs mt-2" style="color:#2d2a3e;">' + (t.condition||'') + '</div>'
-            + (threshStr ? '<div class="text-xs mt-1" style="color:var(--benchmark-gray);">' + threshStr + '</div>' : '')
-            + (distStr ? '<div class="text-xs" style="color:var(--benchmark-gray);">' + distStr + '</div>' : '')
+            + ((threshStr || distStr) ? '<div class="text-xs mt-1" style="color:var(--benchmark-gray);">' + [threshStr, distStr].filter(Boolean).join(' · ') + '</div>' : '')
             + '<div class="text-xs mt-1 font-medium" style="color:var(--deep-purple);">' + ktStr + '</div>'
             + extra + '</div>';
         }).join('');
         var con = tr._constraints || {};
         tcEl.innerHTML += '<div class="rounded-xl shadow-sm p-4 col-span-full" style="background:#fff;box-shadow:0 2px 16px rgba(74,61,124,0.06);">'
-          + '<div class="text-xs" style="color:var(--benchmark-gray);">QQQM 本月 ' + (con.qqqm_monthly_count||0) + '/' + (con.qqqm_monthly_limit||2) + ' 次 · 今日 ' + (con.qqqm_today_count||0) + '/1 次　|　IAU 本月 ' + (con.iau_monthly_count||0) + '/' + (con.iau_monthly_limit||1) + ' 次 · 今日 ' + (con.iau_today_count||0) + '/1 次</div></div>';
+          + '<div class="text-xs" style="color:var(--benchmark-gray);">QQQM 本月 ' + (con.qqqm_monthly_count||0) + '/' + (con.qqqm_monthly_limit||2) + ' 次　|　IAU 本月 ' + (con.iau_monthly_count||0) + '/' + (con.iau_monthly_limit||1) + ' 次</div></div>';
       }
 
       // --- 分位数引擎面板（百分位横条）---

@@ -136,7 +136,16 @@ def _sanitize_asset_analysis(data):
 
 
 def _sanitize_signal_history(data):
-    """信号历史不含金额；保留分位数与触发布尔态。"""
+    """信号历史保留分位数、投弹事件标记 bomb_event 与投弹信号 K%（bomb_signal_pct，来自公开行情，可公开）、
+    信号推荐倍率 signal_M；剥离一切金额与实际执行字段（反映真实投入/备弹规模，敏感）：
+    actual_M、actual_invest、actual_bomb_pct、signal_amount、bomb_signal_amount、bomb_actual_amount。"""
+    _drop = ("actual_M", "actual_invest", "actual_bomb_pct",
+             "signal_amount", "bomb_signal_amount", "bomb_actual_amount")
+    if isinstance(data, dict) and isinstance(data.get("entries"), list):
+        for e in data["entries"]:
+            if isinstance(e, dict):
+                for k in _drop:
+                    e.pop(k, None)
     return data
 
 

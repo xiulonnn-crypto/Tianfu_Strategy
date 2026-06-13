@@ -1132,13 +1132,18 @@ def _signal_history_snapshot(signals_payload: dict, date_str: str | None = None)
                 "triggered": bool(t.get("triggered")),
                 "can_fire": bool(t.get("can_fire")),
                 "status": t.get("status"),
+                "K": t.get("K"),
             }
     return {
         "date": today,
         "S": ms.get("S"),
+        "M": ms.get("M"),
         "RR": rb.get("RR"),
         "K": rb.get("K"),
         "R": rb.get("R"),
+        "vix": qe.get("vix_price"),
+        "qqqm_change_pct": qe.get("qqqm_change_pct"),
+        "qqqm_above_ema200": qe.get("qqqm_above_ema200"),
         "vix_3y_pctile": qe.get("vix_3y_pctile"),
         "pe_10y_pctile": qe.get("pe_10y_pctile"),
         "pe_3y_pctile": qe.get("pe_3y_pctile"),
@@ -2079,10 +2084,154 @@ def api_monthly_returns():
 
 @app.route("/api/signal-history", methods=["GET"])
 def api_signal_history():
-    """信号历史时间线（向前积累 + 可选回填），不含金额字段。"""
+    """信号历史时间线（向前积累 + 可选回填），不含金额字段。
+    起点与全站统一：取首次持仓日 since_date（= 最早交易日），过滤掉建仓前的回填信号，
+    与 #history/trades、收益概览/策略复盘的周期起点（max(cutoff, since_date)）口径一致。"""
     hist = load_signal_history()
+    all_entries = sorted(hist.get("entries", []), key=lambda x: x.get("date") or "")
+    trades = get_trades()
+
+    # 月投时间点 = 每月最后一个交易日（对齐实际执行：用户每月 ~27 号定投）。
+    # 每月代表 S 亦取该月最后有效 S（与线上 s_history 在月内持续更新到最新值的口径一致），
+    # 用于滚动 36 月 S_median 重建信号倍率 M。
+    month_s = {}
+    last_date_of_month = {}
+    for e in all_entries:
+        ym = (e.get("date") or "")[:7]
+        if not ym:
+            continue
+        last_date_of_month[ym] = e.get("date")
+        if e.get("S") is not None:
+            month_s[ym] = e["S"]
+    monthly_dates = set(last_date_of_month.values())
+    months_sorted = sorted(month_s)
+
+    def _signal_m_for(ym, s_val):
+        """复现线上口径：M = clip(1 + 2·(S − S_median), 0.25, 2.0)，
+        S_median 取该月之前最多 36 个月度 S 的中位数（<2 个月按中性 0.5）。"""
+        if s_val is None:
+            return None
+        prior = [month_s[m] for m in months_sorted if m < ym][-36:]
+        if len(prior) >= 2:
+            sp = sorted(prior)
+            mid = len(sp) // 2
+            s_median = (sp[mid] + sp[mid - 1]) / 2 if len(sp) % 2 == 0 else sp[mid]
+        else:
+            s_median = 0.5
+        return round(max(0.25, min(2.0, 1 + 2 * (s_val - s_median))), 4)
+
+    # 实际执行（敏感，compute.py 云端脱敏剥离）：
+    #   月投：当月「定投」净投入值（买入−卖出）÷ 月投基准 → actual_M
+    #   投弹：投弹事件锚定「实际投弹订单日」，当日净投入 ÷ 当时投弹池规模 → actual_bomb_pct，
+    #         与当日策略推荐预算 K（信号建议比例）同日对比。
+    base = _get_settings().get("MONTHLY_BASE_OVERRIDE") or MONTHLY_BASE
+    fund_records = get_fund_records()
+
+    def _signed_amt(t):
+        """单笔成交金额（卖出取负），优先 total_cost/amount，缺省按 shares×price。"""
+        amt = t.get("total_cost") or t.get("amount")
+        if amt is None:
+            amt = (t.get("shares") or 0) * (t.get("price") or 0)
+        amt = amt or 0.0
+        return -amt if (t.get("action") == "卖出") else amt
+
+    # 投弹池规模 = 全年「年度投弹总额」year_max_reserve（官方口径＝总净入金 − 定投净买入，
+    # 与 #signals 决策中心「投弹池规模」同口径），稳定基准——信号 K% 与实际占比同基准可比。
+    try:
+        bomb_pool_total = compute_reserve_pool(trades, fund_records=fund_records).get("year_max_reserve") or 0
+    except Exception:
+        bomb_pool_total = 0
+
+    def _bomb_levels(symbols, vix, chg):
+        """按标的 + 当日行情判定投弹档位（与策略语义一致）：
+        IAU 标的→IAU；QQQM 等→VIX>50 为 M3（年度极端）；否则当日单日跌幅≤-2% 为 M1（急跌加仓），
+        其余为 M2（高 VIX/一般加仓）。混合标的并列返回多个档位。"""
+        levels = []
+        if any(s and s != "IAU" for s in symbols):
+            if vix is not None and vix > 50:
+                levels.append("M3")
+            elif chg is not None and chg <= -2.0:
+                levels.append("M1")
+            else:
+                levels.append("M2")
+        if any(s == "IAU" for s in symbols):
+            levels.append("IAU")
+        return levels
+
+    # 月投：当月「定投」净投入值（买入−卖出）；投弹：按日净投入值与标的集合（锚定实际订单日）
+    actual_invest_by_month = {}
+    actual_bomb_by_day = {}
+    bomb_symbols_by_day = {}
+    for t in trades:
+        d = (t.get("date") or "")[:10]
+        if not d:
+            continue
+        if t.get("type") == "定投":
+            actual_invest_by_month[d[:7]] = actual_invest_by_month.get(d[:7], 0.0) + _signed_amt(t)
+        elif t.get("type") == "投弹":
+            actual_bomb_by_day[d] = actual_bomb_by_day.get(d, 0.0) + _signed_amt(t)
+            if t.get("action") != "卖出":
+                bomb_symbols_by_day.setdefault(d, set()).add(t.get("symbol"))
+
+    trade_dates = [t["date"][:10] for t in trades if t.get("date")]
+    since_date = min(trade_dates) if trade_dates else None
+
+    out = []
+    for e in all_entries:
+        if since_date and (e.get("date") or "") < since_date:
+            continue
+        e = dict(e)
+        ym = (e.get("date") or "")[:7]
+        # 信号推荐倍率 M：逐日计算。forward 当日优先用线上 M，其余按历史重建。
+        sig_m = e.get("M")
+        if sig_m is None:
+            sig_m = _signal_m_for(ym, e.get("S"))
+        e["signal_M"] = sig_m
+        # 月投事件 = 该月最后一个交易日（对齐实际执行）
+        is_monthly = (e.get("date") in monthly_dates)
+        e["monthly_event"] = is_monthly
+        if is_monthly:
+            if sig_m is not None and base:
+                e["signal_amount"] = round(base * sig_m, 2)  # 信号推荐月投金额
+            inv = actual_invest_by_month.get(ym)
+            if inv is not None and base:
+                e["actual_M"] = round(inv / base, 4)
+                e["actual_invest"] = round(inv, 2)
+        # 投弹事件：锚定「实际投弹订单日」（当日净投入>0），同日对比策略推荐 K 与实际投入；
+        # 占比/金额统一按全年「年度投弹总额」year_max_reserve 计算（与信号 K% 同基准）。
+        ed = (e.get("date") or "")[:10]
+        bomb_usd = actual_bomb_by_day.get(ed)
+        if bomb_usd is not None and bomb_usd > 0:
+            e["bomb_event"] = True
+            levels = _bomb_levels(bomb_symbols_by_day.get(ed, set()), e.get("vix"), e.get("qqqm_change_pct"))
+            e["bomb_level"] = " / ".join(levels) if levels else "投弹"
+            pool = bomb_pool_total
+            # 信号建议比例 K 按当日命中档位计算（IAU/M1→0.05；M2/M3→RR 风险预算），
+            # 取最大档位，避免「全是 10%」——M1/IAU 日为 5%、M2/M3 日为 RR 决定的 10%+。
+            qe_k = {
+                "qqqm_drop_3y_pctile": e.get("qqqm_drop_3y_pctile"),
+                "vix_3y_pctile": e.get("vix_3y_pctile"),
+                "qqqm_above_ema200": e.get("qqqm_above_ema200"),
+            }
+            ks = []
+            for lv in levels:
+                bl = "M1" if lv in ("M1", "IAU") else lv
+                try:
+                    ks.append(compute_risk_budget(qe_k, 1e12, 1.0, trigger_level=bl)["K"])
+                except Exception:
+                    pass
+            day_k = max(ks) if ks else e.get("K")  # 当日策略推荐投弹预算 K（信号建议比例）
+            if day_k is not None:
+                e["bomb_signal_pct"] = round(day_k * 100, 2)  # 图表用：投弹信号 K%（公开）
+                if pool:
+                    e["bomb_signal_amount"] = round(day_k * pool, 2)
+            e["bomb_actual_amount"] = round(bomb_usd, 2)
+            if pool:
+                e["actual_bomb_pct"] = round(bomb_usd / pool * 100, 2)
+        out.append(e)
+
     return jsonify({
-        "entries": hist.get("entries", []),
+        "entries": out,
         "version": hist.get("version", 1),
         "updated_at": hist.get("updated_at"),
     })
@@ -2913,6 +3062,21 @@ def _repair_quantile_vix_tnx_if_equity_leak(result, start_3y, end_d):
 
 
 _quantile_cache = {"date": None, "data": None, "qe_version": None}
+
+# 分位数引擎缓存的核心字段：一次健康抓取必然产出这些值。
+# 仅校验 qqqm_price 不足以拦截 yfinance 串台/截断导致的残缺结果——
+# 污染时 qqqm_price 仍是看似合理的数字，但 vix_price / qqqm_ema200 会是 null，
+# 这类坏结果一旦被「日期+版本」命中会整天返回，前端出现 EMA200/VIX「暂无数据」。
+_QE_CORE_FIELDS = ("qqqm_price", "vix_price", "qqqm_ema200")
+
+
+def _qe_cache_valid(data):
+    """分位数缓存有效性校验：核心字段均不为 null 才视为可缓存/可命中。"""
+    if not data:
+        return False
+    return all(data.get(k) is not None for k in _QE_CORE_FIELDS)
+
+
 _quantile_lock = threading.Lock()
 
 
@@ -2925,10 +3089,6 @@ def compute_quantile_engine():
     import numpy as np
 
     today_str = datetime.now().strftime("%Y-%m-%d")
-
-    def _qe_cache_valid(data):
-        """缓存数据有效性校验：data 非空且核心 QQQM 价格字段不为 null（防止拉取失败的坏结果被持久命中）"""
-        return bool(data) and data.get("qqqm_price") is not None
 
     # 快速路径：进程内存缓存命中（无需加锁）
     if (
@@ -3082,21 +3242,24 @@ def compute_quantile_engine():
         # 简化：用当前 S 的组成因子估算历史中位，实际中 S ≈ 0.5 附近波动
         result["vix_3y_median_s"] = 0.5
     
-        _quantile_cache["date"] = today_str
-        _quantile_cache["data"] = result
-        _quantile_cache["qe_version"] = _QUANTILE_ENGINE_VERSION
-        # 写入文件缓存，服务重启后可直接读取，无需重新拉取
-        try:
-            save_json(
-                QUANTILE_CACHE_FILE,
-                {
-                    "date": today_str,
-                    "qe_version": _QUANTILE_ENGINE_VERSION,
-                    "data": result,
-                },
-            )
-        except Exception:
-            pass
+        # 仅在核心字段完整时才落缓存：抓取被 yfinance 串台/截断而残缺时不持久化，
+        # 下次请求会重新拉取自愈，而非把坏结果整天命中返回。
+        if _qe_cache_valid(result):
+            _quantile_cache["date"] = today_str
+            _quantile_cache["data"] = result
+            _quantile_cache["qe_version"] = _QUANTILE_ENGINE_VERSION
+            # 写入文件缓存，服务重启后可直接读取，无需重新拉取
+            try:
+                save_json(
+                    QUANTILE_CACHE_FILE,
+                    {
+                        "date": today_str,
+                        "qe_version": _QUANTILE_ENGINE_VERSION,
+                        "data": result,
+                    },
+                )
+            except Exception:
+                pass
         return result
 
 
@@ -3275,23 +3438,29 @@ def evaluate_triggers(qe, model_state, reserve_pool, year_max_reserve, trades_li
 
 # ---------- 1.4 月投倍率 S / M（v1.3.1: 去掉 RRF，S_median 滚动 36 月）----------
 
+def _signal_s(qe):
+    """月投合成信号 S（0~1）：纯分位数加权函数，不依赖任何前向模型状态，
+    故可由历史分位数精确复原（信号历史回填用同一口径，保证与线上一致）。
+    缺失分位按中性 0.5 兜底（与线上一致）。"""
+    pe_10y = qe.get("pe_10y_pctile") or 0.5
+    pe_3y = qe.get("pe_3y_pctile") or 0.5
+    vix_3y = qe.get("vix_3y_pctile") or 0.5
+    ema200_dev = qe.get("ema200_deviation_3y_pctile") or 0.5
+    ema20_dev = qe.get("ema20_deviation_3y_pctile") or 0.5
+    return (0.20 * (1 - pe_10y)
+            + 0.15 * (1 - pe_3y)
+            + 0.45 * vix_3y
+            + 0.10 * (1 - ema200_dev)
+            + 0.10 * (1 - ema20_dev))
+
+
 def compute_monthly_multiplier(qe, reserve_pool, has_toundan_this_month, model_state):
     """
     v1.3.1: 计算合成信号 S、滚动 36 月 S_median、月投倍率 M。
     移除 RRF（不再使用 ^TNX）。M 范围扩展至 [0.25, 2.0]。
     倍投上限 2000。
     """
-    pe_10y = qe.get("pe_10y_pctile") or 0.5
-    pe_3y = qe.get("pe_3y_pctile") or 0.5
-    vix_3y = qe.get("vix_3y_pctile") or 0.5
-    ema200_dev = qe.get("ema200_deviation_3y_pctile") or 0.5
-    ema20_dev = qe.get("ema20_deviation_3y_pctile") or 0.5
-
-    S = (0.20 * (1 - pe_10y)
-         + 0.15 * (1 - pe_3y)
-         + 0.45 * vix_3y
-         + 0.10 * (1 - ema200_dev)
-         + 0.10 * (1 - ema20_dev))
+    S = _signal_s(qe)
 
     # 滚动 36 月 S 中位数（从 model_state.s_history 读取）
     s_history = model_state.get("s_history", [])

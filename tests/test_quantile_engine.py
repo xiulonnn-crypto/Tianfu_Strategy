@@ -200,6 +200,85 @@ def test_sync_corp_actions_acquires_yfin_lock():
     )
 
 
+def test_signal_s_is_pure_quantile_function():
+    """S 仅由 5 个分位数加权决定（不依赖前向模型状态），故历史可精确复原；
+    回填脚本与线上 compute_monthly_multiplier 共用 _signal_s，保证口径一致。"""
+    qe = {
+        "pe_10y_pctile": 0.9,
+        "pe_3y_pctile": 0.8,
+        "vix_3y_pctile": 0.6,
+        "ema200_deviation_3y_pctile": 0.95,
+        "ema20_deviation_3y_pctile": 0.4,
+    }
+    expected = (
+        0.20 * (1 - 0.9)
+        + 0.15 * (1 - 0.8)
+        + 0.45 * 0.6
+        + 0.10 * (1 - 0.95)
+        + 0.10 * (1 - 0.4)
+    )
+    assert abs(server._signal_s(qe) - expected) < 1e-9
+    # 缺失分位按中性 0.5 兜底 → S=0.5
+    assert abs(server._signal_s({}) - 0.5) < 1e-9
+    # compute_monthly_multiplier 复用同一函数
+    ms = server.compute_monthly_multiplier(qe, reserve_pool=0.0,
+                                           has_toundan_this_month=True, model_state={})
+    assert abs(ms["S"] - round(expected, 4)) < 1e-9
+
+
+def test_qe_cache_valid_rejects_partial_results():
+    """yfinance 串台/截断会产出 qqqm_price 看似合理、但 vix_price / qqqm_ema200 为 null 的残缺结果。
+    旧校验只看 qqqm_price 非 null，会把这类坏结果缓存整天，导致前端 EMA200/VIX「暂无数据」。
+    """
+    full = {"qqqm_price": 297.0, "vix_price": 17.6, "qqqm_ema200": 250.0}
+    assert server._qe_cache_valid(full) is True
+
+    assert server._qe_cache_valid(None) is False
+    assert server._qe_cache_valid({}) is False
+    # 仅 qqqm_price 有值（旧逻辑会误判为有效）
+    assert server._qe_cache_valid({"qqqm_price": 120.0}) is False
+    # VIX 串台被置 null
+    assert server._qe_cache_valid(
+        {"qqqm_price": 120.0, "vix_price": None, "qqqm_ema200": 110.0}
+    ) is False
+    # QQQM 被截断 → ema200 无法计算
+    assert server._qe_cache_valid(
+        {"qqqm_price": 120.0, "vix_price": 17.6, "qqqm_ema200": None}
+    ) is False
+
+
+def test_partial_quantile_result_not_persisted_to_cache():
+    """核心字段残缺时，compute_quantile_engine 不应写入文件缓存，使下次请求可重新拉取自愈。"""
+    def fake_partial_fetch(symbols, start_date, end_date):
+        # QQQM 仅 50 个交易日（>20 但 ≤200）→ ema20 可算、ema200 为 null；VIX/TNX/IAU 返回空。
+        if "QQQM" in symbols:
+            out = {}
+            ix = pd.bdate_range("2026-04-01", periods=50, freq="B")
+            out["QQQM"] = pd.DataFrame({"Close": np.linspace(100.0, 120.0, len(ix))}, index=ix)
+            for sym in symbols:
+                if sym != "QQQM":
+                    out[sym] = None
+            return out
+        return {s: None for s in symbols}
+
+    saved = []
+    orig_load = server.load_json
+
+    def load_json_skip_quantile_cache(path, default=None):
+        if path == server.QUANTILE_CACHE_FILE:
+            return None
+        return orig_load(path, default)
+
+    with patch.object(server, "_fetch_histories_raw", side_effect=fake_partial_fetch), \
+         patch.object(server, "save_json", side_effect=lambda p, d: saved.append(p)), \
+         patch.object(server, "load_json", side_effect=load_json_skip_quantile_cache):
+        qe = server.compute_quantile_engine()
+
+    assert qe.get("qqqm_ema200") is None  # 复现残缺
+    assert server.QUANTILE_CACHE_FILE not in saved, "残缺结果不应写入分位数缓存文件"
+    assert server._quantile_cache["data"] is None, "残缺结果不应写入内存缓存"
+
+
 def test_repair_quantile_vix_tnx_after_yfinance_leak():
     """模拟 VIX/^TNX 被写成 QQQM 股价；单列重拉后应恢复合理数值。"""
     def fake_fetch(symbols, start_date, end_date):

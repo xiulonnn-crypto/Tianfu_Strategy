@@ -184,42 +184,104 @@
         if (ph) ph.style.display = 'flex';
         return;
       }
+      function _money(n) { return n == null ? '' : '$' + Math.round(Number(n)).toLocaleString('en-US'); }
+      function _amt(n) { return n != null ? ' (' + _money(n) + ')' : ''; }
       var events = [];
       entries.slice().reverse().forEach(function(e) {
-        var tr = e.triggers || {};
-        ['M1', 'M2', 'M3'].forEach(function(lv) {
-          var t = tr[lv];
-          if (t && (t.triggered || t.can_fire)) {
-            events.push({ date: e.date, type: 'trigger', level: lv, backfilled: e.backfilled });
-          }
-        });
-        if (e.S != null && !e.backfilled) events.push({ date: e.date, type: 'monthly', S: e.S });
-        else if (e.backfilled && e.vix_3y_pctile != null) events.push({ date: e.date, type: 'backfill' });
+        if (e.bomb_event) {
+          events.push({
+            date: e.date, type: 'trigger', level: e.bomb_level || '投弹',
+            K: (e.bomb_signal_pct != null ? Number(e.bomb_signal_pct) / 100 : null),
+            actualBombPct: e.actual_bomb_pct,
+            sigAmt: e.bomb_signal_amount, actAmt: e.bomb_actual_amount
+          });
+        }
+        if (e.monthly_event) {
+          events.push({
+            date: e.date, type: 'monthly', S: e.S, signalM: e.signal_M, actualM: e.actual_M,
+            sigAmt: e.signal_amount, actAmt: e.actual_invest
+          });
+        }
       });
       if (listEl) {
-        listEl.innerHTML = events.length ? events.slice(0, 12).map(function(ev) {
-          var color = ev.type === 'trigger' ? '#D64545' : (ev.type === 'monthly' ? '#0d9488' : 'var(--benchmark-gray)');
-          var icon = ev.type === 'trigger' ? 'crosshairs' : (ev.type === 'monthly' ? 'calendar-check' : 'clock-rotate-left');
-          var title = ev.type === 'trigger' ? (ev.level + ' 投弹') : (ev.type === 'monthly' ? ('月投 S=' + Number(ev.S).toFixed(2)) : '分位数回填');
-          return '<div class="signal-timeline-item"><div class="signal-tl-dot" style="background:' + color + ';"><i class="fas fa-' + icon + '"></i></div>'
-            + '<div style="flex:1;"><div class="flex justify-between gap-2"><span class="font-medium text-sm" style="color:var(--deep-purple);">' + title + '</span><span class="text-xs" style="color:var(--benchmark-gray);">' + ev.date + '</span></div></div></div>';
+        listEl.innerHTML = events.length ? events.slice(0, 24).map(function(ev) {
+          if (ev.type === 'monthly') {
+            var sig = (ev.signalM != null ? Number(ev.signalM).toFixed(2) + 'x' : (ev.S != null ? 'S=' + Number(ev.S).toFixed(2) : '—')) + _amt(ev.sigAmt);
+            var exec;
+            if (ev.actualM != null) {
+              var a = Number(ev.actualM), col = 'var(--benchmark-gray)', tag = '持平';
+              // 执行差距在 1%（相对倍率）内算持平
+              if (ev.signalM != null) { var s = Number(ev.signalM); var tol = Math.abs(s) * 0.01; if (a > s + tol) { col = '#0d9488'; tag = '↑ 超投'; } else if (a < s - tol) { col = '#D64545'; tag = '↓ 欠投'; } }
+              exec = '<span class="text-xs" style="color:' + col + ';white-space:nowrap;">实际 ' + a.toFixed(2) + 'x' + _amt(ev.actAmt) + ' · ' + tag + '</span>';
+            } else {
+              exec = '<span class="text-xs" style="color:var(--benchmark-gray);white-space:nowrap;">实际 —（' + (window.__isCloudMode ? '本地模式可见' : '本月暂无定投') + '）</span>';
+            }
+            return '<div class="signal-timeline-item"><div class="signal-tl-dot" style="background:#0d9488;"><i class="fas fa-calendar-check"></i></div>'
+              + '<div style="flex:1;min-width:0;"><div class="flex justify-between gap-2 items-center">'
+              + '<span class="font-medium text-sm" style="color:var(--deep-purple);white-space:nowrap;">月投 · 信号 ' + sig + '</span>'
+              + '<span class="flex items-center gap-2" style="margin-left:auto;">' + exec + '<span class="text-xs" style="color:var(--benchmark-gray);">' + ev.date + '</span></span>'
+              + '</div></div></div>';
+          }
+          var sigB = (ev.K != null ? '信号 ' + (Number(ev.K) * 100).toFixed(1) + '%' : '信号 —') + _amt(ev.sigAmt);
+          var bombExec;
+          if (ev.actualBombPct != null) {
+            var ab = Number(ev.actualBombPct), bcol = 'var(--benchmark-gray)', btag = '持平';
+            // 执行差距在 1 个百分点内算持平
+            if (ev.K != null) { var sk = Number(ev.K) * 100; if (ab > sk + 1) { bcol = '#0d9488'; btag = '↑ 超投'; } else if (ab < sk - 1) { bcol = '#D64545'; btag = '↓ 欠投'; } }
+            bombExec = '<span class="text-xs" style="color:' + bcol + ';white-space:nowrap;">实际 ' + ab.toFixed(1) + '%' + _amt(ev.actAmt) + ' · ' + btag + '</span>';
+          } else if (ev.actAmt != null) {
+            bombExec = '<span class="text-xs" style="color:var(--benchmark-gray);white-space:nowrap;">实际 ' + _money(ev.actAmt) + '（池未入金）</span>';
+          } else {
+            bombExec = '<span class="text-xs" style="color:var(--benchmark-gray);white-space:nowrap;">实际 —（' + (window.__isCloudMode ? '本地模式可见' : '近邻无执行') + '）</span>';
+          }
+          return '<div class="signal-timeline-item"><div class="signal-tl-dot" style="background:#D64545;"><i class="fas fa-crosshairs"></i></div>'
+            + '<div style="flex:1;min-width:0;"><div class="flex justify-between gap-2 items-center">'
+            + '<span class="font-medium text-sm" style="color:var(--deep-purple);white-space:nowrap;">' + (ev.level || '投弹') + ' 投弹 · ' + sigB + '</span>'
+            + '<span class="flex items-center gap-2" style="margin-left:auto;">' + bombExec + '<span class="text-xs" style="color:var(--benchmark-gray);">' + ev.date + '</span></span>'
+            + '</div></div></div>';
         }).join('') : '<p class="text-sm" style="color:var(--benchmark-gray);">暂无触发事件记录。</p>';
       }
-      var labels = entries.map(function(e) { return (e.date || '').slice(5); });
-      var sData = entries.map(function(e) { return e.S != null ? Number(e.S) * 100 : null; });
+      // 图表（按日期连续轴）：月投信号倍率 M（每月月末，左轴折线）+ 投弹信号 K%（当日，右轴散点）
+      function _ts(d) { var p = (d || '').slice(0, 10).split('-'); return p.length === 3 ? Date.UTC(+p[0], +p[1] - 1, +p[2]) : null; }
+      var mPts = entries.filter(function(e) { return e.monthly_event && e.signal_M != null && _ts(e.date) != null; })
+        .map(function(e) { return { x: _ts(e.date), y: Number(e.signal_M) }; });
+      var bPts = entries.filter(function(e) { return e.bomb_signal_pct != null && _ts(e.date) != null; })
+        .map(function(e) { return { x: _ts(e.date), y: Number(e.bomb_signal_pct) }; });
+      // 时间线 x 轴对齐「月投 M 折线」的首末点，使曲线从左坐标轴连续起始、右端贴边，无两侧空白
+      // （月投 M 是主曲线；个别早于首个月末的投弹散点会被裁掉，仍保留在下方数据行）。
+      var baseTs = (mPts.length ? mPts : bPts).map(function(p) { return p.x; });
+      var xMin = baseTs.length ? Math.min.apply(null, baseTs) : undefined;
+      var xMax = baseTs.length ? Math.max.apply(null, baseTs) : undefined;
       var ctx = document.getElementById('chartSignalHistory');
       if (!ctx) return;
       if (chartSignalHistory) chartSignalHistory.destroy();
       if (ph) ph.style.display = 'none';
+      function _fmtMonth(ms) { var d = new Date(ms); return d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth() + 1)).slice(-2); }
+      function _fmtDay(ms) { var d = new Date(ms); return _fmtMonth(ms) + '-' + ('0' + d.getUTCDate()).slice(-2); }
       chartSignalHistory = new Chart(ctx, {
-        type: 'line',
-        data: { labels: labels, datasets: [{ label: 'S × 100', data: sData, borderColor: '#4A3D7C', backgroundColor: 'rgba(74,61,124,0.08)', fill: true, tension: 0.3, pointRadius: 2, spanGaps: true }] },
+        data: {
+          datasets: [
+            { type: 'line', label: '月投信号倍率 M', data: mPts, yAxisID: 'y', borderColor: '#4A3D7C', backgroundColor: 'rgba(74,61,124,0.08)', fill: true, tension: 0.3, pointRadius: 4, pointHoverRadius: 6 },
+            { type: 'scatter', label: '投弹信号 K%', data: bPts, yAxisID: 'y1', borderColor: '#D64545', backgroundColor: '#D64545', pointStyle: 'crossRot', pointRadius: 6, pointHoverRadius: 8, borderWidth: 2 }
+          ]
+        },
         options: {
           responsive: true, maintainAspectRatio: false,
-          plugins: { legend: { labels: { font: { size: 11 }, color: '#8A9199' } } },
+          plugins: {
+            legend: { labels: { font: { size: 11 }, color: '#8A9199', usePointStyle: true } },
+            tooltip: { callbacks: {
+              title: function() { return ''; },
+              label: function(c) {
+                return c.dataset.yAxisID === 'y1'
+                  ? '投弹信号 K = ' + Number(c.parsed.y).toFixed(1) + '%（' + _fmtDay(c.parsed.x) + '）'
+                  : '月投倍率 M = ' + Number(c.parsed.y).toFixed(2) + 'x（' + _fmtMonth(c.parsed.x) + '）';
+              }
+            } }
+          },
           scales: {
-            x: { ticks: { color: '#8A9199', maxTicksLimit: 8, font: { size: 10 } }, grid: { display: false } },
-            y: { ticks: { color: '#8A9199', font: { size: 10 } }, grid: { color: 'rgba(74,61,124,0.06)' } }
+            x: { type: 'linear', min: xMin, max: xMax, ticks: { color: '#8A9199', maxTicksLimit: 8, font: { size: 10 }, callback: function(v) { return _fmtMonth(v); } }, grid: { display: false } },
+            y: { position: 'left', suggestedMin: 0.25, suggestedMax: 2.0, title: { display: true, text: '月投倍率 M', color: '#8A9199', font: { size: 10 } }, ticks: { color: '#8A9199', font: { size: 10 }, callback: function(v) { return Number(v).toFixed(2) + 'x'; } }, grid: { color: 'rgba(74,61,124,0.06)' } },
+            y1: { position: 'right', beginAtZero: true, title: { display: true, text: '投弹信号 K%', color: '#D64545', font: { size: 10 } }, ticks: { color: '#D64545', font: { size: 10 }, callback: function(v) { return Number(v).toFixed(0) + '%'; } }, grid: { display: false } }
           }
         }
       });

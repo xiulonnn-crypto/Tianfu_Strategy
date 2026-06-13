@@ -769,6 +769,18 @@
         try {
           var btn = e.target.closest && e.target.closest('.nav-btn[data-section]');
           if (btn) { e.preventDefault(); e.stopPropagation(); showSection(btn.dataset.section); return; }
+          var tdToggle = e.target.closest && e.target.closest('#toundanEstimateToggle');
+          if (tdToggle) {
+            e.preventDefault(); e.stopPropagation();
+            var tdList = document.getElementById('toundanList');
+            var tdChev = document.getElementById('toundanEstimateChevron');
+            if (tdList) {
+              var open = tdList.style.display === 'none';
+              tdList.style.display = open ? '' : 'none';
+              if (tdChev) tdChev.style.transform = open ? 'rotate(90deg)' : '';
+            }
+            return;
+          }
           if (e.target.id === 'btnParseSmartPaste') { e.preventDefault(); e.stopPropagation(); parseSmartPaste(); return; }
           var reviewMain = e.target.closest && e.target.closest('.review-main-tab[data-review-main]');
           if (reviewMain) {
