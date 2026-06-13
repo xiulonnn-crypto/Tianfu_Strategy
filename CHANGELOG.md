@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-017] - 2026-06-14 - 决策中心信号历史时间线重构与分位缓存自愈
+
 ### Fixed
 
 - **决策中心 EMA200 偏离分位「暂无数据」**：分位数缓存的有效性校验此前仅检查 `qqqm_price` 非 null，无法拦截 yfinance 串台/截断产生的残缺结果（`qqqm_price` 仍是看似合理的数字，但 `vix_price`、`qqqm_ema200` 为 null）。这类坏结果被「日期+版本」命中后整天返回，导致 EMA200/VIX 等指标长期「暂无数据」。改为校验核心字段（`qqqm_price`/`vix_price`/`qqqm_ema200`）均非 null 才落缓存/命中，残缺结果下次请求自动重拉自愈。
