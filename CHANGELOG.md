@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-016] - 2026-06-13 - 前端 JS 模块化拆分并修复三期渲染管线
+
 ### Fixed
 
 - **本地收益页无数据**：Flask 本地模式补充 `/js/*` 前端模块静态路由，避免 `js/main.js` 404 导致收益概览停留在初始「暂无数据」。
