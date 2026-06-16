@@ -269,17 +269,22 @@ def main():
     # 模型信号
     print("[6/8] 模型信号...")
     get_json("/api/signals", "signals.json")
-    get_json("/api/signal-history", "signal-history.json")
 
-    # 信号历史追加（确保 CI 跑完有当日快照）
+    # 信号历史：源数据 data/signal_history.json 既被 .gitignore 忽略、也不在 Secrets 中，
+    # CI 无法从 Secrets 还原历史。但回填仅依赖公开行情（^VIX/QQQM/IAU/SPY，逐标的实时拉取），
+    # 确定性可复原。故须先「回填全历史」→「追加当日快照」，再取完整信号历史脱敏保存；
+    # 否则 CI 只有 append 的当日单点，云端时间线与本地（已回填）不一致。
+    try:
+        from scripts.backfill_signal_history import backfill_from_price_cache
+        backfill_from_price_cache()
+    except Exception as ex:
+        print(f"  警告：signal_history 回填失败：{ex}")
     try:
         from scripts.append_signal_history import main as append_signal_main
         append_signal_main()
-        resp = client.get("/api/signal-history")
-        if resp.status_code == 200:
-            save("signal-history.json", resp.get_json())
     except Exception as ex:
         print(f"  警告：signal_history 追加失败：{ex}")
+    get_json("/api/signal-history", "signal-history.json")
 
     # 压力测试
     print("[7/8] 压力测试...")

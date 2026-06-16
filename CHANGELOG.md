@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **云端「信号历史时间线」内容与本地不一致（仅 1 条）**：时间线源数据 `data/signal_history.json` 既被 `.gitignore` 忽略、也不在 GitHub Secrets 中，CI 无法从 Secrets 还原历史；而 `compute.py` 预计算只调用 `append_signal_history`（每天追加 1 条快照），从不调用 `backfill`，导致 CI 端 `signal_history.json` 从空起点只累积单条，脱敏后的 `data/computed/signal-history.json` 仅 1 条，与本地（已回填 1400+ 条）严重不符。修复：`compute.py` 在生成 `signal-history.json` 前先执行 `backfill_from_price_cache()` 回填全历史、再 `append` 当日快照。回填仅依赖公开行情（`^VIX`/`QQQM`/`IAU`/`SPY`，逐标的实时拉取），确定性可复原、无需任何 Secrets，CI 因此能重建与本地一致的完整时间线。
+
 ## [0.1.0-017] - 2026-06-14 - 决策中心信号历史时间线重构与分位缓存自愈
 
 ### Fixed
