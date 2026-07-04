@@ -8,14 +8,15 @@
 
 | 层面 | 技术 | 版本 | 说明 |
 |------|------|------|------|
-| **后端语言** | Python | ≥3.11 | pandas/numpy 生态适合金融计算 |
+| **后端语言** | Python | 推荐 3.11 | CI 使用 3.11；本地 `python3` 当前可在 macOS 3.9.6 通过测试 |
 | **Web 框架** | Flask | ≥3.0 | 轻量，个人工具无需重框架 |
 | **跨域** | flask-cors | ≥4.0 | 本地开发 CORS 支持 |
 | **数据分析** | pandas | ≥2.0 | 时间序列、收益率、回撤计算 |
 | **数值计算** | numpy | ≥1.20 | 蒙特卡洛模拟等随机数值计算 |
 | **行情源** | yfinance | ≥0.2.36 | Yahoo Finance，免费无 Key |
 | **科学计算** | scipy | ≥1.10 | yfinance repair 功能依赖 |
-| **前端框架** | 无（原生 JS） | - | 单页应用，无构建工具链 |
+| **Excel 处理** | openpyxl | ≥3.1 | 历史回测导入等表格处理 |
+| **前端框架** | 无（原生 JS） | - | 单页应用，无 Node.js / npm / 构建工具链 |
 | **CSS 框架** | Tailwind CSS | 4.x CDN | 工具类，无需编译 |
 | **图表库** | Chart.js | 4.4.1 CDN | 轻量声明式，响应式 |
 | **图标库** | Font Awesome | 6.5.1 CDN | 丰富图标 |
@@ -70,47 +71,67 @@ graph LR
 | 本地模式 | `localhost` 或 `file://` | Flask API | Flask API |
 | 云端模式 | `github.io` 域名 | 静态 `data/computed/*.json` | 不可用（只读展示）|
 
+### 前端模块组织
+
+`index.html` 是唯一页面入口，实际只通过 `<script type="module" src="js/main.js">`
+加载前端逻辑。`js/main.js` 是拼接产物，源文件按职责拆在：
+
+| 源文件 | 职责 |
+|--------|------|
+| `js/common.js` | 运行模式判断、API/static 映射、通用格式化、公共状态 |
+| `js/tabs/returns.js` | 收益概览与收益图表 |
+| `js/tabs/allocation.js` | 资产配置 |
+| `js/tabs/history.js` | 出入金与交易历史 |
+| `js/tabs/signals.js` | 天府模型信号 |
+| `js/tabs/review.js` | 策略复盘、历史回测、压力测试 |
+
+修改上述源模块后运行 `python3 scripts/concat_js_modules.py` 重新生成 `js/main.js`。
+
 ---
 
 ## 服务划分
 
-`server.py` 约 2800 行，按逻辑层划分为 5 个服务区：
+`server.py` 当前约 4300 行，仍是单文件 Flask 后端；为便于维护，按逻辑层划分为 7 个服务区：
 
 ```mermaid
 graph TD
-    subgraph api_layer [API 层 Lines 894-1061]
-        StaticServe["静态文件服务\nGET / 及 /favicon.ico"]
-        CRUD["CRUD 端点\n出入金 + 交易 增删改查"]
-        Version["版本探测\nGET /api/version"]
-    end
-
-    subgraph biz_layer [业务逻辑层 Lines 1062-2157]
-        TradeSummary["交易汇总\napi_trade_summary"]
-        Returns["收益计算\napi_returns_overview\nTWR / MWRR / 回撤 / 风险指标"]
-        Allocation["资产配置\napi_allocation"]
-        AssetAnalysis["单标的分析\napi_asset_analysis"]
-    end
-
-    subgraph model_layer [天府模型层 Lines 2158-2795]
-        Signals["决策信号\napi_signals\n分位数 + 风险预算 + 触发器"]
-        StrategyReview["策略复盘\napi_strategy_review"]
-        UpdateSettings["参数设置\napi_update_settings"]
-        StressTest["压力测试\napi_stress_test\n情景冲击 + 蒙特卡洛\n（前端：策略复盘→前瞻压测）"]
-    end
-
-    subgraph data_layer [数据层 Lines 42-95]
+    subgraph data_layer [数据层 Lines 142-306]
         IO["JSON I/O\nload_json / save_json"]
-        Positions["持仓计算\npositions_at_date"]
+        Positions["持仓快照\npositions_at_date"]
         Symbols["标的集合\nget_all_symbols"]
     end
 
-    subgraph market_layer [行情层 Lines 97-349]
+    subgraph market_layer [行情层 Lines 119-648]
+        RiskFree["无风险利率\nFRED DGS1"]
         Realtime["实时报价\nfetch_realtime_quote"]
         History["历史行情\nfetch_histories"]
         Cache["价格缓存\n_load_price_cache\n_CACHE_VERSION 控制失效"]
     end
 
-    subgraph risk_layer [风控层 Lines 1623-2157]
+    subgraph calc_layer [收益/持仓计算 Lines 669-1553]
+        CostBasis["成本基础\ncompute_cost_basis"]
+        MWRR["资金加权收益\ncompute_mwr"]
+        TWR["时间加权收益\ncompute_twr"]
+        Charts["收益/回撤图\ncompute_twr_chart\ncompute_risk_metrics"]
+    end
+
+    subgraph api_layer [静态与 CRUD API Lines 1554-1725]
+        StaticServe["静态文件服务\nGET / 及 /favicon.ico"]
+        CRUD["CRUD 端点\n出入金 + 交易 增删改查"]
+        Version["版本探测\nGET /api/version"]
+        CorpActions["公司行为同步\nPOST /api/corp-actions/sync"]
+    end
+
+    subgraph biz_layer [组合业务 API Lines 1733-2316]
+        TradeSummary["交易汇总\napi_trade_summary"]
+        Returns["收益计算\napi_returns_overview\nTWR / MWRR / 回撤 / 风险指标"]
+        MonthlyReturns["月度收益\napi_monthly_returns"]
+        SignalHistory["信号历史\napi_signal_history"]
+        Allocation["资产配置\napi_allocation"]
+        AssetAnalysis["单标的分析\napi_asset_analysis"]
+    end
+
+    subgraph risk_layer [模型状态与风控 Lines 2851-3563]
         ModelState["模型状态\nload_model_state"]
         ReservePool["备弹池\ncompute_reserve_pool"]
         QuantileEngine["分位数引擎\ncompute_quantile_engine"]
@@ -119,9 +140,19 @@ graph TD
         Insurance["Put 保险\n_compute_insurance"]
     end
 
+    subgraph model_layer [天府模型 API Lines 3564-4104]
+        Signals["决策信号\napi_signals\n分位数 + 风险预算 + 触发器"]
+        StrategyReview["策略复盘\napi_strategy_review"]
+        UpdateSettings["参数设置\napi_update_settings"]
+        StressTest["压力测试\napi_stress_test\n情景冲击 + 蒙特卡洛\n（前端：策略复盘→前瞻压测）"]
+    end
+
+    calc_layer --> data_layer
+    calc_layer --> market_layer
     api_layer --> biz_layer
     api_layer --> data_layer
     biz_layer --> market_layer
+    biz_layer --> calc_layer
     biz_layer --> data_layer
     model_layer --> risk_layer
     model_layer --> market_layer
@@ -132,12 +163,13 @@ graph TD
 
 | 层 | 行号区间 | 主要函数 | 职责 |
 |----|----------|----------|------|
-| **数据层** | 42–95 | `load_json`, `save_json`, `get_fund_records`, `get_trades`, `positions_at_date`, `get_all_symbols` | JSON 文件读写、持仓快照、标的集合 |
-| **行情层** | 97–349 | `fetch_realtime_quote`, `fetch_histories`, `_load_price_cache`, `_save_price_cache` | Yahoo 行情拉取、日级价格缓存、历史序列处理 |
-| **API 层** | 894–1061 | `index`, `api_version`, `api_fund_records*`, `api_trades*` | 静态文件服务、CRUD 路由、版本探测 |
-| **业务逻辑层** | 1062–2157 | `api_trade_summary`, `api_returns_overview`, `api_allocation`, `api_asset_analysis` | TWR/MWRR 计算、回撤分析、资产配置、单标的分析 |
-| **风控层** | 1623–2157 | `compute_reserve_pool`, `compute_quantile_engine`, `compute_risk_budget`, `evaluate_triggers`, `_compute_insurance` | 天府模型辅助计算：分位、风险预算、触发器、熔断、保险 |
-| **天府模型层** | 2158–2795 | `api_signals`, `api_strategy_review`, `api_update_settings`, `api_stress_test` | 决策信号输出、策略复盘、参数管理、压力测试 |
+| **数据层** | 142–306 | `load_json`, `save_json`, `get_fund_records`, `get_trades`, `positions_at_date`, `get_all_symbols` | JSON 文件读写、持仓快照、标的集合 |
+| **行情层** | 119–648 | `fetch_fred_dgs1_yield_pct_latest`, `fetch_realtime_quote`, `fetch_histories`, `_load_price_cache`, `_save_price_cache` | FRED / Yahoo 行情拉取、日级价格缓存、历史序列处理 |
+| **收益/持仓计算层** | 669–1553 | `compute_cost_basis`, `compute_mwr`, `compute_twr`, `compute_twr_chart`, `compute_risk_metrics` | 成本基础、TWR/MWRR、回撤、收益图表 |
+| **静态与 CRUD API 层** | 1554–1725 | `index`, `serve_js`, `serve_backtest`, `api_version`, `api_fund_records*`, `api_trades*`, `api_corp_actions_sync` | 静态文件服务、CRUD 路由、版本探测、公司行为同步 |
+| **组合业务 API 层** | 1733–2316 | `api_trade_summary`, `api_returns_overview`, `api_monthly_returns`, `api_signal_history`, `api_allocation`, `api_asset_analysis` | 交易汇总、收益概览、月度收益、信号历史、资产配置、单标的分析 |
+| **风控层** | 2851–3563 | `load_model_state`, `compute_reserve_pool`, `compute_quantile_engine`, `compute_risk_budget`, `evaluate_triggers`, `_compute_insurance` | 天府模型辅助计算：分位、风险预算、触发器、熔断、保险 |
+| **天府模型 API 层** | 3564–4104 | `api_signals`, `api_strategy_review`, `api_update_settings`, `api_stress_test` | 决策信号输出、策略复盘、参数管理、压力测试 |
 
 ---
 
@@ -179,10 +211,11 @@ sequenceDiagram
     Secrets-->>GH: TRADES_B64, FUND_RECORDS_B64, MODEL_STATE_B64
     GH->>GH: base64 -d → data/*.json
     GH->>Compute: python3 compute.py
+    Compute->>Server: POST /api/corp-actions/sync
     Compute->>Server: app.test_client() GET /api/version
     Compute->>Server: GET /api/fund-records
     Compute->>Server: GET /api/trades
-    Note over Compute,Server: 依次调用所有 GET 端点
+    Note over Compute,Server: 依次调用所有 GET 端点，并回填/追加信号历史
     Server-->>Compute: JSON 响应
     Compute->>Compute: sanitize()（脱敏敏感字段）
     Compute->>Computed: 写入 *.json 文件
@@ -247,23 +280,26 @@ graph LR
 
 | 方法 | 路径 | 函数 | 行号 | 说明 |
 |------|------|------|------|------|
-| GET | `/api/version` | `api_version` | 907 | 能力探测 + 版本号 |
-| GET | `/api/fund-records` | `api_fund_records` | 913 | 出入金列表 |
-| POST | `/api/fund-records` | `api_fund_records_post` | 919 | 新增出入金 |
-| POST | `/api/fund-records/delete` | `api_fund_records_delete` | 938 | 删除出入金 |
-| POST | `/api/fund-records/update` | `api_fund_records_update` | 954 | 修改出入金 |
-| GET | `/api/trades` | `api_trades` | 979 | 交易列表 |
-| POST | `/api/trades` | `api_trades_post` | 985 | 新增交易 |
-| POST | `/api/trades/delete` | `api_trades_delete` | 1013 | 删除交易 |
-| POST | `/api/trades/update` | `api_trades_update` | 1029 | 修改交易 |
-| GET | `/api/trade-summary` | `api_trade_summary` | 1063 | 交易汇总（all/year/month）|
-| GET | `/api/returns-overview` | `api_returns_overview` | 1131 | 收益概览（TWR/MWRR/对比/回撤）|
-| GET | `/api/allocation` | `api_allocation` | 1358 | 资产配置 |
-| GET | `/api/asset-analysis/<symbol>` | `api_asset_analysis` | 1433 | 单标的分析 |
-| GET | `/api/signals` | `api_signals` | 2159 | 天府模型信号与决策中心 |
-| GET | `/api/strategy-review` | `api_strategy_review` | 2407 | 策略复盘 |
-| POST | `/api/update-settings` | `api_update_settings` | 2612 | 更新模型设置 |
-| GET | `/api/stress-test` | `api_stress_test` | 2639 | 压力测试 + 蒙特卡洛 |
+| GET | `/api/version` | `api_version` | 1583 | 能力探测 + 版本号 |
+| GET | `/api/fund-records` | `api_fund_records` | 1589 | 出入金列表 |
+| POST | `/api/fund-records` | `api_fund_records_post` | 1595 | 新增出入金 |
+| POST | `/api/fund-records/delete` | `api_fund_records_delete` | 1614 | 删除出入金 |
+| POST | `/api/fund-records/update` | `api_fund_records_update` | 1630 | 修改出入金 |
+| GET | `/api/trades` | `api_trades` | 1655 | 交易列表 |
+| POST | `/api/trades` | `api_trades_post` | 1661 | 新增交易 |
+| POST | `/api/trades/delete` | `api_trades_delete` | 1674 | 删除交易 |
+| POST | `/api/trades/update` | `api_trades_update` | 1690 | 修改交易 |
+| POST | `/api/corp-actions/sync` | `api_corp_actions_sync` | 1725 | 从 Yahoo 同步分红、拆股至交易记录 |
+| GET | `/api/trade-summary` | `api_trade_summary` | 1734 | 交易汇总（all/year/month）|
+| GET | `/api/returns-overview` | `api_returns_overview` | 1805 | 收益概览（TWR/MWRR/对比/回撤）|
+| GET | `/api/monthly-returns` | `api_monthly_returns` | 2068 | 月度收益 |
+| GET | `/api/signal-history` | `api_signal_history` | 2086 | 信号历史 |
+| GET | `/api/allocation` | `api_allocation` | 2241 | 资产配置 |
+| GET | `/api/asset-analysis/<symbol>` | `api_asset_analysis` | 2316 | 单标的分析 |
+| GET | `/api/signals` | `api_signals` | 3565 | 天府模型信号与决策中心 |
+| GET | `/api/strategy-review` | `api_strategy_review` | 3843 | 策略复盘 |
+| POST | `/api/update-settings` | `api_update_settings` | 4071 | 更新模型设置 |
+| GET | `/api/stress-test` | `api_stress_test` | 4104 | 压力测试 + 蒙特卡洛 |
 
 ---
 
@@ -273,11 +309,13 @@ graph LR
 
 | 文件 | 行数 | 说明 |
 |------|------|------|
-| `server.py` | ~2800 | Flask 后端，承载全部 API 与业务逻辑 |
-| `index.html` | - | 唯一前端页面，内联 Tailwind + Chart.js + JS |
-| `compute.py` | ~250 | 预计算脚本，调用 API 并脱敏输出静态 JSON |
-| `requirements.txt` | 6 | 生产依赖声明 |
-| `requirements-dev.txt` | - | 开发/测试依赖（pytest, pytest-cov, ruff）|
+| `server.py` | ~4300 | Flask 后端，承载全部 API、行情、收益计算与模型逻辑 |
+| `index.html` | ~1190 | 唯一前端页面，加载 CDN 样式/图表与 `js/main.js` |
+| `js/common.js` | ~440 | 前端公共运行模式、API/static 映射、格式化与公共状态 |
+| `js/tabs/*.js` | ~2700 | 各 Tab 源模块：收益、配置、历史、信号、复盘 |
+| `js/main.js` | ~3170 | 前端拼接产物，由 `scripts/concat_js_modules.py` 生成 |
+| `compute.py` | ~310 | 预计算脚本，调用 API 并脱敏输出静态 JSON |
+| `requirements.txt` | 7 | 生产依赖声明 |
 
 ### 启动脚本
 
@@ -295,8 +333,10 @@ graph LR
 | `data/fund_records.json` | date, amount, note | 出入金记录 |
 | `data/model_state.json` | settings, reserve_pool, ... | 天府模型状态 + 用户设置 |
 | `data/price_cache.json` | version, date, prices | yfinance 日级价格缓存 |
+| `data/quantile_cache.json` | version, date, fields | 分位数引擎缓存 |
+| `data/signal_history.json` | entries | 本地信号历史 |
 
-CI 中通过 GitHub Secrets（base64 编码）恢复，变量名：`TRADES_B64` / `FUND_RECORDS_B64` / `MODEL_STATE_B64`。
+CI 中通过 GitHub Secrets（base64 编码）恢复核心原始数据，变量名：`TRADES_B64` / `FUND_RECORDS_B64` / `MODEL_STATE_B64`。`signal_history.json` 本地忽略，CI 会通过公开行情回填并追加当日快照。
 
 ### 数据文件 — 预计算（已提交，脱敏）
 
@@ -307,14 +347,18 @@ CI 中通过 GitHub Secrets（base64 编码）恢复，变量名：`TRADES_B64` 
 | `data/computed/trades.json` | `/api/trades` |
 | `data/computed/allocation.json` | `/api/allocation` |
 | `data/computed/returns-overview.json` | `/api/returns-overview` |
+| `data/computed/monthly-returns.json` | `/api/monthly-returns` |
 | `data/computed/signals.json` | `/api/signals` |
+| `data/computed/signal-history.json` | `/api/signal-history` |
 | `data/computed/stress-test.json` | `/api/stress-test` |
 | `data/computed/trade-summary-all.json` | `/api/trade-summary?period=all` |
 | `data/computed/trade-summary-year.json` | `/api/trade-summary?period=year` |
 | `data/computed/trade-summary-month.json` | `/api/trade-summary?period=month` |
 | `data/computed/strategy-review-all.json` | `/api/strategy-review?period=all` |
-| `data/computed/strategy-review-3m.json` | `/api/strategy-review?period=3m` |
 | `data/computed/strategy-review-1m.json` | `/api/strategy-review?period=1m` |
+| `data/computed/strategy-review-3m.json` | `/api/strategy-review?period=3m` |
+| `data/computed/strategy-review-1y.json` | `/api/strategy-review?period=1y` |
+| `data/computed/strategy-review-1y_roll.json` | `/api/strategy-review?period=1y_roll` |
 | `data/computed/asset-analysis-<symbol>.json` | `/api/asset-analysis/<symbol>`（每只持仓标的各一份）|
 
 ### 数据文件 — 历史回测（已提交，无敏感字段）
@@ -332,8 +376,9 @@ CI 中通过 GitHub Secrets（base64 编码）恢复，变量名：`TRADES_B64` 
 | 文件 | 说明 |
 |------|------|
 | `.github/workflows/compute.yml` | 自动预计算流水线 |
-| `.github/workflows/test.yml` | 自动化测试流水线（规划中）|
 | `sync-secrets.sh` | 本地 → GitHub Secrets 同步脚本 |
+| `.githooks/pre-push` | CHANGELOG 自动版本化；推送 main 前同步 Secrets |
+| `.githooks/bump_changelog.py` | pre-push 使用的 CHANGELOG 版本更新脚本 |
 
 ### 配置与元数据
 
@@ -361,14 +406,11 @@ CI 中通过 GitHub Secrets（base64 编码）恢复，变量名：`TRADES_B64` 
 | numpy | ≥1.20.0 | 蒙特卡洛模拟等数值计算 |
 | yfinance | ≥0.2.36 | Yahoo Finance 行情拉取 |
 | scipy | ≥1.10.0 | yfinance repair 功能的可选依赖 |
+| openpyxl | ≥3.1.0 | Excel / 回测导入相关处理 |
 
-### 开发依赖（requirements-dev.txt，规划中）
+### 测试依赖
 
-| 包 | 版本要求 | 用途 |
-|----|----------|------|
-| pytest | ≥8.0.0 | 测试框架 |
-| pytest-cov | ≥5.0.0 | 覆盖率报告 |
-| ruff | ≥0.4.0 | Lint + 代码格式化 |
+仓库当前未维护单独的 `requirements-dev.txt`；测试环境依赖 `pytest`，本机与 CI 可按需要额外安装。生产依赖仍集中在 `requirements.txt`。
 
 ### 前端 CDN 依赖
 
@@ -384,29 +426,30 @@ CI 中通过 GitHub Secrets（base64 编码）恢复，变量名：`TRADES_B64` 
 
 > 详细测试方案见 [TECHNICAL.md](TECHNICAL.md#测试)
 
-### 测试目录结构（规划）
+### 当前测试目录
 
 ```
 tests/
-  conftest.py             # pytest fixture：数据隔离、Mock yfinance
-  fixtures/
-    trades.json           # 标准化样本交易数据（含多种 action 类型）
-    fund_records.json     # 标准化样本出入金数据
-    model_state.json      # 标准化样本模型状态
-  test_crud.py            # CRUD 接口测试（出入金 + 交易增删改查 + 边界条件）
-  test_readonly_api.py    # 只读 API 测试（全部 GET 端点）
-  test_business.py        # 核心业务逻辑单元测试（TWR/MWRR/风险指标/蒙特卡洛）
-  test_compute.py         # compute.py 脱敏验证 + 预计算输出完整性
+  test_cloud_sensitive.py       # 云端脱敏双保险
+  test_corp_actions.py          # 分红 / 合股拆股成本语义与同步
+  test_quantile_engine.py       # 分位数引擎、缓存和 yfinance 串台防护
+  test_returns_chart_mwrr.py    # 收益图与 MWRR 现金流处理
+  test_risk_metrics.py          # 回撤、夏普、alpha/beta 等风险指标
+  test_perf_endpoints.py        # 关键端点性能与缓存行为
+  test_backtest_*.py            # 历史回测静态数据、alpha/beta、enrich 流程
+  test_compute_workflow_cron.py # compute workflow 定时刷新窗口
+  test_pre_push_hook.py         # pre-push / Secrets 同步约定
+  ...                           # 其他业务单元测试
 ```
 
-### CI 测试流水线（规划）
+本地验证命令：
 
-```mermaid
-graph LR
-    Push["push / PR"] --> TestCI["test.yml\nGitHub Actions"]
-    TestCI --> Lint["ruff check ."]
-    TestCI --> Tests["pytest tests/ -v\n--cov=server --cov-report=xml"]
-    Tests --> Coverage["覆盖率 ≥40%\n门禁检查"]
-    Coverage -->|"通过"| ComputeCI["compute.yml\n预计算"]
-    Coverage -->|"失败"| Fail["CI 失败"]
+```bash
+python3 -m pytest -q
+```
+
+本次现状评估时测试结果为 `142 passed`。改动云端脱敏、`compute.py`、交易明细展示或 `server.py` 新增 GET 端点时，至少运行：
+
+```bash
+pytest tests/test_cloud_sensitive.py
 ```
