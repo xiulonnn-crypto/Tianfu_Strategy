@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-019] - 2026-08-27 - include reserve double-up in dca totals
+
 ### Fixed
 
 - **决策中心月投倍投金额与备弹池健康度不一致**：下次定投和信号历史此前只显示「月投基数 × M」，遗漏当月无投弹时由备弹池补足的倍投；现统一展示基础月投加倍投后的合计，并按该预留金额计算可用备弹、风险预算、最大可投弹次数及健康度。信号历史同时保存本地精确月投金额，避免倍率四舍五入造成金额偏差；云端预计算继续剥离全部金额字段。
