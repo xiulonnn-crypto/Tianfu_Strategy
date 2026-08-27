@@ -1118,7 +1118,7 @@ def compute_monthly_returns(trades_list, history_cache, bench_cache, all_trading
 
 
 def _signal_history_snapshot(signals_payload: dict, date_str: str | None = None) -> dict:
-    """从 /api/signals 响应提取可持久化的非金额快照。"""
+    """从 /api/signals 响应提取可持久化快照；金额字段仅本地使用，云端会脱敏。"""
     today = date_str or datetime.now().strftime("%Y-%m-%d")
     qe = signals_payload.get("quantile_engine") or {}
     rb = signals_payload.get("risk_budget") or {}
@@ -1138,6 +1138,7 @@ def _signal_history_snapshot(signals_payload: dict, date_str: str | None = None)
         "date": today,
         "S": ms.get("S"),
         "M": ms.get("M"),
+        "monthly_amount": ms.get("monthly_amount"),
         "RR": rb.get("RR"),
         "K": rb.get("K"),
         "R": rb.get("R"),
@@ -2162,6 +2163,7 @@ def api_signal_history():
     actual_invest_by_month = {}
     actual_bomb_by_day = {}
     bomb_symbols_by_day = {}
+    toundan_months = set()
     for t in trades:
         d = (t.get("date") or "")[:10]
         if not d:
@@ -2170,6 +2172,7 @@ def api_signal_history():
             actual_invest_by_month[d[:7]] = actual_invest_by_month.get(d[:7], 0.0) + _signed_amt(t)
         elif t.get("type") == "投弹":
             actual_bomb_by_day[d] = actual_bomb_by_day.get(d, 0.0) + _signed_amt(t)
+            toundan_months.add(d[:7])
             if t.get("action") != "卖出":
                 bomb_symbols_by_day.setdefault(d, set()).add(t.get("symbol"))
 
@@ -2182,6 +2185,7 @@ def api_signal_history():
             continue
         e = dict(e)
         ym = (e.get("date") or "")[:7]
+        ed = (e.get("date") or "")[:10]
         # 信号推荐倍率 M：逐日计算。forward 当日优先用线上 M，其余按历史重建。
         sig_m = e.get("M")
         if sig_m is None:
@@ -2192,14 +2196,28 @@ def api_signal_history():
         e["monthly_event"] = is_monthly
         if is_monthly:
             if sig_m is not None and base:
-                e["signal_amount"] = round(base * sig_m, 2)  # 信号推荐月投金额
+                # 与实时月投区一致：当月无投弹时，备弹池补足同额（最多 $2,000）。
+                # 以该事件日前的现金流计算可用池，不能凭空承诺超过当时余额的金额。
+                base_amount = e.get("monthly_amount")
+                if base_amount is None:
+                    base_amount = round(base * sig_m, 2)
+                else:
+                    base_amount = round(float(base_amount), 2)
+                prior_trades = [t for t in trades if (t.get("date") or "")[:10] <= ed]
+                prior_funds = [r for r in fund_records if (r.get("date") or "")[:10] <= ed]
+                prior_pool = compute_reserve_pool(
+                    prior_trades, fund_records=prior_funds
+                ).get("reserve_pool", 0.0)
+                double_amount = 0.0
+                if ym not in toundan_months:
+                    double_amount = round(min(base_amount, 2000, max(0.0, prior_pool)), 2)
+                e["signal_amount"] = round(base_amount + double_amount, 2)
             inv = actual_invest_by_month.get(ym)
             if inv is not None and base:
                 e["actual_M"] = round(inv / base, 4)
                 e["actual_invest"] = round(inv, 2)
         # 投弹事件：锚定「实际投弹订单日」（当日净投入>0），同日对比策略推荐 K 与实际投入；
         # 占比/金额统一按全年「年度投弹总额」year_max_reserve 计算（与信号 K% 同基准）。
-        ed = (e.get("date") or "")[:10]
         bomb_usd = actual_bomb_by_day.get(ed)
         if bomb_usd is not None and bomb_usd > 0:
             e["bomb_event"] = True
@@ -3622,17 +3640,21 @@ def api_signals():
     # ===== 分位数引擎 =====
     qe = compute_quantile_engine()
 
-    # ===== 风险预算 =====
-    risk_budget = compute_risk_budget(qe, reserve_pool, year_max_reserve)
-
-    # ===== 触发判断 =====
-    triggers = evaluate_triggers(qe, model_state, reserve_pool, year_max_reserve, trades_list)
-
     # ===== 月投倍率 =====
     td_stats = _toundan_stats_from_trades(trades_list)
     has_toundan = td_stats["monthly_count"].get("QQQM", 0) > 0 or \
                   td_stats["monthly_count"].get("IAU", 0) > 0
     monthly_signal = compute_monthly_multiplier(qe, reserve_pool, has_toundan, model_state)
+
+    # 本月无投弹时，月投的倍投部分会从备弹池划拨。风险预算、可投次数和健康度
+    # 都应基于扣除这笔已预留资金后的可用余额，避免把同一笔钱同时承诺给月投和投弹。
+    available_reserve_pool = max(0.0, reserve_pool - monthly_signal["double_up_amount"])
+
+    # ===== 风险预算 / 触发判断 =====
+    risk_budget = compute_risk_budget(qe, available_reserve_pool, year_max_reserve)
+    triggers = evaluate_triggers(
+        qe, model_state, available_reserve_pool, year_max_reserve, trades_list
+    )
 
     # ===== 下次定投（渐进熔断 v1.3.1）=====
     now = datetime.now()
@@ -3644,7 +3666,7 @@ def api_signals():
         _, last_day = monthrange(next_y, next_m)
         next_ding_date = f"{next_y}-{next_m:02d}-{last_day}"
 
-    M_amount = monthly_signal["monthly_amount"]
+    planned_dingtou_amount = monthly_signal["total_invest"]
 
     # 渐进熔断：70%~85% 线性 fade
     soft_pct = settings["qqqm_soft_pct"]
@@ -3664,11 +3686,11 @@ def api_signals():
     ding_allocation = []
     if qqqm_pct > 0.5:
         ding_allocation.append({"symbol": "QQQM", "pct": round(qqqm_pct, 1),
-                                "amount": round(M_amount * qqqm_pct / 100, 2)})
+                                "amount": round(planned_dingtou_amount * qqqm_pct / 100, 2)})
     ding_allocation.append({"symbol": "BRK.B", "pct": round(brk_pct, 1),
-                            "amount": round(M_amount * brk_pct / 100, 2)})
+                            "amount": round(planned_dingtou_amount * brk_pct / 100, 2)})
     ding_allocation.append({"symbol": "IAU", "pct": round(iau_pct, 1),
-                            "amount": round(M_amount * iau_pct / 100, 2)})
+                            "amount": round(planned_dingtou_amount * iau_pct / 100, 2)})
 
     # 每项补充估算股数（amount / 当日收盘价，保留 1 位小数）
     _alloc_prices = {
@@ -3682,7 +3704,7 @@ def api_signals():
 
     next_dingtou = {
         "date": next_ding_date,
-        "total_usd": round(M_amount, 2),
+        "total_usd": round(planned_dingtou_amount, 2),
         "description": f"每月定投（月末），倍率 M={monthly_signal['M']}",
         "allocation": ding_allocation,
         "fuse_active": fuse_active,
@@ -3739,9 +3761,9 @@ def api_signals():
             "current_ratio": round(qqqm_ratio, 1),
         }
 
-    reserve_health_pct = round(reserve_pool / total_value * 100, 1) if total_value > 0 else 0
+    reserve_health_pct = round(available_reserve_pool / total_value * 100, 1) if total_value > 0 else 0
     next_estimated_T = risk_budget["T"]
-    reserve_warning = reserve_pool < next_estimated_T or reserve_pool < monthly_signal.get("double_up_amount", 0)
+    reserve_warning = available_reserve_pool < next_estimated_T
 
     position_alerts = {
         "qqqm_ratio": round(qqqm_ratio, 1),
@@ -3787,7 +3809,7 @@ def api_signals():
     forecast_date = None
     if recent_toundan_amount > 0:
         daily_burn = recent_toundan_amount / 90.0
-        days_remaining = round(reserve_pool / daily_burn) if daily_burn > 0 else None
+        days_remaining = round(available_reserve_pool / daily_burn) if daily_burn > 0 else None
         if days_remaining is not None:
             raw_date = now + timedelta(days=days_remaining)
             year_end = now.replace(month=12, day=31)
@@ -3809,7 +3831,7 @@ def api_signals():
     save_model_state(model_state)
 
     single_T = risk_budget["T"] if risk_budget["T"] > 0 else 1
-    max_toundan_times = int(reserve_pool / single_T) if single_T > 0 else 0
+    max_toundan_times = int(available_reserve_pool / single_T) if single_T > 0 else 0
 
     signals_resp = {
         "model_name": "天府 v1.3.1",
@@ -3820,6 +3842,7 @@ def api_signals():
         "next_dingtou": next_dingtou,
         "toundan_estimate": toundan_estimate,
         "reserve_pool": round(reserve_pool, 2),
+        "available_reserve_pool": round(available_reserve_pool, 2),
         "year_max_reserve": round(year_max_reserve, 2),
         "total_toundan_used": round(total_toundan_used, 2),
         "total_injected": rp_info["total_injected"],

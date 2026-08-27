@@ -126,6 +126,19 @@ def test_compute_monthly_multiplier_uses_distinct_pe_windows():
     assert abs(ms["S"] - round(s_manual, 4)) < 1e-3
 
 
+def test_monthly_multiplier_total_invest_includes_reserve_double_up(monkeypatch):
+    """无投弹且备弹充足时，下次定投总额 = 基础月投 + 同额备弹池倍投。"""
+    monkeypatch.setattr(server, "_get_settings", lambda: {"MONTHLY_BASE_OVERRIDE": 2000})
+    ms = server.compute_monthly_multiplier(
+        {"pe_10y_pctile": 0.5, "pe_3y_pctile": 0.5, "vix_3y_pctile": 0.5,
+         "ema200_deviation_3y_pctile": 0.5, "ema20_deviation_3y_pctile": 0.5},
+        reserve_pool=10000, has_toundan_this_month=False, model_state={},
+    )
+    assert ms["monthly_amount"] == 2000.0
+    assert ms["double_up_amount"] == 2000.0
+    assert ms["total_invest"] == 4000.0
+
+
 def test_fetch_open_price_on_or_after_acquires_yfin_lock():
     """_fetch_open_price_on_or_after 必须在 _YFIN_HISTORY_FETCH_LOCK 保护下调用 yf.Ticker。
     RED（修复前）：lock_held=[False]；GREEN（修复后）：lock_held=[True]。

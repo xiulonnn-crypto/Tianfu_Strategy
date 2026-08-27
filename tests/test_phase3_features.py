@@ -150,6 +150,27 @@ def test_signal_history_monthly_actual_is_net_of_sells(client, monkeypatch):
     assert feb["actual_M"] == 1.5
 
 
+def test_signal_history_monthly_signal_amount_includes_reserve_double_up(client, monkeypatch):
+    """月投信号金额应包含当月无投弹时由备弹池补足的一倍，而非只显示 base × M。"""
+    import server
+
+    monkeypatch.setattr(server, "load_signal_history", lambda: {
+        "entries": [{"date": "2026-02-27", "S": 0.6, "backfilled": True}],
+        "version": 1,
+    })
+    monkeypatch.setattr(server, "get_trades", lambda: [])
+    monkeypatch.setattr(server, "get_fund_records", lambda: [
+        {"date": "2026-02-01", "amount": 10000, "note": "入金"},
+    ])
+    monkeypatch.setattr(server, "_get_settings", lambda: {"MONTHLY_BASE_OVERRIDE": 2000, "K_MAX_CAP": 0.2})
+
+    feb = client.get("/api/signal-history").get_json()["entries"][0]
+    # S=0.6、历史不足两个月时 S_median=0.5 → M=1.2，基础 $2,400；
+    # 倍投受 $2,000 上限约束，总信号金额为 $4,400。
+    assert feb["signal_M"] == 1.2
+    assert feb["signal_amount"] == 4400.0
+
+
 def test_signal_history_bomb_anchored_order_day_fullyear_pool_and_level(client, monkeypatch):
     """投弹事件锚定实际订单日（非规则回放日）：仅在有实际投弹的日期生成事件，
     占比/金额按全年 year_max_reserve（年度投弹总额）计算；档位按标的+VIX 判定；
@@ -202,6 +223,7 @@ def test_sanitize_signal_history_strips_actual_keeps_signal():
                 "S": 0.62,
                 "vix_3y_pctile": 0.82,
                 "signal_M": 1.24,
+                "monthly_amount": 2480.0,
                 "signal_amount": 2480.0,
                 "bomb_event": True,
                 "bomb_signal_pct": 10.0,
@@ -226,6 +248,7 @@ def test_sanitize_signal_history_strips_actual_keeps_signal():
     assert "actual_invest" not in e
     assert "actual_bomb_pct" not in e
     # 金额一律云端脱敏
+    assert "monthly_amount" not in e
     assert "signal_amount" not in e
     assert "bomb_signal_amount" not in e
     assert "bomb_actual_amount" not in e
