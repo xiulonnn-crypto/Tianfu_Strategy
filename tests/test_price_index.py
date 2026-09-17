@@ -2,6 +2,7 @@
 """价格索引 get_price_on_date_fast 与 pandas 路径对拍。"""
 
 import random
+import math
 
 import pandas as pd
 import pytest
@@ -37,3 +38,15 @@ def test_benchmark_symbol_in_merged_index():
     assert server.get_price_on_date_fast(server.BENCHMARK_SYMBOL, d, idx) == server.get_price_on_date(
         server.BENCHMARK_SYMBOL, d, {server.BENCHMARK_SYMBOL: df}
     )
+
+
+@pytest.mark.parametrize("bad_close", [0.0, -1.0, float("nan"), float("inf")])
+def test_price_index_ignores_invalid_latest_close_and_uses_previous_valid_quote(bad_close):
+    """Yahoo 的异常末行不能把组合的最新估值归零。"""
+    dates = pd.to_datetime(["2026-09-15", "2026-09-16"])
+    cache = {"QQQM": pd.DataFrame({"Close": [101.25, bad_close]}, index=dates)}
+
+    idx = server._build_price_index(cache)
+
+    assert math.isclose(server.get_price_on_date_fast("QQQM", "2026-09-16", idx), 101.25)
+    assert math.isclose(server.get_price_on_date("QQQM", "2026-09-16", cache), 101.25)

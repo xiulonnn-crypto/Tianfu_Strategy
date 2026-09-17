@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import bisect
 import json
+import math
 import os
 import threading
 import time
@@ -230,6 +231,14 @@ def _build_positions_timeline(trades, trading_dates):
     return timeline, all_dates
 
 
+def _is_valid_market_price(price) -> bool:
+    """Yahoo 行情中的收盘价必须是有限的正数。"""
+    try:
+        return math.isfinite(float(price)) and float(price) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _build_price_index(history_cache):
     """
     将 {symbol: DataFrame} 转为 bisect 友好的 {symbol: (sorted_dates, {date: price})}。
@@ -246,7 +255,10 @@ def _build_price_index(history_cache):
             try:
                 val = df.at[ts, "Close"]
                 px = float(val.iloc[0]) if hasattr(val, "iloc") else float(val)
-                prices[d] = px
+                # Yahoo 偶发返回 0/NaN/Infinity 的临时末行。保留该行会让
+                # 组合市值归零、收益误显示为 -100%，故回退到上一有效收盘价。
+                if _is_valid_market_price(px):
+                    prices[d] = px
             except Exception:
                 continue
         if not prices:
@@ -398,9 +410,13 @@ def get_price_on_date(symbol, date_str, history_cache, price_index=None):
     if not mask.any():
         return None
     try:
-        val = df.loc[mask].iloc[-1]["Close"]
-        # 兼容 pandas 新版：iloc[-1]["Close"] 可能返回 Series，取标量
-        return float(val.iloc[0]) if hasattr(val, "iloc") else float(val)
+        # 反向寻找最近的有效收盘价，与价格索引路径保持一致。
+        for _, row in df.loc[mask].iloc[::-1].iterrows():
+            val = row["Close"]
+            px = float(val.iloc[0]) if hasattr(val, "iloc") else float(val)
+            if _is_valid_market_price(px):
+                return px
+        return None
     except Exception:
         return None
 
@@ -483,7 +499,8 @@ def _history_to_json(history_cache):
             try:
                 d = str(idx)[:10]
                 v = float(row["Close"]) if "Close" in row else float(row.iloc[0])
-                out[sym][d] = v
+                if _is_valid_market_price(v):
+                    out[sym][d] = v
             except Exception:
                 pass
     return out
@@ -547,7 +564,9 @@ def _save_price_cache(symbols, start_date, end_date, history_cache, bench_cache,
         if df is not None and not df.empty:
             for idx, row in df.iterrows():
                 try:
-                    bench_data[str(idx)[:10]] = float(row["Close"])
+                    price = float(row["Close"])
+                    if _is_valid_market_price(price):
+                        bench_data[str(idx)[:10]] = price
                 except Exception:
                     pass
     data = {

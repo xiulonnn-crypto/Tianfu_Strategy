@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **云端收益页偶发显示 -100% / 无有效行情**：Yahoo Finance 偶发返回 `0`、负数、NaN 或 Infinity 的最新收盘价时，旧逻辑会将其作为有效报价写入价格索引，使组合最新市值归零。现仅接受有限正数价格，并在异常末行出现时自动回退到前一有效收盘价；缓存序列化同步剔除异常价格，避免坏快照传播到 GitHub Pages。
+
 ## [0.1.0-019] - 2026-08-27 - include reserve double-up in dca totals
 
 ### Fixed
