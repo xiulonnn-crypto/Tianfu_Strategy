@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-021] - 2026-09-19 - clarify market data timestamp
+
 ### Fixed
 
 - **收益页将缓存拉取时刻误称为「行情更新」**：此前将缓存的拉取时刻显示成行情更新时间，容易误以为日涨跌为最新报价。现明确分别展示实际用于计算的「行情基准日」与「缓存拉取」时间。
