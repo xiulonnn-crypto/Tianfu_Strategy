@@ -1827,7 +1827,7 @@ def api_returns_overview():
     收益概览与走势图：采用时间加权收益率（TWR），按相邻交易日分段连乘，
     消除入金/出金对收益率的影响，反映纯持仓涨跌。
 
-    end_fetch 取今日（exclusive），不含盘中实时价，保证每次刷新数据稳定。
+    响应中的 data_as_of 为实际用于计算的最近行情日期；price_fetched_at 仅表示缓存拉取时刻。
     """
     trades_list = get_trades()
     symbols = get_all_symbols(trades_list)

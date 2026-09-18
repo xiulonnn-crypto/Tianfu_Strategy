@@ -258,7 +258,7 @@
     <!-- 全局数据新鲜度状态条 -->
     <div class="container-main">
       <div id="globalStatusBar" class="global-status-bar">
-        <span id="globalStatusTime"><span class="global-status-dot" style="background:#7CFC9B;"></span>行情更新：--</span>
+        <span id="globalStatusTime"><span class="global-status-dot" style="background:#7CFC9B;"></span>行情基准日：--</span>
         <span id="globalStatusVersion"><i class="fas fa-database" style="opacity:.85; margin-right:4px;"></i>数据版本：--</span>
         <span id="globalStatusMode"><i class="fas fa-circle-notch fa-spin" style="opacity:.7; margin-right:4px;"></i>模式检测中…</span>
       </div>
@@ -1040,7 +1040,7 @@
           return tzAbbr ? core + ' ' + tzAbbr : core;
         } catch(e) { return isoUtc; }
       }
-      /** 收益页「数据更新时间」：固定按 Asia/Shanghai 展示，后缀 GMT+8（与 price_cache.fetched_at UTC 对应）。 */
+      /** 缓存拉取时间：固定按 Asia/Shanghai 展示，后缀 GMT+8（与 price_cache.fetched_at UTC 对应）。 */
       window.__formatAsShanghaiGMT8 = function(isoUtc) {
         if (!isoUtc) return '';
         try {

@@ -26,9 +26,10 @@
       var modeEl = document.getElementById('globalStatusMode');
       if (timeEl) {
         var _fmtShFn = window.__formatAsShanghaiGMT8;
-        var ts = opts.priceFetchedAt && typeof _fmtShFn === 'function' ? _fmtShFn(opts.priceFetchedAt)
-          : (opts.dataAsOf ? opts.dataAsOf : '');
-        timeEl.innerHTML = '<span class="global-status-dot" style="background:#7CFC9B;"></span>行情更新：' + (ts || '--');
+        var fetchedAt = opts.priceFetchedAt && typeof _fmtShFn === 'function' ? _fmtShFn(opts.priceFetchedAt) : '';
+        var asOf = opts.dataAsOf || '--';
+        timeEl.innerHTML = '<span class="global-status-dot" style="background:#7CFC9B;"></span>行情基准日：' + asOf
+          + (fetchedAt ? ' · 缓存拉取：' + fetchedAt : '');
       }
       if (verEl) {
         var ver = window.__cloudDataVersion || opts.version || '--';

@@ -283,14 +283,15 @@
       if (asOfEl) {
         var _fmtSh = window.__formatAsShanghaiGMT8;
         var _tsRet = (data.price_fetched_at && typeof _fmtSh === 'function') ? _fmtSh(data.price_fetched_at) : '';
-        var _line = _tsRet ? ('数据更新时间：' + _tsRet) : (data.data_as_of ? ('数据更新时间：' + data.data_as_of) : '');
+        var _line = data.data_as_of ? ('行情基准日：' + data.data_as_of) : '';
+        if (_tsRet) _line += (_line ? ' · ' : '') + '缓存拉取：' + _tsRet;
         asOfEl.textContent = _line + (data.method ? ' | 方法: ' + data.method : '');
       }
       var hAsOf = document.getElementById('historyDataAsOf');
       if (hAsOf) {
         var _fmt = window.__formatAsLocal;
         var _ts = (data.price_fetched_at && typeof _fmt === 'function') ? _fmt(data.price_fetched_at) : '';
-        hAsOf.textContent = '最新更新时间：' + (_ts || data.data_as_of || '--');
+        hAsOf.textContent = '行情基准日：' + (data.data_as_of || '--') + (_ts ? ' · 缓存拉取：' + _ts : '');
       }
       updateGlobalStatusBar({ priceFetchedAt: data.price_fetched_at, dataAsOf: data.data_as_of });
       updateAthBadge(data);

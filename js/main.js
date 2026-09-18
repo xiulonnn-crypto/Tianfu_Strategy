@@ -29,9 +29,10 @@
       var modeEl = document.getElementById('globalStatusMode');
       if (timeEl) {
         var _fmtShFn = window.__formatAsShanghaiGMT8;
-        var ts = opts.priceFetchedAt && typeof _fmtShFn === 'function' ? _fmtShFn(opts.priceFetchedAt)
-          : (opts.dataAsOf ? opts.dataAsOf : '');
-        timeEl.innerHTML = '<span class="global-status-dot" style="background:#7CFC9B;"></span>行情更新：' + (ts || '--');
+        var fetchedAt = opts.priceFetchedAt && typeof _fmtShFn === 'function' ? _fmtShFn(opts.priceFetchedAt) : '';
+        var asOf = opts.dataAsOf || '--';
+        timeEl.innerHTML = '<span class="global-status-dot" style="background:#7CFC9B;"></span>行情基准日：' + asOf
+          + (fetchedAt ? ' · 缓存拉取：' + fetchedAt : '');
       }
       if (verEl) {
         var ver = window.__cloudDataVersion || opts.version || '--';
@@ -726,14 +727,15 @@
       if (asOfEl) {
         var _fmtSh = window.__formatAsShanghaiGMT8;
         var _tsRet = (data.price_fetched_at && typeof _fmtSh === 'function') ? _fmtSh(data.price_fetched_at) : '';
-        var _line = _tsRet ? ('数据更新时间：' + _tsRet) : (data.data_as_of ? ('数据更新时间：' + data.data_as_of) : '');
+        var _line = data.data_as_of ? ('行情基准日：' + data.data_as_of) : '';
+        if (_tsRet) _line += (_line ? ' · ' : '') + '缓存拉取：' + _tsRet;
         asOfEl.textContent = _line + (data.method ? ' | 方法: ' + data.method : '');
       }
       var hAsOf = document.getElementById('historyDataAsOf');
       if (hAsOf) {
         var _fmt = window.__formatAsLocal;
         var _ts = (data.price_fetched_at && typeof _fmt === 'function') ? _fmt(data.price_fetched_at) : '';
-        hAsOf.textContent = '最新更新时间：' + (_ts || data.data_as_of || '--');
+        hAsOf.textContent = '行情基准日：' + (data.data_as_of || '--') + (_ts ? ' · 缓存拉取：' + _ts : '');
       }
       updateGlobalStatusBar({ priceFetchedAt: data.price_fetched_at, dataAsOf: data.data_as_of });
       updateAthBadge(data);
