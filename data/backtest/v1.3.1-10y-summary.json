@@ -55,13 +55,16 @@
   "nav_rows": 2514,
   "trade_rows": 653,
   "benchmark": {
-    "symbol": "QQQ",
-    "proxy_before": "^IXIC",
-    "qqq_ipo_date": "1999-03-10",
-    "proxy_days": 0,
+    "label": "60% QQQ + 25% BRK.B + 15% IAU（季度再平衡）",
+    "components": {
+      "QQQ": 0.6,
+      "BRK-B": 0.25,
+      "IAU": 0.15
+    },
+    "rebalance": "quarterly",
+    "available_from": "2016-01-04",
     "dca_total": 50000.0,
     "dca_schedule": "monthly",
-    "first_qqq_date": "2016-01-04",
     "portfolio_curve": "nav_scaled_to_summary_cumulative_pct"
   }
 }

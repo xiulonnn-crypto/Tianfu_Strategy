@@ -44,10 +44,10 @@
           { label: 'Portfolio (TWR)', data: data.my || [], borderColor: '#4A3D7C', backgroundColor: 'rgba(74,61,124,0.06)', fill: true, tension: 0.3, borderWidth: 2, pointRadius: 0 },
         ];
         if (mode === 'bench' || mode === 'all') {
-          datasets.push({ label: 'Nasdaq (Benchmark)', data: data.bench || [], borderColor: '#8A9199', backgroundColor: 'rgba(138,145,153,0.04)', fill: true, tension: 0.3, borderWidth: 1.5, pointRadius: 0 });
+          datasets.push({ label: '60/25/15 基准（季度再平衡）', data: data.bench || [], borderColor: '#8A9199', backgroundColor: 'rgba(138,145,153,0.04)', fill: true, tension: 0.3, borderWidth: 1.5, pointRadius: 0 });
         }
         if (mode === 'dca' || mode === 'all') {
-          datasets.push({ label: '等额定投 (DCA)', data: data.dca || [], borderColor: '#BFA960', backgroundColor: 'rgba(191,169,96,0.04)', fill: false, tension: 0.3, borderWidth: 1.5, borderDash: [6, 3], pointRadius: 0 });
+          datasets.push({ label: '混合基准等额定投 (DCA)', data: data.dca || [], borderColor: '#BFA960', backgroundColor: 'rgba(191,169,96,0.04)', fill: false, tension: 0.3, borderWidth: 1.5, borderDash: [6, 3], pointRadius: 0 });
         }
 
         // 定投/投弹散点标记（叠加在 Portfolio 线上）
@@ -126,7 +126,7 @@
       var datasets = [{ label: '组合回撤 %', data: ds.values, borderColor: '#D64545', backgroundColor: 'rgba(214,69,69,0.12)', fill: true, tension: 0.2, borderWidth: 1.5, pointRadius: 0, order: 1 }];
       var hasBench = bds && bds.values && bds.values.length === ds.values.length && bds.values.some(function(v) { return v != null; });
       if (hasBench) {
-        datasets.push({ label: '纳指回撤 %', data: bds.values, borderColor: '#8A9199', backgroundColor: 'transparent', fill: false, tension: 0.2, borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0, order: 0 });
+        datasets.push({ label: '混合基准回撤 %', data: bds.values, borderColor: '#8A9199', backgroundColor: 'transparent', fill: false, tension: 0.2, borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0, order: 0 });
       }
       chartDrawdown = new Chart(ctx, {
         type: 'line',
@@ -218,8 +218,8 @@
       if (elSortino) elSortino.textContent = (risk && risk.sortino_ratio != null) ? String(risk.sortino_ratio) : '--';
       if (elSortinoBench) {
         if (risk && risk.bench_sortino_ratio != null) {
-          elSortinoBench.textContent = '同期纳指 ' + risk.bench_sortino_ratio;
-        } else { elSortinoBench.textContent = '同期纳指 —'; }
+          elSortinoBench.textContent = '同期混合基准 ' + risk.bench_sortino_ratio;
+        } else { elSortinoBench.textContent = '同期混合基准 —'; }
       }
 
       if (elAlpha) {
@@ -232,7 +232,7 @@
         if (risk && risk.alpha_pct != null) {
           elAlphaNote.textContent = (risk.alpha_pct > 0 ? '优于 CAPM 预期' : risk.alpha_pct < 0 ? '劣于 CAPM 预期' : '符合 CAPM 预期')
             + ' · 无风险 ' + rfLbl + '%';
-        } else { elAlphaNote.textContent = 'CAPM（含美国1Y ' + rfLbl + '%）相对纳指，%'; }
+        } else { elAlphaNote.textContent = 'CAPM（含美国1Y ' + rfLbl + '%）相对混合基准，%'; }
       }
 
       if (elBeta) elBeta.textContent = (risk && risk.beta != null) ? risk.beta : '--';

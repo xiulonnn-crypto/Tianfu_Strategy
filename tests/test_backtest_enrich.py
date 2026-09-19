@@ -47,10 +47,10 @@ def test_compute_port_twr_synthetic_no_external_matches_naive():
     assert s[-1] == pytest.approx(naive, rel=1e-4)
 
 
-def test_qqq_dca_monthly_schedule():
+def test_benchmark_dca_monthly_schedule():
     px = [100.0, 100.0, 110.0, 110.0]
     nav_dates = ["2020-01-02", "2020-01-03", "2020-02-03", "2020-02-04"]
-    out = ib.compute_qqq_dca_pct_series(nav_dates, px, 1200.0)
+    out = ib.compute_benchmark_dca_pct_series(nav_dates, px, 1200.0)
     assert out[0] == pytest.approx(0.0)
     assert out[-1] is not None
     assert out[-1] > 0
@@ -70,12 +70,12 @@ def test_build_qqq_proxy_series_seamless_splice():
     assert px[3] == 46.0
 
 
-def test_enrich_skips_ixic_when_nav_starts_after_ipo(tmp_path: Path):
+def test_enrich_fetches_each_composite_component(tmp_path: Path):
     calls: list[str] = []
 
     def fake_fetch(sym: str, start: str, end: str) -> dict[str, float]:
         calls.append(sym)
-        if sym == "QQQ":
+        if sym in ib.COMPOSITE_BENCHMARK_COMPONENTS:
             return {"2016-01-04": 100.0, "2016-01-05": 101.0}
         return {}
 
@@ -96,5 +96,20 @@ def test_enrich_skips_ixic_when_nav_starts_after_ipo(tmp_path: Path):
     (tmp_path / "t-t-trades.json").write_text("[]", encoding="utf-8")
 
     ib.enrich_benchmark(tmp_path, "t", ["t"], force=True, fetch_closes=fake_fetch)
-    assert "QQQ" in calls
-    assert ib.BENCHMARK_SYMBOL not in calls
+    assert set(calls) == set(ib.COMPOSITE_BENCHMARK_COMPONENTS)
+    nav = json.loads((tmp_path / "t-t-nav.json").read_text(encoding="utf-8"))
+    summary_out = json.loads((tmp_path / "t-t-summary.json").read_text(encoding="utf-8"))
+    assert nav[-1]["benchmark_bh_pct"] == pytest.approx(1.0)
+    assert summary_out["benchmark"]["components"] == ib.COMPOSITE_BENCHMARK_COMPONENTS
+
+
+def test_composite_series_rebalances_quarterly():
+    dates = ["2025-03-31", "2025-04-01", "2025-04-02"]
+    closes = {
+        "QQQ": {dates[0]: 100, dates[1]: 110, dates[2]: 121},
+        "BRK-B": {dates[0]: 100, dates[1]: 200, dates[2]: 200},
+        "IAU": {date: 100 for date in dates},
+    }
+    values, available_from = ib.build_composite_benchmark_series(dates, closes)
+    assert available_from == dates[0]
+    assert values == pytest.approx([100.0, 131.0, 131.0 * 1.06])

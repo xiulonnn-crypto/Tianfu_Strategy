@@ -118,7 +118,7 @@
            eval: '各资产实际仓位偏离目标配置比例的综合评分，反映配置纪律。' + (cs >= 80 ? '当前 ' + cs + '%，仓位偏离受控，配置在目标轨道内' : cs >= 60 ? '当前 ' + cs + '%，仓位偏离偏大，建议关注再平衡' : '当前 ' + cs + '%，配置偏离超标，需优先纠偏')},
           {label:'超额收益', val: (er >= 0 ? '+' : '') + er + '%', color: er >= 0 ? '#0d9488' : '#dc2626',
            sub: er > 2 ? '显著跑赢基准' : er > 0 ? '小幅跑赢基准' : er === 0 ? '与基准持平' : '跑输基准',
-           eval: '实际收益率（MWRR）减去同期 DCA 定投基准的差值，衡量主动操作带来的额外收益。' + (er > 2 ? '超额 +' + er + '%，策略显著跑赢定投基准' : er > 0 ? '超额 +' + er + '%，策略小幅跑赢定投基准' : er === 0 ? '与定投基准持平，策略效果中性' : '落后 ' + Math.abs(er) + '%，策略跑输定投基准')},
+           eval: '实际收益率（MWRR）减去同期「' + (data.benchmark || '60% QQQ + 25% BRK.B + 15% IAU（季度再平衡）') + '」等额定投基准的差值，衡量主动操作带来的额外收益。' + (er > 2 ? '超额 +' + er + '%，策略显著跑赢定投基准' : er > 0 ? '超额 +' + er + '%，策略小幅跑赢定投基准' : er === 0 ? '与定投基准持平，策略效果中性' : '落后 ' + Math.abs(er) + '%，策略跑输定投基准')},
           {label:'投弹效率', val: be != null ? be + '%' : '--', color: be != null && be < 5 ? '#0d9488' : '#f59e0b',
            sub: be == null ? '暂无数据' : be < 3 ? '买点精准' : be < 5 ? '买点良好' : be < 10 ? '买点一般' : '买点偏高',
            eval: '实际买入价偏离同期区间最低价的百分比，越低代表买点越精准。' + (be == null ? '暂无数据' : be < 3 ? '偏离 ' + be + '%，买点精准，接近区间最低价' : be < 5 ? '偏离 ' + be + '%，买点良好，效率较高' : be < 10 ? '偏离 ' + be + '%，买点一般，在合理区间内' : '偏离 ' + be + '%，买点偏高，注意控制入场时机')},
@@ -401,6 +401,10 @@
           + ' · 滑点 ' + (summary.slippage_bps != null ? summary.slippage_bps + ' bps' : '—');
       }
     }
+    function backtestBenchmarkLabel(summary) {
+      var bm = summary && summary.benchmark;
+      return (bm && bm.label) || 'QQQ';
+    }
     function renderBacktestCoreCards(summary) {
       var m = summary.metrics || {};
       var el = document.getElementById('backtestCoreCards');
@@ -506,7 +510,10 @@
       var sum = __backtestState.lastSummary;
       if (note) {
         var bm = sum && sum.benchmark;
-        if (v === 'return' && bm && bm.proxy_days > 0) {
+        if (v === 'return' && bm && bm.available_from) {
+          note.textContent = '收益率基准：' + backtestBenchmarkLabel(sum) + '；可回溯至 ' + bm.available_from + '（以 IAU 可用日为起点）。';
+          note.classList.remove('hidden');
+        } else if (v === 'return' && bm && bm.proxy_days > 0) {
           note.textContent = bm.proxy_days + ' 个交易日早于 QQQ 上市（' + (bm.qqq_ipo_date || '1999-03-10') + '），用 ' + (bm.proxy_before || '^IXIC') + ' 按比例缩放拟合';
           note.classList.remove('hidden');
         } else {
@@ -544,8 +551,8 @@
         } else {
         if (ph) ph.style.display = 'none';
         var portArr = navRows.map(function (r) { return r.port_ret_pct; });
-        var bhArr = navRows.map(function (r) { return r.qqq_bh_pct; });
-        var dcaArr = navRows.map(function (r) { return r.qqq_dca_pct; });
+        var bhArr = navRows.map(function (r) { return r.benchmark_bh_pct != null ? r.benchmark_bh_pct : r.qqq_bh_pct; });
+        var dcaArr = navRows.map(function (r) { return r.benchmark_dca_pct != null ? r.benchmark_dca_pct : r.qqq_dca_pct; });
         var mds = downsampleBacktestMulti(labels, [portArr, bhArr, dcaArr], maxPts);
         chartBacktestNav = new Chart(ctx, {
           type: 'line',
@@ -553,8 +560,8 @@
             labels: mds.labels,
             datasets: [
               { label: '组合 (回测)', data: mds.series[0], borderColor: '#4A3D7C', backgroundColor: 'rgba(74,61,124,0.06)', fill: true, tension: 0.3, borderWidth: 2, pointRadius: 0 },
-              { label: 'QQQ 买入持有', data: mds.series[1], borderColor: '#8A9199', backgroundColor: 'rgba(138,145,153,0.04)', fill: true, tension: 0.3, borderWidth: 1.5, pointRadius: 0 },
-              { label: 'QQQ 月定投', data: mds.series[2], borderColor: '#BFA960', backgroundColor: 'rgba(191,169,96,0.04)', fill: false, tension: 0.3, borderWidth: 1.5, borderDash: [6, 3], pointRadius: 0 }
+              { label: backtestBenchmarkLabel(summary) + ' 买入持有', data: mds.series[1], borderColor: '#8A9199', backgroundColor: 'rgba(138,145,153,0.04)', fill: true, tension: 0.3, borderWidth: 1.5, pointRadius: 0 },
+              { label: backtestBenchmarkLabel(summary) + ' 月定投', data: mds.series[2], borderColor: '#BFA960', backgroundColor: 'rgba(191,169,96,0.04)', fill: false, tension: 0.3, borderWidth: 1.5, borderDash: [6, 3], pointRadius: 0 }
             ]
           },
           options: {

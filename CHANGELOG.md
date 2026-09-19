@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **收益页基准**：收益曲线、回撤对比、基准夏普/Sortino、Alpha 与 Beta 统一改为 60% QQQ + 25% BRK.B + 15% IAU 的季度再平衡历史净值。
+- **资产归因明细**：收益率为负时固定以红色显示。
+- **定投与复盘基准**：收益页的等额定投 DCA、策略复盘超额收益与历史回测收益率对比统一使用 60% QQQ + 25% BRK.B + 15% IAU 的季度再平衡基准；历史回测基准从 IAU 可用日开始展示。
+
 ## [0.1.0-021] - 2026-09-19 - clarify market data timestamp
 
 ### Fixed

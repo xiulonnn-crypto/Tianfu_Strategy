@@ -32,8 +32,11 @@ DATA_DIR = BASE_DIR / "data"
 FUND_FILE = DATA_DIR / "fund_records.json"
 TRADES_FILE = DATA_DIR / "trades.json"
 
-# 纳指基准代码（Yahoo）
-BENCHMARK_SYMBOL = "^IXIC"
+# 收益页混合基准：每季首个交易日收盘后恢复目标权重，日线使用未复权 Close，
+# 与组合估值口径一致。BENCHMARK_SYMBOL 仅作为合成净值序列的内部键，不传给 Yahoo。
+BENCHMARK_SYMBOL = "__60QQQ_25BRKB_15IAU_Q_REBAL__"
+BENCHMARK_COMPONENT_WEIGHTS = {"QQQ": 0.60, "BRK-B": 0.25, "IAU": 0.15}
+BENCHMARK_DISPLAY_NAME = "60% QQQ + 25% BRK.B + 15% IAU（季度再平衡）"
 # 无风险利率：美国 1 年期国债恒定到期收益率（FRED DGS1，%）；拉取失败时的回退值（小数，与夏普/Alpha/Jensen 同口径）。
 # （与前端 index.html 中 DEFAULT_RISK_FREE_PCT_FALLBACK 占位需大致同步）
 RISK_FREE_RATE_FALLBACK = 0.0373
@@ -52,7 +55,7 @@ _RISK_FREE_DGS1_CACHE: tuple[str, float] | None = None
 
 # 价格缓存：文件持久化，同一天内所有请求使用同一份数据，避免刷新时数据变化
 PRICE_CACHE_FILE = DATA_DIR / "price_cache.json"
-_CACHE_VERSION = 7  # 升级时递增，使旧缓存失效（7：写入 fetched_at UTC 时间戳供前端展示）
+_CACHE_VERSION = 8  # 8：收益基准改为 60/25/15 季度再平衡合成净值
 
 # 进程内存缓存：比文件缓存再快一级，避免并发请求重复解析 JSON / 重复拉 Yahoo。
 # key: (frozenset(all_syms), start_date, end_date, today_str)
@@ -523,6 +526,61 @@ def _json_to_history(data):
     return out
 
 
+def _build_rebalanced_benchmark_history(component_histories):
+    """用 QQQ / BRK-B / IAU 的共同交易日构造季度再平衡的合成基准净值。"""
+    price_maps = {}
+    common_dates = None
+    for symbol in BENCHMARK_COMPONENT_WEIGHTS:
+        df = (component_histories or {}).get(symbol)
+        if df is None or df.empty:
+            return None
+        prices = {}
+        for idx, row in df.iterrows():
+            try:
+                price = float(row["Close"])
+                if _is_valid_market_price(price):
+                    prices[str(idx)[:10]] = price
+            except Exception:
+                pass
+        if not prices:
+            return None
+        price_maps[symbol] = prices
+        dates = set(prices)
+        common_dates = dates if common_dates is None else common_dates & dates
+
+    if not common_dates:
+        return None
+
+    shares = {}
+    nav_rows = []
+    prior_quarter = None
+    nav = 100.0
+    for date_str in sorted(common_dates):
+        prices = {symbol: price_maps[symbol][date_str] for symbol in BENCHMARK_COMPONENT_WEIGHTS}
+        quarter = pd.Timestamp(date_str).to_period("Q")
+        if prior_quarter is None:
+            shares = {
+                symbol: nav * weight / prices[symbol]
+                for symbol, weight in BENCHMARK_COMPONENT_WEIGHTS.items()
+            }
+        else:
+            nav = sum(shares[symbol] * prices[symbol] for symbol in shares)
+            # 当季首个可共同交易的收盘价计算完当日净值后调仓，作用于下一交易日。
+            if quarter != prior_quarter:
+                shares = {
+                    symbol: nav * weight / prices[symbol]
+                    for symbol, weight in BENCHMARK_COMPONENT_WEIGHTS.items()
+                }
+        nav_rows.append((date_str, nav))
+        prior_quarter = quarter
+
+    return pd.DataFrame(
+        [value for _, value in nav_rows],
+        index=pd.DatetimeIndex([date for date, _ in nav_rows]),
+        columns=["Close"],
+    )
+
+
 def _load_price_cache(symbols, start_date, end_date):
     """
     从文件加载价格缓存。若缓存有效（同一天、版本匹配、日期范围一致、请求标的为缓存标的的子集）
@@ -596,7 +654,7 @@ def fetch_histories(symbols, start_date, end_date):
 
 def fetch_histories_with_bench(symbols, start_date, end_date):
     """
-    拉取标的 + 纳指基准，返回 (history_cache, bench_cache, trading_dates)。
+    拉取标的 + 混合基准成分，返回 (history_cache, bench_cache, trading_dates)。
     统一入口，保证收益概览与资产配置使用同一份数据。
 
     三级缓存策略（由快到慢）：
@@ -608,7 +666,8 @@ def fetch_histories_with_bench(symbols, start_date, end_date):
     其余线程 wait 在 threading.Event 上，待拉取完成后直接读内存缓存，
     避免同一行情被并行重复拉取（race condition on cold file cache）。
     """
-    all_syms = sorted(set(symbols) | {BENCHMARK_SYMBOL})
+    requested_symbols = set(symbols)
+    all_syms = sorted(requested_symbols | set(BENCHMARK_COMPONENT_WEIGHTS))
     today = datetime.now().strftime("%Y-%m-%d")
     mem_key = (frozenset(all_syms), start_date, end_date, today)
 
@@ -637,7 +696,7 @@ def fetch_histories_with_bench(symbols, start_date, end_date):
         fc = _load_price_cache(all_syms, start_date, end_date)
         if fc:
             hist, bench, dates = fc
-            return {k: v for k, v in hist.items() if k != BENCHMARK_SYMBOL}, bench, dates
+            return {k: hist[k] for k in requested_symbols if k in hist}, bench, dates
         return {}, {}, []
 
     # ── 当前线程为拉取者 ──
@@ -647,17 +706,16 @@ def fetch_histories_with_bench(symbols, start_date, end_date):
         fc = _load_price_cache(all_syms, start_date, end_date)
         if fc:
             hist, bench, dates = fc
-            hist_only = {k: v for k, v in hist.items() if k != BENCHMARK_SYMBOL}
+            hist_only = {k: hist[k] for k in requested_symbols if k in hist}
             result = (hist_only, bench, dates)
         else:
-            # Level 3: Yahoo Finance — 标的与基准合并为一次并行拉取
+            # Level 3: 逐标的拉取持仓与混合基准成分，再合成基准净值。
             all_fetched = _fetch_histories_raw(all_syms, start_date, end_date)
-            bench_cache = {BENCHMARK_SYMBOL: all_fetched.get(BENCHMARK_SYMBOL)}
-            history_cache = {k: v for k, v in all_fetched.items() if k != BENCHMARK_SYMBOL}
+            bench_cache = {BENCHMARK_SYMBOL: _build_rebalanced_benchmark_history(all_fetched)}
+            history_cache = {k: all_fetched.get(k) for k in requested_symbols}
             trading_dates = get_trading_dates_from_cache(history_cache, bench_cache)
             if trading_dates:
-                merged = dict(all_fetched)
-                _save_price_cache(all_syms, start_date, end_date, merged, bench_cache, trading_dates)
+                _save_price_cache(all_syms, start_date, end_date, all_fetched, bench_cache, trading_dates)
             result = (history_cache, bench_cache, trading_dates if trading_dates else [])
 
         if result and result[2]:  # 有 trading_dates 才值得缓存
@@ -748,9 +806,9 @@ def compute_cost_basis(trades):
 def get_trading_dates_from_cache(history_cache, bench_cache):
     """
     从历史缓存中汇总交易日字符串，返回升序列表。
-    优先以纳指基准的日期为准，保证收益计算不因个别标的拉取失败而波动。
+    优先以混合基准的共同交易日为准，保证收益计算与基准曲线严格对齐。
     """
-    # 纳指交易日最完整，作为主日历
+    # 合成基准仅含各成分的共同交易日，作为主日历。
     bench_dates = set()
     for df in bench_cache.values():
         if df is not None and not df.empty:
@@ -939,12 +997,13 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
                       period_start, period_end, all_trading_dates, perf=None,
                       fund_records=None):
     """
-    生成时段内每个交易日的累计 TWR 走势 + DCA 基准。
+    生成时段内每个交易日的累计 TWR 走势 + 混合基准 DCA。
 
-    my：组合累计 TWR（%）；bench：纳指涨跌幅（%）；dca：等额定投收益（%）。
+    my：组合累计 TWR（%）；bench：混合基准涨跌幅（%）；dca：等额定投收益（%）。
     my_mwrr：自 period_start 至各交易日的子区间 MWRR（%），与 /api/strategy-review
     超额收益（MWRR − DCA）在同一终点口径可比；DCA 模式下图表应使用 my_mwrr 而非 my。
-    DCA 模拟：将每年计划投入总额（2000×12 + 40000）均摊到该年各交易日，按 QQQM 价格模拟。
+    DCA 模拟：将每年计划投入总额（2000×12 + 40000）均摊到该年各交易日，
+    按 60% QQQ + 25% BRK.B + 15% IAU 的季度再平衡合成净值买入。
     """
     fr = fund_records if fund_records is not None else get_fund_records()
     dates_in_range = [d for d in all_trading_dates if period_start <= d <= period_end]
@@ -996,9 +1055,8 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
                 round(mwr_pt, 2) if mwr_pt is not None else my_series[-1],
             )
 
-            # DCA：按当年计划总额 / 当年交易日数，每日等额买入 QQQM
-            qqqm_p = get_price_on_date("QQQM", curr_d, history_cache, pix)
-            dca_price = qqqm_p if qqqm_p and qqqm_p > 0 else (b_curr if b_curr > 0 else 1)
+            # DCA：按当年计划总额 / 当年交易日数，每日等额买入混合基准净值。
+            dca_price = b_curr if b_curr > 0 else 1.0
             n_year_days = trading_days_by_year.get(curr_d[:4], 0)
             yearly_planned_invest = _yearly_planned_invest_amount()
             daily_dca_amount = (
@@ -1048,7 +1106,7 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
 
 
 def _twr_daily_returns(trades_list, history_cache, bench_cache, dates_in_range, perf=None):
-    """返回 (r_port_list, r_bench_list) 日 TWR 收益，仅含前一日有持仓的区间。"""
+    """返回 (r_port_list, r_bench_list) 日收益，仅含前一日有持仓的区间。"""
     pix = (perf or {}).get("price_index")
     tl = (perf or {}).get("position_timeline")
     tds = (perf or {}).get("timeline_dates")
@@ -1435,14 +1493,14 @@ def compute_risk_metrics(trades_list, history_cache, bench_cache,
                          period_start, effective_end_date, all_trading_dates, perf=None,
                          rf_annual: float | None = None):
     """
-    风险指标（纳指为基准），均按所选时段 [period_start, effective_end_date] 计算：
+    风险指标（60/25/15 季度再平衡混合基准），均按所选时段 [period_start, effective_end_date] 计算：
     - 最大回撤 + 回撤序列 + Top-3 回撤明细（Duration / Recovery）。
     - 夏普比：年化 = sqrt(252) × 日超额收益均值 / 样本标准差(组合日收益)；
               无风险 R_f 为美国 1 年期国债（FRED DGS1，按日抓取；失败则用回退常数）。
     - rf_annual：年化无风险小数；须与 `/api/returns-overview` 当次请求的 DGS1 一致。
     - Beta：组合的日收益对基准日收益的 OLS 回归斜率。
     - Jensen Alpha（%）：区间内 R_p - R_f - β×(R_m - R_f)，R_f 为同区间复利无风险总收益。
-    - Sortino：组合年化超额/下行偏差；同期纳指 Sortino 用基准日收益同口径计算。
+    - Sortino：组合年化超额/下行偏差；同期混合基准 Sortino 用基准日收益同口径计算。
     - Calmar：年化几何收益÷同期最大回撤（% 转为小数作分母）。
     """
     try:
@@ -1536,7 +1594,7 @@ def compute_value_growth_chart(trades_list, history_cache, bench_cache,
                                period_start, period_end, all_trading_dates, perf=None):
     """
     生成时段内每个交易日的「市值相对期初增长%」走势，用于资金加权收益率下的图表展示。
-    my：组合市值 (V(t)/V_start - 1)*100；bench：纳指相对 period_start 的简单涨跌幅（%）。
+    my：组合市值 (V(t)/V_start - 1)*100；bench：混合基准相对 period_start 的简单涨跌幅（%）。
     """
     dates_in_range = [d for d in all_trading_dates if period_start <= d <= period_end]
     if not dates_in_range:
@@ -2077,6 +2135,7 @@ def api_returns_overview():
         "data_as_of": effective_end_date,
         "price_fetched_at": price_fetched_at,
         "method": "MWRR",
+        "benchmark": BENCHMARK_DISPLAY_NAME,
         "risk_free_rate_pct": rf_pct,
         "risk_free_rate_series": "DGS1",
         "risk_metrics": risk_metrics,
@@ -3906,7 +3965,7 @@ def api_strategy_review():
     # 纪律分：当前无触发日志，以实际执行率 100% 为默认
     discipline_score = 100
 
-    # Alpha：实际 MWRR vs DCA
+    # Alpha：实际 MWRR vs 60/25/15 季度再平衡基准的等额定投 DCA
     symbols = get_all_symbols(trades_list)
     excess_return = 0
     dca_return = 0
@@ -4095,6 +4154,7 @@ def api_strategy_review():
         "real_mwrr": round(real_mwrr, 2),
         "real_twr": round(real_twr, 2),
         "dca_return": round(dca_return, 2),
+        "benchmark": BENCHMARK_DISPLAY_NAME,
         "bomb_efficiency": bomb_efficiency,
         "safety_ratio": safety_ratio,
         "burn_rate": burn_rate,
@@ -4235,8 +4295,6 @@ def api_stress_test():
         five_yr_ago = (dt - timedelta(days=5 * 365 + 30)).strftime("%Y-%m-%d")
         mc_end = (dt + timedelta(days=1)).strftime("%Y-%m-%d")
         mc_raw = _fetch_histories_raw(list(pos.keys()), five_yr_ago, mc_end)
-        bench_raw = _fetch_histories_raw([BENCHMARK_SYMBOL], five_yr_ago, mc_end)
-
         # 计算组合历史日收益（用持仓权重加权各标的日收益）
         weights = {}
         for sym, qty in pos.items():

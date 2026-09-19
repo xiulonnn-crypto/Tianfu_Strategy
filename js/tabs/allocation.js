@@ -183,7 +183,7 @@
           + '<td class="py-1.5 text-right">$'+r.current_price.toFixed(2)+'</td>'
           + '<td class="py-1.5 text-right">'+(hide ? '***' : r.shares)+'</td>'
           + '<td class="py-1.5 text-right font-medium" style="color:'+pc+';">'+(hide ? '***' : (r.pnl>=0?'+$':'−$')+Math.abs(r.pnl).toFixed(2))+'</td>'
-          + '<td class="py-1.5 text-right" style="color:'+pc+';">'+(r.return_pct>=0?'+':'')+r.return_pct+'%</td>'
+          + '<td class="py-1.5 text-right" style="color:'+(r.return_pct < 0 ? '#dc2626' : pc)+';">'+(r.return_pct>=0?'+':'')+r.return_pct+'%</td>'
           + '</tr>';
       });
       tblHtml += '</tbody></table></div>';

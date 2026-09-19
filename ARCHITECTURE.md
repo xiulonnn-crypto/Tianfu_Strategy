@@ -79,7 +79,7 @@ graph LR
 | 源文件 | 职责 |
 |--------|------|
 | `js/common.js` | 运行模式判断、API/static 映射、通用格式化、公共状态 |
-| `js/tabs/returns.js` | 收益概览与收益图表 |
+| `js/tabs/returns.js` | 收益概览与收益图表（组合对比 60% QQQ + 25% BRK.B + 15% IAU 的季度再平衡基准） |
 | `js/tabs/allocation.js` | 资产配置 |
 | `js/tabs/history.js` | 出入金与交易历史 |
 | `js/tabs/signals.js` | 天府模型信号 |
@@ -367,7 +367,7 @@ CI 中通过 GitHub Secrets（base64 编码）恢复核心原始数据，变量�
 
 | 文件 | 说明 |
 |------|------|
-| `data/backtest/v1.3.1-{10y,20y,30y}-summary.json` | 元数据、汇总指标、Top-3 回撤段；`--enrich-benchmark` 后含 `benchmark`（QQQ / `^IXIC` proxy / 月定投元数据等） |
+| `data/backtest/v1.3.1-{10y,20y,30y}-summary.json` | 元数据、汇总指标、Top-3 回撤段；`--enrich-benchmark` 后含 60% QQQ + 25% BRK.B + 15% IAU 季度再平衡基准及月定投元数据 |
 | `data/backtest/v1.3.1-{10y,20y,30y}-nav.json` | 每日净值序列；可选 enrich 字段 `port_ret_pct`、`qqq_bh_pct`、`qqq_dca_pct`（供前端收益率对比图） |
 | `data/backtest/v1.3.1-{10y,20y,30y}-trades.json` | 交易明细 |
 

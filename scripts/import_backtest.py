@@ -197,6 +197,8 @@ def _parse_date(d: str):
 BENCHMARK_SYMBOL = "^IXIC"  # 纳斯达克综合指数，用于 CAPM 回归
 QQQ_SYMBOL = "QQQ"
 QQQ_IPO_DATE = "1999-03-10"
+COMPOSITE_BENCHMARK_COMPONENTS = {"QQQ": 0.60, "BRK-B": 0.25, "IAU": 0.15}
+COMPOSITE_BENCHMARK_LABEL = "60% QQQ + 25% BRK.B + 15% IAU（季度再平衡）"
 
 
 def _fetch_daily_closes(symbol: str, start_date: str, end_date: str) -> dict[str, float]:
@@ -211,7 +213,7 @@ def _fetch_daily_closes(symbol: str, start_date: str, end_date: str) -> dict[str
     hist = yf.Ticker(symbol).history(
         start=start_dt.isoformat(),
         end=(end_dt + timedelta(days=3)).isoformat(),
-        auto_adjust=True,
+        auto_adjust=False,
     )
     out: dict[str, float] = {}
     for idx, row in hist.iterrows():
@@ -414,18 +416,69 @@ def compute_qqq_bh_pct_series(px: list[float | None]) -> list[float | None]:
     return out
 
 
+def build_composite_benchmark_series(
+    nav_dates: list[str], component_closes: dict[str, dict[str, float]],
+) -> tuple[list[float | None], str | None]:
+    """构造 60% QQQ + 25% BRK-B + 15% IAU 的季度再平衡净值（首日=100）。"""
+    if not nav_dates:
+        return [], None
+
+    aligned = {
+        symbol: _align_close_series(nav_dates, (component_closes or {}).get(symbol, {}))
+        for symbol in COMPOSITE_BENCHMARK_COMPONENTS
+    }
+    first_idx = next(
+        (
+            i for i in range(len(nav_dates))
+            if all(aligned[symbol][i] is not None and aligned[symbol][i] > 0
+                   for symbol in COMPOSITE_BENCHMARK_COMPONENTS)
+        ),
+        None,
+    )
+    if first_idx is None:
+        return [None] * len(nav_dates), None
+
+    out: list[float | None] = [None] * len(nav_dates)
+    nav = 100.0
+    shares: dict[str, float] = {}
+    prior_quarter = None
+    for i in range(first_idx, len(nav_dates)):
+        prices = {symbol: aligned[symbol][i] for symbol in COMPOSITE_BENCHMARK_COMPONENTS}
+        if any(price is None or price <= 0 for price in prices.values()):
+            continue
+        date_obj = _parse_date(nav_dates[i])
+        quarter = (date_obj.year, (date_obj.month - 1) // 3 + 1)
+        if prior_quarter is None:
+            shares = {
+                symbol: nav * weight / float(prices[symbol])
+                for symbol, weight in COMPOSITE_BENCHMARK_COMPONENTS.items()
+            }
+        else:
+            nav = sum(shares[symbol] * float(prices[symbol]) for symbol in shares)
+            # 季度首个可用收盘价计入当日表现后调仓，调仓仓位用于下一交易日。
+            if quarter != prior_quarter:
+                shares = {
+                    symbol: nav * weight / float(prices[symbol])
+                    for symbol, weight in COMPOSITE_BENCHMARK_COMPONENTS.items()
+                }
+        out[i] = round(nav, 8)
+        prior_quarter = quarter
+
+    return out, nav_dates[first_idx]
+
+
 def _calendar_months_span(first_date: str, last_date: str) -> int:
     a = _parse_date(first_date)
     b = _parse_date(last_date)
     return (b.year - a.year) * 12 + (b.month - a.month) + 1
 
 
-def compute_qqq_dca_pct_series(
+def compute_benchmark_dca_pct_series(
     nav_dates: list[str],
     px: list[float | None],
     initial_capital: float | None,
 ) -> list[float | None]:
-    """每月第一个有 px 的交易日定投，总额 initial_capital 均摊到日历月数。"""
+    """每月首个有基准净值的交易日定投，总额均摊到可回测日历月数。"""
     n = len(nav_dates)
     if n == 0 or initial_capital is None or initial_capital <= 0:
         return [None] * n
@@ -469,6 +522,10 @@ def compute_qqq_dca_pct_series(
     return out
 
 
+# 兼容旧脚本/测试调用；当前实现已可用于任意连续基准净值。
+compute_qqq_dca_pct_series = compute_benchmark_dca_pct_series
+
+
 def enrich_benchmark(
     out_dir: Path,
     version: str,
@@ -477,7 +534,7 @@ def enrich_benchmark(
     fetch_closes: Callable[[str, str, str], dict[str, float]] | None = None,
 ) -> None:
     """
-    为 nav.json 写入 port_ret_pct / qqq_bh_pct / qqq_dca_pct，并更新 summary.benchmark。
+    为 nav.json 写入组合与 60/25/15 季度再平衡基准的收益率曲线，并更新 summary.benchmark。
     fetch_closes 可注入以便测试 mock。
     """
     fetch = fetch_closes or _fetch_daily_closes
@@ -495,7 +552,7 @@ def enrich_benchmark(
         if trades_path.is_file():
             trades = json.loads(trades_path.read_text(encoding="utf-8"))
 
-        if not force and nav_rows and "port_ret_pct" in nav_rows[0]:
+        if not force and nav_rows and "benchmark_bh_pct" in nav_rows[0]:
             print(f"[{period}] 跳过（已有 enrich 字段）；加 --force 覆盖")
             continue
 
@@ -513,18 +570,16 @@ def enrich_benchmark(
             ic = None
 
         nav_dates = [str(r.get("date", ""))[:10] for r in nav_rows]
-        nav_min = min(nav_dates) if nav_dates else start
         try:
-            qqq = fetch(QQQ_SYMBOL, start, end)
-            if nav_min < QQQ_IPO_DATE:
-                ixic = fetch(BENCHMARK_SYMBOL, start, end)
-            else:
-                ixic = {}
+            component_closes = {
+                symbol: fetch(symbol, start, end)
+                for symbol in COMPOSITE_BENCHMARK_COMPONENTS
+            }
         except Exception as e:  # noqa: BLE001
             print(f"[warn] {period}: 拉取行情失败，跳过：{e}", file=sys.stderr)
             continue
 
-        px, proxy_days, first_qqq = _build_qqq_proxy_series(nav_dates, qqq, ixic)
+        px, first_benchmark_date = build_composite_benchmark_series(nav_dates, component_closes)
 
         m = summary.get("metrics") or {}
         cum_pct = m.get("cumulative_return_pct")
@@ -532,21 +587,23 @@ def enrich_benchmark(
 
         port_pct = compute_port_return_pct_aligned(nav_rows, cum_pct_f)
         bh_pct = compute_qqq_bh_pct_series(px)
-        dca_pct = compute_qqq_dca_pct_series(nav_dates, px, ic)
+        dca_pct = compute_benchmark_dca_pct_series(nav_dates, px, ic)
 
         for i, row in enumerate(nav_rows):
             row["port_ret_pct"] = port_pct[i] if i < len(port_pct) else None
-            row["qqq_bh_pct"] = bh_pct[i] if i < len(bh_pct) else None
-            row["qqq_dca_pct"] = dca_pct[i] if i < len(dca_pct) else None
+            row["benchmark_bh_pct"] = bh_pct[i] if i < len(bh_pct) else None
+            row["benchmark_dca_pct"] = dca_pct[i] if i < len(dca_pct) else None
+            # 迁移后只保留新基准字段，避免静态数据中并存两套含义不同的曲线。
+            row.pop("qqq_bh_pct", None)
+            row.pop("qqq_dca_pct", None)
 
         summary["benchmark"] = {
-            "symbol": QQQ_SYMBOL,
-            "proxy_before": BENCHMARK_SYMBOL,
-            "qqq_ipo_date": QQQ_IPO_DATE,
-            "proxy_days": proxy_days,
+            "label": COMPOSITE_BENCHMARK_LABEL,
+            "components": COMPOSITE_BENCHMARK_COMPONENTS,
+            "rebalance": "quarterly",
+            "available_from": first_benchmark_date,
             "dca_total": ic,
             "dca_schedule": "monthly",
-            "first_qqq_date": first_qqq,
             "portfolio_curve": "nav_scaled_to_summary_cumulative_pct",
         }
 
@@ -556,7 +613,7 @@ def enrich_benchmark(
         summary_path.write_text(
             json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
-        print(f"[{period}] enrich_benchmark 已写入（proxy_days={proxy_days}）")
+        print(f"[{period}] enrich_benchmark 已写入（available_from={first_benchmark_date}）")
 
 
 def _winsorize(values: list[float], lo_pct: float = 1.0, hi_pct: float = 99.0) -> list[float]:
@@ -866,7 +923,7 @@ def main() -> None:
     ap.add_argument(
         "--enrich-benchmark",
         action="store_true",
-        help="不解析 Excel，为 nav.json 写入 port_ret_pct / qqq_bh_pct / qqq_dca_pct，并更新 summary.benchmark",
+        help="不解析 Excel，为 nav.json 写入 60/25/15 季度再平衡基准的收益率曲线，并更新 summary.benchmark",
     )
     ap.add_argument(
         "--force",

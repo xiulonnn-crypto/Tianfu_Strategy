@@ -53,12 +53,13 @@ def test_nav_and_trades_align_with_summary(period: str) -> None:
     assert summary["nav_rows"] == len(nav)
     assert "benchmark" in summary
     bm = summary["benchmark"]
-    assert bm.get("symbol") == "QQQ"
-    assert "proxy_days" in bm
+    assert bm.get("components") == {"QQQ": 0.60, "BRK-B": 0.25, "IAU": 0.15}
+    assert bm.get("rebalance") == "quarterly"
+    assert bm.get("available_from")
     assert len(trades) == summary["metrics"]["trade_count"]
     assert all("date" in r and "nav" in r for r in nav[:5])
     assert all(
-        k in nav[0] for k in ("port_ret_pct", "qqq_bh_pct", "qqq_dca_pct")
+        k in nav[0] for k in ("port_ret_pct", "benchmark_bh_pct", "benchmark_dca_pct")
     )
     assert all("symbol" in t and "side" in t for t in trades[:5])
 

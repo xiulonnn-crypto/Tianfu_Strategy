@@ -321,7 +321,7 @@
       <p class="text-xs mb-2" style="color: var(--benchmark-gray);">以下指标随上方所选时段计算</p>
       <div class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-4 mb-6">
         <div class="rounded-xl shadow-sm p-4" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">最大回撤（Max Drawdown）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">从峰值到谷底的最大跌幅<br>下方为同一时段纳斯达克指数的最大回撤，便于对比</span></span></div>
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">最大回撤（Max Drawdown）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">从峰值到谷底的最大跌幅<br>下方为同一时段 60% QQQ + 25% BRK.B + 15% IAU（季度再平衡）基准的最大回撤，便于对比</span></span></div>
           <div class="text-lg font-bold mt-1" id="riskMaxDrawdown" style="color: #2d2a3e;">--</div>
           <div class="text-xs mt-0.5" id="riskDDCompare" style="color: var(--benchmark-gray);">--</div>
         </div>
@@ -331,17 +331,17 @@
           <div class="text-xs mt-0.5" id="riskSharpeNote" style="color: var(--benchmark-gray);">--</div>
         </div>
         <div class="rounded-xl shadow-sm p-4" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">Sortino（索提诺）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">与夏普类似，但波动只计「坏波动」——日收益低于无风险的部分；无风险取一年期美债，与夏普同口径。年化 ≈√252×日超额收益均值÷下行偏差。若时段内几乎没有低于无风险的交易日则无法定义，显示为 —。<br>下方为纳斯达克指数在同一时段、同一无风险口径下的 Sortino。</span></span></div>
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">Sortino（索提诺）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">与夏普类似，但波动只计「坏波动」——日收益低于无风险的部分；无风险取一年期美债，与夏普同口径。年化 ≈√252×日超额收益均值÷日下行偏差。若时段内几乎没有低于无风险的交易日则无法定义，显示为 —。<br>下方为混合基准在同一时段、同一无风险口径下的 Sortino。</span></span></div>
           <div class="text-lg font-bold mt-1" id="riskSortino" style="color: #2d2a3e;">--</div>
-          <div class="text-xs mt-0.5" id="riskSortinoBench" style="color: var(--benchmark-gray);">同期纳指 —</div>
+          <div class="text-xs mt-0.5" id="riskSortinoBench" style="color: var(--benchmark-gray);">同期混合基准 —</div>
         </div>
         <div class="rounded-xl shadow-sm p-4" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
           <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">Alpha（阿尔法）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">Jensen Alpha：区间总收益相对 CAPM（含同期复利无风险）的超额<br>无风险取一年期美债<br>&gt;0 优于模型预期 · &lt;0 劣于模型预期</span></span></div>
           <div class="text-lg font-bold mt-1" id="riskAlpha" style="color: #2d2a3e;">--</div>
-          <div class="text-xs mt-0.5" id="riskAlphaNote" style="color: var(--benchmark-gray);">CAPM（含无风险）相对纳指，%</div>
+          <div class="text-xs mt-0.5" id="riskAlphaNote" style="color: var(--benchmark-gray);">CAPM（含无风险）相对混合基准，%</div>
         </div>
         <div class="rounded-xl shadow-sm p-4" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">Beta（贝塔）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">组合对纳指日收益的 OLS 回归斜率（协方差/方差与之一致）<br>=1 近似同步波动 · &lt;1 偏低波 · &gt;1 偏高波<br>下方 Calmar 为组合在同期的卡玛比率（年化几何收益÷最大回撤）</span></span></div>
+          <div class="text-xs uppercase tracking-wide" style="color: var(--benchmark-gray);">Beta（贝塔）<span class="info-tip"><i class="fas fa-circle-info"></i><span class="info-tip-text">组合对混合基准日收益的 OLS 回归斜率（协方差/方差与之一致）<br>=1 近似同步波动 · &lt;1 偏低波 · &gt;1 偏高波<br>下方 Calmar 为组合在同期的卡玛比率（年化几何收益÷最大回撤）</span></span></div>
           <div class="text-lg font-bold mt-1" id="riskBeta" style="color: #2d2a3e;">--</div>
           <div class="text-xs mt-0.5" id="riskBetaNote" style="color: var(--benchmark-gray);">--</div>
         </div>
@@ -357,10 +357,10 @@
       <!-- 走势图 -->
       <div class="rounded-xl p-6 shadow-sm" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
         <div class="flex flex-wrap items-center gap-2 mb-3" id="chartCompareToggles">
-          <button type="button" class="chart-cmp-btn px-3 py-1 rounded text-xs transition" data-mode="bench" style="background:var(--deep-purple);color:#fff;">Portfolio vs Nasdaq</button>
+          <button type="button" class="chart-cmp-btn px-3 py-1 rounded text-xs transition" data-mode="bench" style="background:var(--deep-purple);color:#fff;">Portfolio vs 60/25/15 基准</button>
           <button type="button" class="chart-cmp-btn px-3 py-1 rounded text-xs transition" data-mode="dca" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">Portfolio vs 等额定投</button>
           <button type="button" class="chart-cmp-btn px-3 py-1 rounded text-xs transition" data-mode="all" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">全部对比</button>
-          <span id="dcaExplainNote" class="hidden text-xs ml-2" style="color:var(--benchmark-gray);">等额定投：按每年计划投入总额（月投基数×12 + 年度投弹总额）均摊到各年交易日，按 QQQM 价格模拟普通 DCA 收益</span>
+          <span id="dcaExplainNote" class="hidden text-xs ml-2" style="color:var(--benchmark-gray);">等额定投：按每年计划投入总额（月投基数×12 + 年度投弹总额）均摊到各年交易日，买入 60% QQQ + 25% BRK.B + 15% IAU 的季度再平衡基准</span>
         </div>
         <div class="h-80 relative">
           <canvas id="chartReturns"></canvas>
@@ -825,7 +825,7 @@
         <p><strong style="color:var(--deep-purple);">TWR（时间加权收益率）</strong>：排除出入金时机影响，反映纯策略表现，与收益走势图同口径。</p>
         <p><strong style="color:var(--deep-purple);">MWRR（资金加权收益率）</strong>：考虑出入金时机，反映实际资金回报率。</p>
         <p><strong style="color:var(--deep-purple);">Sharpe / Sortino</strong>：无风险利率取一年期美债 <code>DGS1</code>，按 252 交易日复利拆为日利率；Sortino 仅计下行偏差。</p>
-        <p><strong style="color:var(--deep-purple);">Alpha / Beta</strong>：相对纳斯达克指数 <code>^IXIC</code>；Alpha 为 Jensen Alpha（CAPM 含无风险）。</p>
+        <p><strong style="color:var(--deep-purple);">Alpha / Beta</strong>：相对 <code>60% QQQ + 25% BRK.B + 15% IAU</code>（每季度再平衡）；Alpha 为 Jensen Alpha（CAPM 含无风险）。</p>
         <p><strong style="color:var(--deep-purple);">周期起点规则</strong>：各周期起点统一取 <code>max(时段起始日, 首次持仓日)</code>；1D 卡片保留日级涨跌语义。</p>
         <p><strong style="color:var(--deep-purple);">分位数引擎</strong>：取值 0–1（如 VIX 3y 分位 = 当前值在近 3 年分布中的百分位）。</p>
         <p><strong style="color:var(--deep-purple);">月度收益热力图</strong>：按自然月连乘日 TWR 收益，全年列为当年已实现月份的复利汇总。</p>
