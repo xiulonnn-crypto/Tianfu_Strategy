@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-022] - 2026-09-19 - unify composite benchmark across return…
+
 ### Changed
 
 - **收益页基准**：收益曲线、回撤对比、基准夏普/Sortino、Alpha 与 Beta 统一改为 60% QQQ + 25% BRK.B + 15% IAU 的季度再平衡历史净值。
