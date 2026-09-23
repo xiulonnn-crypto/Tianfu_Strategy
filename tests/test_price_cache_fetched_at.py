@@ -4,6 +4,7 @@
 import json
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 
@@ -18,14 +19,19 @@ def isolated_price_cache(monkeypatch, tmp_path):
 
 def test_save_price_cache_writes_fetched_at_utc(isolated_price_cache):
     server, path = isolated_price_cache
-    server._save_price_cache(
+    dates = pd.to_datetime(["2025-03-01", "2025-03-02"])
+    history = {"QQQM": pd.DataFrame({"Close": [100.0, 101.0]}, index=dates)}
+    bench = {
+        server.BENCHMARK_SYMBOL: pd.DataFrame({"Close": [100.0, 101.0]}, index=dates),
+    }
+    assert server._save_price_cache(
         ["QQQM"],
         "2025-01-01",
         "2025-06-01",
-        {},
-        {},
-        ["2025-03-01"],
-    )
+        history,
+        bench,
+        ["2025-03-01", "2025-03-02"],
+    ) is True
     raw = json.loads(path.read_text(encoding="utf-8"))
     assert "fetched_at" in raw
     fa = raw["fetched_at"]
@@ -35,4 +41,3 @@ def test_save_price_cache_writes_fetched_at_utc(isolated_price_cache):
     assert len(parts) == 2
     hms = parts[1].split(":")
     assert len(hms) == 3, fa
-

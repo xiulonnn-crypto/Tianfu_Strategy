@@ -270,8 +270,12 @@
     <section id="section-returns" class="section-content">
       <h2 class="text-lg font-semibold mb-4 flex flex-wrap items-center gap-x-3 gap-y-1" style="color: var(--deep-purple);">
         <span>收益概览</span>
+        <span class="inline-flex flex-wrap gap-1" id="chartCompareToggles">
+          <button type="button" class="chart-cmp-btn px-2 py-1 rounded text-xs transition" data-mode="bench" style="background:var(--deep-purple);color:#fff;">60/25/15 基准</button>
+          <button type="button" class="chart-cmp-btn px-2 py-1 rounded text-xs transition" data-mode="qqq" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">QQQ 基准</button>
+          <button type="button" class="chart-cmp-btn px-2 py-1 rounded text-xs transition" data-mode="dca" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">等额定投</button>
+        </span>
         <button type="button" class="btn-methodology" onclick="if(window.__openModal)window.__openModal('modalMethodology')" title="指标口径说明"><i class="fas fa-circle-info"></i> 口径说明</button>
-        <span id="returnsDataAsOf" class="text-sm font-normal" style="color: var(--benchmark-gray);"></span>
         <span id="returnsAthBadge" class="ath-badge" style="display:none;"></span>
       </h2>
       <div class="rounded-xl p-4 mb-6" style="background: rgba(74,61,124,0.04); border-left: 3px solid var(--deep-purple);">
@@ -348,7 +352,7 @@
       </div>
       <!-- 月度收益热力图 -->
       <div class="rounded-xl p-6 shadow-sm mt-6" id="monthlyHeatBlock" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-        <h3 class="text-md font-medium mb-2" style="color: var(--deep-purple);">月度收益热力图（TWR）</h3>
+        <div class="flex flex-wrap items-center gap-2 mb-2"><h3 class="text-md font-medium" style="color: var(--deep-purple);">月度收益热力图（TWR）</h3></div>
         <p class="text-xs mb-3" style="color: var(--benchmark-gray);">年×月矩阵展示各自然月组合收益；右侧为全年汇总。红绿配色，一眼识别季节性与最差月份。</p>
         <div class="overflow-x-auto">
           <table class="heat-table" id="monthlyHeatTable"><tbody><tr><td class="text-sm" style="color:var(--benchmark-gray);">加载中…</td></tr></tbody></table>
@@ -356,10 +360,8 @@
       </div>
       <!-- 走势图 -->
       <div class="rounded-xl p-6 shadow-sm" style="background: #fff; box-shadow: 0 2px 16px rgba(74,61,124,0.06);">
-        <div class="flex flex-wrap items-center gap-2 mb-3" id="chartCompareToggles">
-          <button type="button" class="chart-cmp-btn px-3 py-1 rounded text-xs transition" data-mode="bench" style="background:var(--deep-purple);color:#fff;">Portfolio vs 60/25/15 基准</button>
-          <button type="button" class="chart-cmp-btn px-3 py-1 rounded text-xs transition" data-mode="dca" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">Portfolio vs 等额定投</button>
-          <button type="button" class="chart-cmp-btn px-3 py-1 rounded text-xs transition" data-mode="all" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">全部对比</button>
+        <div class="flex flex-wrap items-center gap-2 mb-3">
+          <button type="button" class="heat-cmp-btn px-2 py-1 rounded text-xs" data-mode="all" style="background:#fff;color:var(--deep-purple);border:1px solid var(--deep-purple);">热力图全部对比</button>
           <span id="dcaExplainNote" class="hidden text-xs ml-2" style="color:var(--benchmark-gray);">等额定投：按每年计划投入总额（月投基数×12 + 年度投弹总额）均摊到各年交易日，买入 60% QQQ + 25% BRK.B + 15% IAU 的季度再平衡基准</span>
         </div>
         <div class="h-80 relative">

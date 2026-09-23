@@ -62,7 +62,10 @@ def test_history_fetches_components_and_returns_synthetic_benchmark(monkeypatch)
 
 def test_dca_uses_composite_benchmark_not_qqqm_price():
     dates = pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-06"])
-    history = {"QQQM": pd.DataFrame({"Close": [100.0, 90.0, 80.0]}, index=dates)}
+    history = {
+        "QQQM": pd.DataFrame({"Close": [100.0, 90.0, 80.0]}, index=dates),
+        "QQQ": pd.DataFrame({"Close": [100.0, 110.0, 121.0]}, index=dates),
+    }
     bench = {server.BENCHMARK_SYMBOL: pd.DataFrame({"Close": [100.0, 110.0, 121.0]}, index=dates)}
     trades = [{
         "date": "2025-01-02", "symbol": "QQQM", "action": "买入", "type": "定投",
@@ -75,3 +78,5 @@ def test_dca_uses_composite_benchmark_not_qqqm_price():
     )
 
     assert chart["dca"][-1] > 0, "DCA 应跟随上涨的混合基准，而不是下跌的 QQQM"
+    assert chart["qqq"] == pytest.approx([10.0, 21.0])
+    assert chart["dates"] == ["2025-01-03", "2025-01-06"]

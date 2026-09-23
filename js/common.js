@@ -4,7 +4,8 @@
 
     // ========== 状态 ==========
     let currentPeriod = '1y';
-    let chartCompareMode = 'bench';  // 'bench' | 'dca' | 'all'
+    let chartCompareMode = 'bench';  // 'bench' | 'qqq' | 'dca' | 'all'
+    let heatmapCompareMode = 'selected';  // 'selected' | 'all'
     let chartReturns = null;
     let chartAllocation = null;
     let chartRiskAllocation = null;
@@ -25,11 +26,8 @@
       var verEl = document.getElementById('globalStatusVersion');
       var modeEl = document.getElementById('globalStatusMode');
       if (timeEl) {
-        var _fmtShFn = window.__formatAsShanghaiGMT8;
-        var fetchedAt = opts.priceFetchedAt && typeof _fmtShFn === 'function' ? _fmtShFn(opts.priceFetchedAt) : '';
         var asOf = opts.dataAsOf || '--';
-        timeEl.innerHTML = '<span class="global-status-dot" style="background:#7CFC9B;"></span>行情基准日：' + asOf
-          + (fetchedAt ? ' · 缓存拉取：' + fetchedAt : '');
+        timeEl.innerHTML = '<span class="global-status-dot" style="background:#7CFC9B;"></span>行情基准日：' + asOf;
       }
       if (verEl) {
         var ver = window.__cloudDataVersion || opts.version || '--';
@@ -57,7 +55,38 @@
     function renderMonthlyHeatmap(data) {
       var tbl = document.getElementById('monthlyHeatTable');
       if (!tbl) return;
-      var rows = (data && data.rows) ? data.rows : [];
+      var portfolioRows = (data && data.rows) ? data.rows : [];
+      function rowsFromSeries(name, values, dates) {
+        if (!values || !dates || values.length !== dates.length) return [];
+        var grouped = {}, previous = 0;
+        values.forEach(function(v, i) {
+          var d = dates[i] || '';
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || v == null) return;
+          var key = d.slice(0, 7), factor = (1 + Number(v) / 100) / (1 + previous / 100);
+          if (!grouped[key]) grouped[key] = 1;
+          grouped[key] *= factor;
+          previous = Number(v);
+        });
+        var byYear = {};
+        Object.keys(grouped).forEach(function(key) {
+          var year = key.slice(0, 4), month = Number(key.slice(5, 7)) - 1;
+          if (!byYear[year]) byYear[year] = [null,null,null,null,null,null,null,null,null,null,null,null];
+          byYear[year][month] = (grouped[key] - 1) * 100;
+        });
+        return Object.keys(byYear).sort().map(function(year) {
+          var months = byYear[year], factor = 1;
+          months.forEach(function(v) { if (v != null) factor *= 1 + v / 100; });
+          return { year: name + ' · ' + year, months: months, ytd: (factor - 1) * 100 };
+        });
+      }
+      var chart = returnsOverview && returnsOverview.chart && returnsOverview.chart.since;
+      var sourceMap = { bench: ['60/25/15', 'bench'], qqq: ['QQQ', 'qqq'], dca: ['DCA', 'dca'] };
+      var modes = heatmapCompareMode === 'all' ? ['bench', 'qqq', 'dca'] : [chartCompareMode];
+      var rows = portfolioRows.map(function(r) { return Object.assign({}, r, { year: '组合 · ' + r.year }); });
+      modes.forEach(function(mode) {
+        var source = sourceMap[mode];
+        if (source && chart) rows = rows.concat(rowsFromSeries(source[0], chart[source[1]], chart.dates));
+      });
       if (!rows.length) {
         tbl.innerHTML = '<tbody><tr><td class="text-sm" style="color:var(--benchmark-gray);">暂无数据</td></tr></tbody>';
         return;
@@ -91,6 +120,7 @@
     async function loadMonthlyReturns() {
       var data = await apiGet('/api/monthly-returns');
       renderMonthlyHeatmap(data);
+      window.__monthlyReturnsData = data;
     }
 
     function renderTradeCalendar(tradesList) {

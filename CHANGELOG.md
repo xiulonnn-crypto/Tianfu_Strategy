@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **本地收益页使用残缺行情缓存**：Yahoo 部分标的或基准成分抓取失败时，旧逻辑仍会缓存并以缺价持仓计算收益，导致月度热力图、组合曲线和基准曲线失真。现仅接受所有请求标的均有有效收盘价且 60/25/15 合成基准完整的缓存；不完整行情会被拒绝而不再产生误导性收益数据。
+
 ## [0.1.0-022] - 2026-09-19 - unify composite benchmark across return…
 
 ### Changed

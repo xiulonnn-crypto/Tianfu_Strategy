@@ -379,7 +379,7 @@ shares = (div_per_share × shares_held_on_ex_date × (1 - 预扣税率)) / 付�
 }
 ```
 
-`version` 字段对应 `server.py` 中的 `_CACHE_VERSION` 常量，版本不匹配时全量失效重建。`cache_date` 为最后更新日期，同一交易日内复用缓存。
+`version` 字段对应 `server.py` 中的 `_CACHE_VERSION` 常量，版本不匹配时全量失效重建。`cache_date` 为最后更新日期，同一交易日内复用缓存。缓存仅在所有请求标的均有有效收盘价、且 60/25/15 合成基准非空时才会写入和复用；任一行情抓取失败时返回暂无数据，避免缺价持仓被静默排除而产生错误收益率。
 
 ---
 
@@ -854,7 +854,7 @@ gh secret set MODEL_STATE_B64 < <(base64 -i data/model_state.json)
 
 缓存文件 `data/price_cache.json` 按交易日自动失效，无需手动清理。
 
-若需强制刷新缓存，递增 `server.py` 中的 `_CACHE_VERSION` 常量（当前为 6）。
+若需强制刷新缓存，递增 `server.py` 中的 `_CACHE_VERSION` 常量（当前为 9）。
 
 ### 7.2 数据备份
 

@@ -17,8 +17,12 @@
         const prefix = dataValuePrefix[k];
         const pctEl = document.querySelector('[data-value="' + prefix + '-pct"]');
         if (pctEl) {
-          pctEl.textContent = formatPct(c && c.pct);
-          pctEl.style.color = (c && c.pct != null && c.pct < 0) ? '#D64545' : '#2d2a3e';
+          var chartKey = k === '1y_roll' ? '1y_roll' : k;
+          var chart = returnsOverview && returnsOverview.chart && returnsOverview.chart[chartKey];
+          var benchmarkValues = chart && chart[chartCompareMode];
+          var pct = benchmarkValues && benchmarkValues.length ? benchmarkValues[benchmarkValues.length - 1] : (c && c.pct);
+          pctEl.textContent = formatPct(pct);
+          pctEl.style.color = (pct != null && pct < 0) ? '#D64545' : '#2d2a3e';
         }
       });
     }
@@ -28,7 +32,7 @@
         if (typeof Chart === 'undefined') { if (ph) ph.style.display = 'flex'; return; }
         var chartKey = period === '1y-roll' ? '1y_roll' : period;
         var data = returnsOverview && returnsOverview.chart && returnsOverview.chart[chartKey]
-          ? returnsOverview.chart[chartKey] : { labels: [], my: [], bench: [], dca: [], buy_markers: [] };
+          ? returnsOverview.chart[chartKey] : { labels: [], my: [], bench: [], qqq: [], dca: [], buy_markers: [] };
         var ctx = document.getElementById('chartReturns');
         if (!ctx) { if (ph) ph.style.display = 'flex'; return; }
         if (chartReturns) chartReturns.destroy();
@@ -38,13 +42,16 @@
         // DCA 说明文字
         var dcaNote = document.getElementById('dcaExplainNote');
         var mode = chartCompareMode || 'bench';
-        if (dcaNote) dcaNote.classList.toggle('hidden', mode === 'bench');
+        if (dcaNote) dcaNote.classList.toggle('hidden', mode !== 'dca' && mode !== 'all');
 
         var datasets = [
           { label: 'Portfolio (TWR)', data: data.my || [], borderColor: '#4A3D7C', backgroundColor: 'rgba(74,61,124,0.06)', fill: true, tension: 0.3, borderWidth: 2, pointRadius: 0 },
         ];
         if (mode === 'bench' || mode === 'all') {
           datasets.push({ label: '60/25/15 基准（季度再平衡）', data: data.bench || [], borderColor: '#8A9199', backgroundColor: 'rgba(138,145,153,0.04)', fill: true, tension: 0.3, borderWidth: 1.5, pointRadius: 0 });
+        }
+        if (mode === 'qqq' || mode === 'all') {
+          datasets.push({ label: 'QQQ 基准', data: data.qqq || [], borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,0.04)', fill: false, tension: 0.3, borderWidth: 1.5, pointRadius: 0 });
         }
         if (mode === 'dca' || mode === 'all') {
           datasets.push({ label: '混合基准等额定投 (DCA)', data: data.dca || [], borderColor: '#BFA960', backgroundColor: 'rgba(191,169,96,0.04)', fill: false, tension: 0.3, borderWidth: 1.5, borderDash: [6, 3], pointRadius: 0 });
@@ -128,6 +135,24 @@
       if (hasBench) {
         datasets.push({ label: '混合基准回撤 %', data: bds.values, borderColor: '#8A9199', backgroundColor: 'transparent', fill: false, tension: 0.2, borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0, order: 0 });
       }
+      var chartKey = currentPeriod === '1y-roll' ? '1y_roll' : currentPeriod;
+      var chartData = returnsOverview && returnsOverview.chart && returnsOverview.chart[chartKey];
+      var seriesKey = chartCompareMode === 'qqq' ? 'qqq' : (chartCompareMode === 'dca' ? 'dca' : null);
+      if (seriesKey && chartData && Array.isArray(chartData[seriesKey])) {
+        var peak = -Infinity;
+        var values = chartData[seriesKey].map(function(v) { peak = Math.max(peak, Number(v)); return Math.round((Number(v) - peak) * 100) / 100; });
+        datasets = [datasets[0], { label: chartCompareMode === 'qqq' ? 'QQQ 基准回撤 %' : 'DCA 回撤 %', data: values, borderColor: chartCompareMode === 'qqq' ? '#2563eb' : '#BFA960', backgroundColor: 'transparent', fill: false, tension: 0.2, borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0, order: 0 }];
+      }
+      if (chartCompareMode === 'all' && chartData) {
+        function drawdown(values) {
+          var peak = -Infinity;
+          return (values || []).map(function(v) { peak = Math.max(peak, Number(v)); return Math.round((Number(v) - peak) * 100) / 100; });
+        }
+        datasets.push(
+          { label: 'QQQ 基准回撤 %', data: drawdown(chartData.qqq), borderColor: '#2563eb', backgroundColor: 'transparent', fill: false, tension: 0.2, borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0 },
+          { label: 'DCA 回撤 %', data: drawdown(chartData.dca), borderColor: '#BFA960', backgroundColor: 'transparent', fill: false, tension: 0.2, borderWidth: 1.5, borderDash: [2, 3], pointRadius: 0 }
+        );
+      }
       chartDrawdown = new Chart(ctx, {
         type: 'line',
         data: { labels: ds.labels, datasets: datasets },
@@ -185,6 +210,36 @@
       }
     }
 
+    function selectedRiskMetrics(risk, periodKey, rfPct) {
+      if (!risk || chartCompareMode === 'bench') return Object.assign({}, risk || {}, { benchmark_label: '60/25/15 基准' });
+      var chartKey = periodKey === '1y_roll' ? '1y_roll' : periodKey;
+      var chart = returnsOverview && returnsOverview.chart && returnsOverview.chart[chartKey];
+      var bench = chart && chart[chartCompareMode], portfolio = chart && chart.my;
+      if (!bench || !portfolio || bench.length !== portfolio.length || !bench.length) return risk;
+      var peak = -Infinity, maxDd = 0, returns = [], portReturns = [];
+      bench.forEach(function(v, i) {
+        var level = 1 + Number(v) / 100; peak = Math.max(peak, level); maxDd = Math.max(maxDd, 1 - level / peak);
+        if (i) { returns.push((1 + Number(v) / 100) / (1 + Number(bench[i - 1]) / 100) - 1); portReturns.push((1 + Number(portfolio[i]) / 100) / (1 + Number(portfolio[i - 1]) / 100) - 1); }
+      });
+      var n = returns.length, dailyRf = Math.pow(1 + Number(rfPct || 0) / 100, 1 / 252) - 1;
+      function mean(a) { return a.reduce(function(s, x) { return s + x; }, 0) / a.length; }
+      function std(a, m) { return Math.sqrt(a.reduce(function(s, x) { return s + Math.pow(x - m, 2); }, 0) / Math.max(1, a.length - 1)); }
+      var mb = n ? mean(returns) : 0, mp = n ? mean(portReturns) : 0, sb = n > 1 ? std(returns, mb) : 0;
+      var downside = returns.filter(function(x) { return x < dailyRf; }).map(function(x) { return x - dailyRf; });
+      var downStd = downside.length ? Math.sqrt(mean(downside.map(function(x) { return x * x; }))) : 0;
+      var cov = n ? returns.reduce(function(s, x, i) { return s + (portReturns[i] - mp) * (x - mb); }, 0) / n : 0;
+      var variance = n ? returns.reduce(function(s, x) { return s + Math.pow(x - mb, 2); }, 0) / n : 0;
+      var label = chartCompareMode === 'qqq' ? 'QQQ 基准' : 'DCA';
+      return Object.assign({}, risk, {
+        benchmark_label: label,
+        bench_max_drawdown_pct: Math.round(maxDd * 1000) / 10,
+        bench_sharpe_ratio: sb ? Math.round(Math.sqrt(252) * (mb - dailyRf) / sb * 100) / 100 : null,
+        bench_sortino_ratio: downStd ? Math.round(Math.sqrt(252) * (mb - dailyRf) / downStd * 100) / 100 : null,
+        beta: variance ? Math.round(cov / variance * 100) / 100 : null,
+        alpha_pct: Math.round(((Number(portfolio[portfolio.length - 1]) - Number(bench[bench.length - 1]))) * 100) / 100,
+      });
+    }
+
     function updateRiskMetricsTexts(risk, rfPct) {
       var elDD = document.getElementById('riskMaxDrawdown');
       var elSharpe = document.getElementById('riskSharpe');
@@ -201,7 +256,7 @@
       if (elDD) elDD.textContent = (risk && risk.max_drawdown_pct != null) ? '−' + risk.max_drawdown_pct + '%' : '--';
       if (elDDCompare) {
         if (risk && risk.bench_max_drawdown_pct != null) {
-          elDDCompare.textContent = '同期基准回撤 −' + risk.bench_max_drawdown_pct + '%';
+          elDDCompare.textContent = '同期' + (risk.benchmark_label || '基准') + '回撤 −' + risk.bench_max_drawdown_pct + '%';
         } else { elDDCompare.textContent = '--'; }
       }
 
@@ -211,15 +266,15 @@
         if (risk && risk.sharpe_ratio != null) {
           var s = Number(risk.sharpe_ratio);
           var label = s >= 1 ? '优秀' : s >= 0.5 ? '良好' : s >= 0 ? '一般' : '偏弱';
-          elSharpeNote.textContent = label + ' · 同期基准夏普 ' + benchSharpeStr;
-        } else { elSharpeNote.textContent = '同期基准夏普 ' + benchSharpeStr; }
+          elSharpeNote.textContent = label + ' · 同期' + (risk.benchmark_label || '基准') + '夏普 ' + benchSharpeStr;
+        } else { elSharpeNote.textContent = '同期' + (risk && risk.benchmark_label || '基准') + '夏普 ' + benchSharpeStr; }
       }
 
       if (elSortino) elSortino.textContent = (risk && risk.sortino_ratio != null) ? String(risk.sortino_ratio) : '--';
       if (elSortinoBench) {
         if (risk && risk.bench_sortino_ratio != null) {
-          elSortinoBench.textContent = '同期混合基准 ' + risk.bench_sortino_ratio;
-        } else { elSortinoBench.textContent = '同期混合基准 —'; }
+          elSortinoBench.textContent = '同期' + (risk.benchmark_label || '基准') + ' ' + risk.bench_sortino_ratio;
+        } else { elSortinoBench.textContent = '同期' + (risk && risk.benchmark_label || '基准') + ' —'; }
       }
 
       if (elAlpha) {
@@ -231,7 +286,7 @@
       if (elAlphaNote) {
         if (risk && risk.alpha_pct != null) {
           elAlphaNote.textContent = (risk.alpha_pct > 0 ? '优于 CAPM 预期' : risk.alpha_pct < 0 ? '劣于 CAPM 预期' : '符合 CAPM 预期')
-            + ' · 无风险 ' + rfLbl + '%';
+            + ' · 相对' + (risk.benchmark_label || '基准') + ' · 无风险 ' + rfLbl + '%';
         } else { elAlphaNote.textContent = 'CAPM（含美国1Y ' + rfLbl + '%）相对混合基准，%'; }
       }
 
@@ -252,6 +307,7 @@
       renderTop3Drawdowns(risk && risk.top3_drawdowns);
     }
     function updateRiskMetrics(risk, rfPct) {
+      risk = selectedRiskMetrics(risk, periodToRiskKey(currentPeriod), rfPct);
       updateRiskMetricsTexts(risk, rfPct);
       updateRiskMetricsCharts(risk);
     }
@@ -277,21 +333,11 @@
       returnsOverview = data;
       var rk = periodToRiskKey(currentPeriod);
       updateReturnsCards(data.cards || {});
-      updateRiskMetricsTexts(data.risk_metrics ? data.risk_metrics[rk] : null, data.risk_free_rate_pct);
+      updateRiskMetricsTexts(selectedRiskMetrics(data.risk_metrics ? data.risk_metrics[rk] : null, rk, data.risk_free_rate_pct), data.risk_free_rate_pct);
       updateMwrrCompare(data.cards, rk);
-      var asOfEl = document.getElementById('returnsDataAsOf');
-      if (asOfEl) {
-        var _fmtSh = window.__formatAsShanghaiGMT8;
-        var _tsRet = (data.price_fetched_at && typeof _fmtSh === 'function') ? _fmtSh(data.price_fetched_at) : '';
-        var _line = data.data_as_of ? ('行情基准日：' + data.data_as_of) : '';
-        if (_tsRet) _line += (_line ? ' · ' : '') + '缓存拉取：' + _tsRet;
-        asOfEl.textContent = _line + (data.method ? ' | 方法: ' + data.method : '');
-      }
       var hAsOf = document.getElementById('historyDataAsOf');
       if (hAsOf) {
-        var _fmt = window.__formatAsLocal;
-        var _ts = (data.price_fetched_at && typeof _fmt === 'function') ? _fmt(data.price_fetched_at) : '';
-        hAsOf.textContent = '行情基准日：' + (data.data_as_of || '--') + (_ts ? ' · 缓存拉取：' + _ts : '');
+        hAsOf.textContent = '行情基准日：' + (data.data_as_of || '--');
       }
       updateGlobalStatusBar({ priceFetchedAt: data.price_fetched_at, dataAsOf: data.data_as_of });
       updateAthBadge(data);

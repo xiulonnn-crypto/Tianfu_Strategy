@@ -55,7 +55,7 @@ _RISK_FREE_DGS1_CACHE: tuple[str, float] | None = None
 
 # 价格缓存：文件持久化，同一天内所有请求使用同一份数据，避免刷新时数据变化
 PRICE_CACHE_FILE = DATA_DIR / "price_cache.json"
-_CACHE_VERSION = 8  # 8：收益基准改为 60/25/15 季度再平衡合成净值
+_CACHE_VERSION = 9  # 9：拒绝读取/写入缺失持仓行情或合成基准的部分缓存
 
 # 进程内存缓存：比文件缓存再快一级，避免并发请求重复解析 JSON / 重复拉 Yahoo。
 # key: (frozenset(all_syms), start_date, end_date, today_str)
@@ -526,6 +526,30 @@ def _json_to_history(data):
     return out
 
 
+def _has_valid_history_frame(df) -> bool:
+    """历史行情至少须有一条有效 Close，空表不能参与组合估值。"""
+    if df is None or df.empty or "Close" not in df.columns:
+        return False
+    for value in df["Close"]:
+        try:
+            price = float(value.iloc[0]) if hasattr(value, "iloc") else float(value)
+        except (TypeError, ValueError):
+            continue
+        if _is_valid_market_price(price):
+            return True
+    return False
+
+
+def _has_complete_market_bundle(history_cache, bench_cache, expected_symbols) -> bool:
+    """收益计算只能使用所有持仓历史与合成基准都完整的行情包。"""
+    expected = set(expected_symbols or [])
+    if not expected:
+        return False
+    if any(not _has_valid_history_frame((history_cache or {}).get(symbol)) for symbol in expected):
+        return False
+    return _has_valid_history_frame((bench_cache or {}).get(BENCHMARK_SYMBOL))
+
+
 def _build_rebalanced_benchmark_history(component_histories):
     """用 QQQ / BRK-B / IAU 的共同交易日构造季度再平衡的合成基准净值。"""
     price_maps = {}
@@ -605,7 +629,7 @@ def _load_price_cache(symbols, start_date, end_date):
         history_full = _json_to_history(raw.get("history"))
         bench = _json_to_history({BENCHMARK_SYMBOL: raw.get("bench", {})})
         trading_dates = raw.get("trading_dates") or []
-        if not trading_dates:
+        if not trading_dates or not _has_complete_market_bundle(history_full, bench, requested_syms):
             return None
         # 按请求标的显式取数，避免迭代顺序导致 symbol→价格 错位
         history = {sym: history_full[sym] for sym in requested_syms if sym in history_full}
@@ -615,7 +639,9 @@ def _load_price_cache(symbols, start_date, end_date):
 
 
 def _save_price_cache(symbols, start_date, end_date, history_cache, bench_cache, trading_dates):
-    """将价格数据写入缓存文件"""
+    """将完整的价格数据写入缓存文件；部分行情绝不能污染当日缓存。"""
+    if not trading_dates or not _has_complete_market_bundle(history_cache, bench_cache, symbols):
+        return False
     bench_data = {}
     if BENCHMARK_SYMBOL in bench_cache and bench_cache[BENCHMARK_SYMBOL] is not None:
         df = bench_cache[BENCHMARK_SYMBOL]
@@ -639,6 +665,7 @@ def _save_price_cache(symbols, start_date, end_date, history_cache, bench_cache,
         "trading_dates": trading_dates,
     }
     save_json(PRICE_CACHE_FILE, data)
+    return True
 
 
 def fetch_histories(symbols, start_date, end_date):
@@ -673,7 +700,9 @@ def fetch_histories_with_bench(symbols, start_date, end_date):
 
     # ── Level 1: 进程内存缓存，零 I/O ──
     hit = _PRICE_MEM_CACHE.get(mem_key)
-    if hit is not None:
+    # 同一 all_syms 键可由「仅持仓」预热和「持仓 + QQQ 对比」共享；
+    # 但缓存结果只保留了当时请求的 history 子集，不能把缺 QQQ 的子集误作命中。
+    if hit is not None and requested_symbols <= set(hit[0]):
         return hit
 
     # ── 并发去重：决定当前线程是「拉取者」还是「等待者」──
@@ -690,7 +719,7 @@ def fetch_histories_with_bench(symbols, start_date, end_date):
         # 等待拉取者完成（最多 35 秒），之后直接读内存缓存
         evt.wait(timeout=35)
         hit = _PRICE_MEM_CACHE.get(mem_key)
-        if hit is not None:
+        if hit is not None and requested_symbols <= set(hit[0]):
             return hit
         # 拉取者失败时，降级尝试文件缓存
         fc = _load_price_cache(all_syms, start_date, end_date)
@@ -714,9 +743,12 @@ def fetch_histories_with_bench(symbols, start_date, end_date):
             bench_cache = {BENCHMARK_SYMBOL: _build_rebalanced_benchmark_history(all_fetched)}
             history_cache = {k: all_fetched.get(k) for k in requested_symbols}
             trading_dates = get_trading_dates_from_cache(history_cache, bench_cache)
-            if trading_dates:
+            if _has_complete_market_bundle(all_fetched, bench_cache, all_syms) and trading_dates:
                 _save_price_cache(all_syms, start_date, end_date, all_fetched, bench_cache, trading_dates)
-            result = (history_cache, bench_cache, trading_dates if trading_dates else [])
+                result = (history_cache, bench_cache, trading_dates)
+            else:
+                # 任一标的或合成基准缺价时，宁可提示暂无数据，也不能静默按残缺持仓计算收益。
+                result = ({}, {}, [])
 
         if result and result[2]:  # 有 trading_dates 才值得缓存
             _PRICE_MEM_CACHE[mem_key] = result
@@ -999,7 +1031,7 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
     """
     生成时段内每个交易日的累计 TWR 走势 + 混合基准 DCA。
 
-    my：组合累计 TWR（%）；bench：混合基准涨跌幅（%）；dca：等额定投收益（%）。
+    my：组合累计 TWR（%）；bench：混合基准涨跌幅（%）；qqq：QQQ 基准涨跌幅（%）；dca：等额定投收益（%）。
     my_mwrr：自 period_start 至各交易日的子区间 MWRR（%），与 /api/strategy-review
     超额收益（MWRR − DCA）在同一终点口径可比；DCA 模式下图表应使用 my_mwrr 而非 my。
     DCA 模拟：将每年计划投入总额（2000×12 + 40000）均摊到该年各交易日，
@@ -1008,7 +1040,7 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
     fr = fund_records if fund_records is not None else get_fund_records()
     dates_in_range = [d for d in all_trading_dates if period_start <= d <= period_end]
     if not dates_in_range:
-        return {"labels": [], "my": [], "bench": [], "dca": [], "my_mwrr": []}
+        return {"labels": [], "dates": [], "my": [], "bench": [], "qqq": [], "dca": [], "my_mwrr": []}
 
     dates_before = [d for d in all_trading_dates if d < period_start]
     if period_start in all_trading_dates:
@@ -1023,13 +1055,14 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
     tl = (perf or {}).get("position_timeline")
     tds = (perf or {}).get("timeline_dates")
     b_base = get_price_on_date(BENCHMARK_SYMBOL, chain[0], bench_cache, pix) or 1.0
+    qqq_base = get_price_on_date("QQQ", chain[0], history_cache, pix) or 1.0
 
     trading_days_by_year: dict[str, int] = {}
     for d in all_trading_dates:
         y = d[:4]
         trading_days_by_year[y] = trading_days_by_year.get(y, 0) + 1
 
-    labels, my_series, bench_series, dca_series, my_mwrr_series = [], [], [], [], []
+    labels, date_series, my_series, bench_series, qqq_series, dca_series, my_mwrr_series = [], [], [], [], [], [], []
     cumulative_factor = 1.0
     dca_cum_shares = 0.0
     dca_cum_cost = 0.0
@@ -1047,8 +1080,11 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
         if curr_d >= period_start:
             b_curr = get_price_on_date(BENCHMARK_SYMBOL, curr_d, bench_cache, pix) or b_base
             labels.append(curr_d[5:])
+            date_series.append(curr_d)
             my_series.append(round((cumulative_factor - 1) * 100, 2))
             bench_series.append(round((b_curr / b_base - 1) * 100, 2) if b_base > 0 else 0.0)
+            qqq_curr = get_price_on_date("QQQ", curr_d, history_cache, pix) or qqq_base
+            qqq_series.append(round((qqq_curr / qqq_base - 1) * 100, 2) if qqq_base > 0 else 0.0)
 
             mwr_pt = compute_mwr(trades_list, fr, history_cache, period_start, curr_d, all_trading_dates, perf)
             my_mwrr_series.append(
@@ -1097,8 +1133,10 @@ def compute_twr_chart(trades_list, history_cache, bench_cache,
 
     return {
         "labels": labels,
+        "dates": date_series,
         "my": my_series,
         "bench": bench_series,
+        "qqq": qqq_series,
         "dca": dca_series,
         "my_mwrr": my_mwrr_series,
         "buy_markers": buy_markers,
@@ -1914,8 +1952,10 @@ def api_returns_overview():
     one_year_ago = (dt - timedelta(days=365)).strftime("%Y-%m-%d")
     start_fetch, end_fetch = _compute_fetch_range(trades_list)
 
-    # 拉取历史行情（统一文件缓存，同一天内收益与资产配置数据完全一致）
-    history_cache, bench_cache, trading_dates = fetch_histories_with_bench(symbols, start_fetch, end_fetch)
+    # QQQ 作为独立对比曲线，随组合收益图的每个周期一起返回。
+    history_cache, bench_cache, trading_dates = fetch_histories_with_bench(
+        sorted(set(symbols) | {"QQQ"}), start_fetch, end_fetch,
+    )
     if not trading_dates:
         return jsonify(empty_resp)
 
@@ -1982,6 +2022,9 @@ def api_returns_overview():
             b0 = get_price_on_date(BENCHMARK_SYMBOL, prev_trading_date, bench_cache, pix) or 1.0
             b1 = get_price_on_date(BENCHMARK_SYMBOL, effective_end_date, bench_cache, pix) or b0
             bench_1d = round((b1 / b0 - 1) * 100, 2) if b0 > 0 else 0.0
+            q0 = get_price_on_date("QQQ", prev_trading_date, history_cache, pix) or 1.0
+            q1 = get_price_on_date("QQQ", effective_end_date, history_cache, pix) or q0
+            qqq_1d = round((q1 / q0 - 1) * 100, 2) if q0 > 0 else 0.0
             twr_1d = twr_pct if twr_pct is not None else 0.0
             mwrr_1d = compute_mwr(
                 trades_list, fund_records, history_cache,
@@ -1990,8 +2033,10 @@ def api_returns_overview():
             mwrr_tail = round(mwrr_1d, 2) if mwrr_1d is not None else twr_1d
             chart[key] = {
                 "labels": [prev_trading_date[5:], effective_end_date[5:]],
+                "dates": [prev_trading_date, effective_end_date],
                 "my": [0, twr_1d],
                 "bench": [0, bench_1d],
+                "qqq": [0, qqq_1d],
                 "dca": [0, 0],
                 "my_mwrr": [0, mwrr_tail],
                 "buy_markers": [],

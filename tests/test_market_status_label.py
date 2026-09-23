@@ -1,4 +1,4 @@
-"""收益页行情状态必须区分行情基准日与缓存拉取时间，不能将后者说成行情更新。"""
+"""全局行情状态仅展示实际用于计算的行情基准日。"""
 
 from pathlib import Path
 
@@ -14,6 +14,6 @@ def test_global_market_status_uses_data_as_of_as_market_reference():
     status_function = source[start:end]
 
     assert "行情基准日：" in status_function
-    assert "缓存拉取：" in status_function
+    assert "缓存拉取：" not in status_function
     assert "opts.dataAsOf" in status_function
     assert "行情更新：" not in status_function

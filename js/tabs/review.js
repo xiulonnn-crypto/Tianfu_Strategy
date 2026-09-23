@@ -964,11 +964,31 @@
           if (cmpBtn) {
             e.preventDefault(); e.stopPropagation();
             chartCompareMode = cmpBtn.dataset.mode;
+            heatmapCompareMode = 'selected';
             document.querySelectorAll('.chart-cmp-btn').forEach(function(b) {
               if (b.dataset.mode === chartCompareMode) { b.style.background = 'var(--deep-purple)'; b.style.color = '#fff'; }
               else { b.style.background = '#fff'; b.style.color = 'var(--deep-purple)'; }
             });
+            document.querySelectorAll('.heat-cmp-btn').forEach(function(b) {
+              b.style.background = '#fff'; b.style.color = 'var(--deep-purple)';
+            });
             buildReturnsChart(currentPeriod);
+            updateReturnsCards(returnsOverview && returnsOverview.cards);
+            if (window.__monthlyReturnsData) renderMonthlyHeatmap(window.__monthlyReturnsData);
+            var riskKey = periodToRiskKey(currentPeriod);
+            updateRiskMetrics(returnsOverview && returnsOverview.risk_metrics ? returnsOverview.risk_metrics[riskKey] : null, returnsOverview && returnsOverview.risk_free_rate_pct);
+            updateMwrrCompare(returnsOverview && returnsOverview.cards, riskKey);
+            return;
+          }
+          var heatBtn = e.target.closest && e.target.closest('.heat-cmp-btn[data-mode]');
+          if (heatBtn) {
+            e.preventDefault(); e.stopPropagation();
+            heatmapCompareMode = heatmapCompareMode === 'all' ? 'selected' : heatBtn.dataset.mode;
+            document.querySelectorAll('.heat-cmp-btn').forEach(function(b) {
+              if (b.dataset.mode === heatmapCompareMode) { b.style.background = 'var(--deep-purple)'; b.style.color = '#fff'; }
+              else { b.style.background = '#fff'; b.style.color = 'var(--deep-purple)'; }
+            });
+            if (window.__monthlyReturnsData) renderMonthlyHeatmap(window.__monthlyReturnsData);
             return;
           }
           var card = e.target.closest && e.target.closest('.returns-card[data-period]');
