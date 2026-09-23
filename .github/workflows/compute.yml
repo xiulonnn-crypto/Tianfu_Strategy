@@ -4,13 +4,14 @@ on:
   push:
     branches: [main]
   schedule:
-    # 美股盘中每 30 分钟刷新一次（UTC 13:00-21:30，工作日）：
+    # 美股盘中每 15 分钟刷新一次（UTC 13:00-21:52，工作日）：
     # 覆盖 EDT（夏令，行情 13:30-20:00 UTC）与 EST（标准时，行情 14:30-21:00 UTC）。
     # yfinance 在盘中对当日会返回一行「以最新成交价为 Close」的临时行情，
     # `effective_end_date = trading_dates[-1]` 因此会推进到当天，`#returns`
     # 的「数据基准日」从而从收盘前一日前进到今天（盘中实时视图）。
-    # 避开整点和半点：GitHub Actions 在这些高峰时段可能延迟或丢弃 schedule 事件。
-    - cron: '7,37 13-21 * * 1-5'
+    # 以 4 个错峰分钟冗余触发，降低 GitHub 偶发丢弃单个 schedule 事件导致
+    # 数据连续停更的概率；避开整点和半点这两个已知高负载时段。
+    - cron: '7,22,37,52 13-21 * * 1-5'
     # 美东 18:17 (UTC 22:17) 周一至周五，美股收盘后约 2h 的终版快照，
     # 保证当日最终收盘价被至少抓取一次（Yahoo 有时延迟数分钟）。
     - cron: '17 22 * * 1-5'
@@ -18,6 +19,11 @@ on:
 
 permissions:
   contents: write
+
+# 所有 push、手动和定时计算串行执行，避免并发重算相互覆盖或发生 push race。
+concurrency:
+  group: compute-data-main
+  cancel-in-progress: false
 
 jobs:
   compute:
