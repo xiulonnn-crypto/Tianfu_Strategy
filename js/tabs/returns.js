@@ -17,10 +17,8 @@
         const prefix = dataValuePrefix[k];
         const pctEl = document.querySelector('[data-value="' + prefix + '-pct"]');
         if (pctEl) {
-          var chartKey = k === '1y_roll' ? '1y_roll' : k;
-          var chart = returnsOverview && returnsOverview.chart && returnsOverview.chart[chartKey];
-          var benchmarkValues = chart && chart[chartCompareMode];
-          var pct = benchmarkValues && benchmarkValues.length ? benchmarkValues[benchmarkValues.length - 1] : (c && c.pct);
+          // 五张收益卡始终表示本策略的 TWR，不受比较基准切换影响。
+          var pct = c && c.pct;
           pctEl.textContent = formatPct(pct);
           pctEl.style.color = (pct != null && pct < 0) ? '#D64545' : '#2d2a3e';
         }
@@ -379,9 +377,10 @@
       var el = document.getElementById('returnsAthBadge');
       if (!el) return;
       if (!isAllTimeHigh(data)) { el.style.display = 'none'; el.innerHTML = ''; return; }
-      var since = data.chart.since;
-      var last = since.my[since.my.length - 1];
-      var pctTxt = (last >= 0 ? '+' : '') + Number(last).toFixed(2) + '%';
+      // 横幅与「发布以来」卡片共用正式的累计 TWR；曲线末点可能因起点对齐而略有不同。
+      var sincePct = data && data.cards && data.cards.since && data.cards.since.pct;
+      if (sincePct == null || isNaN(sincePct)) { el.style.display = 'none'; el.innerHTML = ''; return; }
+      var pctTxt = (sincePct >= 0 ? '+' : '') + Number(sincePct).toFixed(2) + '%';
       var msg = pickAthMessage();
       el.innerHTML = '<span class="ath-spark">✦</span>'
         + '<span>历史新高 ' + pctTxt + '</span>'

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **收益页「历史新高」与「发布以来」数值不一致**：庆祝横幅此前直接读取收益曲线末点，可能因曲线起点对齐与正式累计 TWR 有微小差异。现横幅复用「发布以来」卡片的正式累计 TWR，两个位置始终显示一致。
+
 ## [0.1.0-023] - 2026-09-24 - sync benchmark comparison views
 
 ### Fixed
