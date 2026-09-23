@@ -9,10 +9,11 @@ on:
     # yfinance 在盘中对当日会返回一行「以最新成交价为 Close」的临时行情，
     # `effective_end_date = trading_dates[-1]` 因此会推进到当天，`#returns`
     # 的「数据基准日」从而从收盘前一日前进到今天（盘中实时视图）。
-    - cron: '0,30 13-21 * * 1-5'
-    # 美东 18:00 (UTC 22:00) 周一至周五，美股收盘后 2h 的终版快照，
+    # 避开整点和半点：GitHub Actions 在这些高峰时段可能延迟或丢弃 schedule 事件。
+    - cron: '7,37 13-21 * * 1-5'
+    # 美东 18:17 (UTC 22:17) 周一至周五，美股收盘后约 2h 的终版快照，
     # 保证当日最终收盘价被至少抓取一次（Yahoo 有时延迟数分钟）。
-    - cron: '0 22 * * 1-5'
+    - cron: '17 22 * * 1-5'
   workflow_dispatch:
 
 permissions:
