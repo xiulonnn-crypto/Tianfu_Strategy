@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-025] - 2026-10-17 - refresh returns data version
+
 ### Fixed
 
 - **收益页数据版本始终显示为 `--`**：本地 `/api/version` 现返回交易、资金、模型与行情缓存中的最近更新时间，收益页状态条可显示实际数据版本。云端每次新页面访问都会无缓存探测最新版本；探测失败时保留最近一次成功版本及对应缓存作为兜底。
