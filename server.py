@@ -1697,8 +1697,17 @@ def favicon():
 
 @app.route("/api/version", methods=["GET"])
 def api_version():
-    """用于前端判断当前后端是否支持编辑/删除（避免 404 时误判）"""
-    return jsonify({"edit_delete": True, "corp_actions": True})
+    """返回本地能力和数据版本，供状态条与云端静态文件共用。"""
+    mtimes = []
+    for path in (TRADES_FILE, FUND_FILE, MODEL_STATE_FILE, PRICE_CACHE_FILE):
+        try:
+            mtimes.append(path.stat().st_mtime)
+        except OSError:
+            continue
+    updated_at = None
+    if mtimes:
+        updated_at = datetime.fromtimestamp(max(mtimes), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return jsonify({"edit_delete": True, "corp_actions": True, "updated_at": updated_at})
 
 
 @app.route("/api/fund-records", methods=["GET"])

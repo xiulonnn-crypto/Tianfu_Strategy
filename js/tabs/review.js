@@ -1262,6 +1262,7 @@
       }
       if (window.__applyRoute) window.__applyRoute();
       if (window.__isCloudMode) await ensureCloudVersion();
+      else await ensureLocalVersion();
       updateGlobalStatusBar({});
       checkBackendVersion();
       loadReturnsOverview();

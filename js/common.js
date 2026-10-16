@@ -30,7 +30,7 @@
         timeEl.innerHTML = '<span class="global-status-dot" style="background:#7CFC9B;"></span>行情基准日：' + asOf;
       }
       if (verEl) {
-        var ver = window.__cloudDataVersion || opts.version || '--';
+        var ver = window.__cloudDataVersion || window.__localDataVersion || opts.version || '--';
         verEl.innerHTML = '<i class="fas fa-database" style="opacity:.85;margin-right:4px;"></i>数据版本：' + ver;
       }
       if (modeEl) {
@@ -365,6 +365,7 @@
     // 作为所有 data/computed/*.json 的 ?v= 查询串，数据一旦更新 URL 即变化，
     // 手机浏览器/CDN 的旧缓存自然失效；未更新前仍可享受缓存。
     window.__cloudDataVersion = window.__cloudDataVersion || '';
+    window.__localDataVersion = window.__localDataVersion || '';
     function _withVersion(url) {
       var v = window.__cloudDataVersion;
       if (!v) return url;
@@ -389,14 +390,12 @@
     }
     function ensureCloudVersion() {
       if (!window.__isCloudMode) return Promise.resolve();
-      if (window.__cloudDataVersion) return Promise.resolve();
       if (window.__cloudVersionPromise) return window.__cloudVersionPromise;
-      // 优先从 localStorage 读取 5 分钟内的缓存版本，避免每次访问都拉 version.json
+      // 先保留最近一次成功版本作为断网兜底，但每次新页面访问仍需探测远端最新版本。
       var cv = _ccGetVer();
-      if (cv && (Date.now() - cv.t) < _CC_VER_TTL) {
+      if (!window.__cloudDataVersion && cv) {
         window.__cloudDataVersion = cv.v;
         updateGlobalStatusBar({});
-        return Promise.resolve();
       }
       window.__cloudVersionPromise = (async function() {
         try {
@@ -412,10 +411,16 @@
             }
           }
         } catch (e) { /* ignore */ }
-        // 兜底：用本地时间戳，至少保证本次会话能破缓存
-        window.__cloudDataVersion = String(Date.now());
+        // 网络或版本文件暂不可用时保留最近成功版本，继续读取对应的本地缓存。
+        // 首次访问无历史版本时才生成一次性 cache-buster，仍会直接尝试最新静态文件。
+        if (!window.__cloudDataVersion) window.__cloudDataVersion = String(Date.now());
       })();
       return window.__cloudVersionPromise;
+    }
+    async function ensureLocalVersion() {
+      if (window.__isCloudMode) return;
+      var data = await apiGet('/api/version');
+      if (data && data.updated_at) window.__localDataVersion = String(data.updated_at);
     }
     async function apiGet(path) {
       if (window.__isCloudMode) {
