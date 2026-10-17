@@ -53,7 +53,9 @@
 
       // 饼图 A：总资产（含现金）
       var labels = allocationList.map(function (r) { return r.symbol; });
-      var values = allocationList.map(function (r) { return total ? (r.amount / total * 100) : 0; });
+      // 云端预计算会移除金额，但保留 pct；不能用空金额把所有扇区绘为 0。
+      var hasAmounts = total > 0;
+      var values = allocationList.map(function (r) { return hasAmounts ? (r.amount / total * 100) : Number(r.pct || 0); });
       var ctx = document.getElementById('chartAllocation');
       if (ctx) {
         if (chartAllocation) chartAllocation.destroy();
@@ -303,7 +305,7 @@
                 label: function(ctx) {
                   if (ctx.datasetIndex >= 2) {
                     var m = ctx.dataset._meta && ctx.dataset._meta[ctx.dataIndex];
-                    if (m) return m.label + ': ' + _m(m.shares + '股 @ $' + m.price) + ' (' + m.date + ')';
+                    if (m) return m.label + ': ' + _m(m.shares + '股') + ' @ $' + m.price + ' (' + m.date + ')';
                   }
                   return ctx.dataset.label + ': ' + (ctx.datasetIndex === 1 ? _m('$' + (ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) : '--')) : '$' + (ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) : '--'));
                 }

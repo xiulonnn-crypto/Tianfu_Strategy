@@ -73,6 +73,19 @@ def test_index_html_trade_table_cloud_hides_shares_commission():
     assert "均价 $'+Number(m.avg_cost).toFixed(2)+' → 现价 $'+m.current_price" in bundle
 
 
+def test_cloud_allocation_chart_uses_public_pct_when_amounts_are_sanitized():
+    """allocation.json 在云端移除金额后，环图仍须使用公开占比绘制。"""
+    bundle = MAIN_JS.read_text(encoding="utf-8")
+    assert "var hasAmounts = total > 0;" in bundle
+    assert "return hasAmounts ? (r.amount / total * 100) : Number(r.pct || 0);" in bundle
+
+
+def test_asset_analysis_hover_keeps_buy_price_but_masks_shares():
+    """加仓散点的云端 hover 应保留公开成交价，仅掩码股数。"""
+    bundle = MAIN_JS.read_text(encoding="utf-8")
+    assert "_m(m.shares + '股') + ' @ $' + m.price" in bundle
+
+
 @pytest.mark.parametrize(
     "snippet",
     [

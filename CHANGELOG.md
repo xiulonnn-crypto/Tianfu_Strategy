@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **云端资产配置图与归因 hover**：总资产（含现金）环图在金额脱敏后改用公开占比绘制；加仓日 hover 保留成交价，仅隐藏股数。
+
 ## [0.1.0-026] - 2026-10-17 - align QQQ drawdown comparison
 
 ### Fixed
