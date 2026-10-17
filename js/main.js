@@ -616,14 +616,18 @@
       var chartData = returnsOverview && returnsOverview.chart && returnsOverview.chart[chartKey];
       var seriesKey = chartCompareMode === 'qqq' ? 'qqq' : (chartCompareMode === 'dca' ? 'dca' : null);
       if (seriesKey && chartData && Array.isArray(chartData[seriesKey])) {
+        // 回撤序列含区间起点（值为 0），而收益图的累计曲线从首个
+        // 日收益之后才开始。直接按索引使用会使全部基准点左移一日，
+        // 因而末个行情日（例如 10-16）没有基准数据。
+        var comparisonValues = [0].concat(chartData[seriesKey]);
         var peak = -Infinity;
-        var values = chartData[seriesKey].map(function(v) { peak = Math.max(peak, Number(v)); return Math.round((Number(v) - peak) * 100) / 100; });
+        var values = comparisonValues.slice(0, ds.labels.length).map(function(v) { peak = Math.max(peak, Number(v)); return Math.round((Number(v) - peak) * 100) / 100; });
         datasets = [datasets[0], { label: chartCompareMode === 'qqq' ? 'QQQ 基准回撤 %' : 'DCA 回撤 %', data: values, borderColor: chartCompareMode === 'qqq' ? '#2563eb' : '#BFA960', backgroundColor: 'transparent', fill: false, tension: 0.2, borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0, order: 0 }];
       }
       if (chartCompareMode === 'all' && chartData) {
         function drawdown(values) {
           var peak = -Infinity;
-          return (values || []).map(function(v) { peak = Math.max(peak, Number(v)); return Math.round((Number(v) - peak) * 100) / 100; });
+          return [0].concat(values || []).slice(0, ds.labels.length).map(function(v) { peak = Math.max(peak, Number(v)); return Math.round((Number(v) - peak) * 100) / 100; });
         }
         datasets.push(
           { label: 'QQQ 基准回撤 %', data: drawdown(chartData.qqq), borderColor: '#2563eb', backgroundColor: 'transparent', fill: false, tension: 0.2, borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0 },

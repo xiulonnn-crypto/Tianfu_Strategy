@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **收益页切换 QQQ 基准后回撤图末日缺线**：回撤序列包含时段起点，而 QQQ/DCA 收益曲线从下一交易日开始；现补齐期初 0 点后再绘制，最新行情日（如 10-16）与基准曲线正确对齐。
+
 ## [0.1.0-025] - 2026-10-17 - refresh returns data version
 
 ### Fixed
