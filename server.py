@@ -55,7 +55,7 @@ _RISK_FREE_DGS1_CACHE: tuple[str, float] | None = None
 
 # 价格缓存：文件持久化，同一天内所有请求使用同一份数据，避免刷新时数据变化
 PRICE_CACHE_FILE = DATA_DIR / "price_cache.json"
-_CACHE_VERSION = 9  # 9：拒绝读取/写入缺失持仓行情或合成基准的部分缓存
+_CACHE_VERSION = 10  # 10：统一 BRK.B/BRK-B 等别名，杜绝同证券分叉缓存
 
 # 进程内存缓存：比文件缓存再快一级，避免并发请求重复解析 JSON / 重复拉 Yahoo。
 # key: (frozenset(all_syms), start_date, end_date, today_str)
@@ -330,7 +330,20 @@ def get_all_symbols(trades):
 
 def yf_symbol(symbol):
     """Yahoo 中 BRK.B 需写成 BRK-B 等，yfinance 一般接受点号。"""
-    return symbol.replace(".", "-") if symbol else symbol
+    return symbol.strip().upper().replace(".", "-") if isinstance(symbol, str) else symbol
+
+
+def market_symbol(symbol):
+    """行情缓存的规范键；同一证券只允许保留一个 Yahoo 代码。"""
+    return yf_symbol(symbol)
+
+
+def _history_for_requested_symbols(market_history, requested_symbols):
+    """按业务层代码返回历史行情，底层统一复用 Yahoo 规范键的同一份数据。"""
+    return {
+        symbol: market_history.get(market_symbol(symbol))
+        for symbol in requested_symbols
+    }
 
 
 # 实时行情内存缓存（秒级 TTL），减轻 signals 等端点连续刷新时的 Yahoo 延迟
@@ -694,7 +707,13 @@ def fetch_histories_with_bench(symbols, start_date, end_date):
     避免同一行情被并行重复拉取（race condition on cold file cache）。
     """
     requested_symbols = set(symbols)
-    all_syms = sorted(requested_symbols | set(BENCHMARK_COMPONENT_WEIGHTS))
+    # BRK.B（业务/UI 代码）与 BRK-B（Yahoo 代码）是同一证券。此前两者会
+    # 分别写入缓存；任意一次异常响应都可能让两份本应相同的价格分叉，进而令
+    # 下次定投的 BRK.B 股数使用错误报价。缓存和 Yahoo 请求一律使用规范代码。
+    all_syms = sorted(
+        {market_symbol(symbol) for symbol in requested_symbols}
+        | set(BENCHMARK_COMPONENT_WEIGHTS)
+    )
     today = datetime.now().strftime("%Y-%m-%d")
     mem_key = (frozenset(all_syms), start_date, end_date, today)
 
@@ -725,7 +744,7 @@ def fetch_histories_with_bench(symbols, start_date, end_date):
         fc = _load_price_cache(all_syms, start_date, end_date)
         if fc:
             hist, bench, dates = fc
-            return {k: hist[k] for k in requested_symbols if k in hist}, bench, dates
+            return _history_for_requested_symbols(hist, requested_symbols), bench, dates
         return {}, {}, []
 
     # ── 当前线程为拉取者 ──
@@ -735,13 +754,13 @@ def fetch_histories_with_bench(symbols, start_date, end_date):
         fc = _load_price_cache(all_syms, start_date, end_date)
         if fc:
             hist, bench, dates = fc
-            hist_only = {k: hist[k] for k in requested_symbols if k in hist}
+            hist_only = _history_for_requested_symbols(hist, requested_symbols)
             result = (hist_only, bench, dates)
         else:
             # Level 3: 逐标的拉取持仓与混合基准成分，再合成基准净值。
             all_fetched = _fetch_histories_raw(all_syms, start_date, end_date)
             bench_cache = {BENCHMARK_SYMBOL: _build_rebalanced_benchmark_history(all_fetched)}
-            history_cache = {k: all_fetched.get(k) for k in requested_symbols}
+            history_cache = _history_for_requested_symbols(all_fetched, requested_symbols)
             trading_dates = get_trading_dates_from_cache(history_cache, bench_cache)
             if _has_complete_market_bundle(all_fetched, bench_cache, all_syms) and trading_dates:
                 _save_price_cache(all_syms, start_date, end_date, all_fetched, bench_cache, trading_dates)
@@ -3832,6 +3851,7 @@ def api_signals():
     }
     for _item in ding_allocation:
         _p = _alloc_prices.get(_item["symbol"])
+        _item["price"] = round(_p, 2) if _p and _p > 0 else None
         _item["shares"] = round(_item["amount"] / _p, 1) if _p and _p > 0 else None
 
     next_dingtou = {

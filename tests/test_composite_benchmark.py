@@ -60,6 +60,34 @@ def test_history_fetches_components_and_returns_synthetic_benchmark(monkeypatch)
     assert bench[server.BENCHMARK_SYMBOL]["Close"].iloc[-1] == pytest.approx(131.0 * 1.06)
 
 
+def test_brk_dot_b_reuses_one_canonical_yahoo_series(monkeypatch):
+    """BRK.B 只能请求/缓存为 BRK-B，返回时仍保留业务层代码供持仓估值。"""
+    fetched_symbols = []
+
+    def fake_fetch(symbols, _start, _end):
+        fetched_symbols.extend(symbols)
+        return {
+            "QQQ": _history([100.0] * 4),
+            "QQQM": _history([100.0] * 4),
+            "BRK-B": _history([500.0] * 4),
+            "IAU": _history([80.0] * 4),
+        }
+
+    monkeypatch.setattr(server, "_load_price_cache", lambda *_: None)
+    monkeypatch.setattr(server, "_save_price_cache", lambda *_: None)
+    monkeypatch.setattr(server, "_fetch_histories_raw", fake_fetch)
+    server._PRICE_MEM_CACHE.clear()
+
+    history, _, dates = server.fetch_histories_with_bench(
+        ["BRK.B", "QQQM"], "2025-03-31", "2025-04-04",
+    )
+
+    assert fetched_symbols.count("BRK-B") == 1
+    assert "BRK.B" not in fetched_symbols
+    assert set(history) == {"BRK.B", "QQQM"}
+    assert server.get_price_on_date("BRK.B", dates[-1], history) == pytest.approx(500.0)
+
+
 def test_dca_uses_composite_benchmark_not_qqqm_price():
     dates = pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-06"])
     history = {

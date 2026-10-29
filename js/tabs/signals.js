@@ -168,11 +168,13 @@
       if (dingBlock && data.next_dingtou) {
         var d = data.next_dingtou;
         var allocLines = (d.allocation || []).map(function (a) {
-          var sharesStr = a.shares != null ? ' ' + _m(a.shares.toFixed(1) + '股') : '';
+          var priceStr = a.price != null ? ' 现价 ' + _usd(a.price) : '';
+          var sharesStr = a.shares != null ? ' 约' + _m(a.shares.toFixed(1) + '股') : '';
           return '<span style="display:inline-block;min-width:3.5em;font-weight:500;color:#2d2a3e;">' + a.symbol + '</span>'
             + '<span style="display:inline-block;min-width:3.5em;text-align:right;">' + a.pct + '%</span>'
-            + '<span style="display:inline-block;min-width:5.5em;text-align:right;">' + _usd(a.amount) + '</span>'
-            + (sharesStr ? '<span style="display:inline-block;min-width:4.5em;text-align:right;">' + sharesStr + '</span>' : '');
+            + '<span style="display:inline-block;min-width:6em;text-align:right;">金额 ' + _usd(a.amount) + '</span>'
+            + (priceStr ? '<span style="display:inline-block;min-width:6.5em;text-align:right;">' + priceStr + '</span>' : '')
+            + (sharesStr ? '<span style="display:inline-block;min-width:5em;text-align:right;">' + sharesStr + '</span>' : '');
         }).join('<br>');
         var fadePct = d.fade ? (d.fade * 100).toFixed(0) : 0;
         var fuseTag = d.fuse_active ? ' <span class="text-xs px-2 py-0.5 rounded" style="background:#fef2f2;color:#dc2626;">渐进缩减 ' + fadePct + '%</span>' : '';

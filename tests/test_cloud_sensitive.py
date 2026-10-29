@@ -80,6 +80,21 @@ def test_cloud_allocation_chart_uses_public_pct_when_amounts_are_sanitized():
     assert "return hasAmounts ? (r.amount / total * 100) : Number(r.pct || 0);" in bundle
 
 
+def test_cloud_signals_keep_public_quote_but_hide_order_amount_and_shares():
+    """下次定投须可核对公开行情；订单金额与股数仍不得进入云端文件。"""
+    from compute import sanitize
+
+    data = sanitize("signals.json", {
+        "next_dingtou": {"allocation": [{
+            "symbol": "BRK.B", "price": 540.34, "amount": 859.65, "shares": 1.6,
+        }]},
+    })
+    alloc = data["next_dingtou"]["allocation"][0]
+    assert alloc["price"] == 540.34
+    assert alloc["amount"] is None
+    assert alloc["shares"] is None
+
+
 def test_asset_analysis_hover_keeps_buy_price_but_masks_shares():
     """加仓散点的云端 hover 应保留公开成交价，仅掩码股数。"""
     bundle = MAIN_JS.read_text(encoding="utf-8")

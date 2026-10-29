@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **下次定投 BRK.B 行情与股数**：行情缓存统一使用 Yahoo 的 `BRK-B` 代码，避免 `BRK.B`/`BRK-B` 两份同证券行情在异常时分叉；下次定投现明确显示分配金额、现价和预计股数，防止将金额误读为股价。
+
 ## [0.1.0-027] - 2026-10-17 - render cloud allocation chart
 
 ### Fixed
