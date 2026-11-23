@@ -80,6 +80,22 @@ def test_cloud_allocation_chart_uses_public_pct_when_amounts_are_sanitized():
     assert "return hasAmounts ? (r.amount / total * 100) : Number(r.pct || 0);" in bundle
 
 
+def test_sanitize_allocation_strips_pure_cash_amount():
+    """纯现金是账户金额，云端 allocation.json 只能保留公开占比。"""
+    out = sanitize("allocation.json", {
+        "total_value": 10000,
+        "risk_total": 6000,
+        "rows": [{
+            "symbol": "现金", "is_pure_cash": True, "is_cash": True,
+            "amount": 4000, "shares": None, "pct": 40.0,
+        }],
+    })
+    assert out["total_value"] is None
+    assert out["risk_total"] is None
+    assert out["rows"][0]["amount"] is None
+    assert out["rows"][0]["pct"] == 40.0
+
+
 def test_cloud_signals_keep_public_quote_but_hide_order_amount_and_shares():
     """下次定投须可核对公开行情；订单金额与股数仍不得进入云端文件。"""
     from compute import sanitize

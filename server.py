@@ -167,6 +167,40 @@ def get_trades():
     return load_json(TRADES_FILE, [])
 
 
+def _signed_fund_amount(record):
+    """返回一条出入金记录对账户现金的影响；出金为负。"""
+    amount = float(record.get("amount") or 0)
+    note = (record.get("note") or "").lower()
+    return -amount if "出金" in note and amount > 0 else amount
+
+
+def compute_pure_cash_position(trades_list, fund_records, as_of_date=None):
+    """计算账户中未投资为证券的纯现金余额。
+
+    口径为截至 ``as_of_date`` 的净出入金，减去全部普通买入现金流、
+    加回全部普通卖出现金流；佣金计入实际现金流。BOXX 仍是证券持仓，
+    因而其买卖同样会改变纯现金，而不是与纯现金合并计算。
+    """
+    def _in_range(row):
+        date = (row.get("date") or "")[:10]
+        return not as_of_date or not date or date <= as_of_date
+
+    cash = sum(_signed_fund_amount(r) for r in fund_records if _in_range(r))
+    for trade in trades_list:
+        if not _in_range(trade) or _is_corp_action(trade):
+            continue
+        try:
+            value = float(trade.get("price") or 0) * float(trade.get("shares") or 0)
+            commission = float(trade.get("commission") or 0)
+        except (TypeError, ValueError):
+            continue
+        if trade.get("action") == "买入":
+            cash -= value + commission
+        elif trade.get("action") == "卖出":
+            cash += value - commission
+    return round(cash, 2)
+
+
 def positions_at_date(trades, on_date, position_timeline=None, timeline_dates=None):
     """
     计算在 on_date 当日收盘时的持仓（按标的汇总股数）。
@@ -2447,15 +2481,32 @@ def api_allocation():
             "amount": round(amount, 2),
             "avg_cost": round(avg_cost, 2),
         })
+    # 纯现金：独立于 BOXX 等现金管理 ETF，按账户实际现金流计算。
+    # 仅在非零时加入，避免没有可用现金时在图表和表格中制造无意义条目。
+    pure_cash = compute_pure_cash_position(
+        trades_list, get_fund_records(), as_of_date=effective_end_date,
+    )
+    if abs(pure_cash) > 1e-6:
+        rows.append({
+            "symbol": "现金",
+            "shares": None,
+            "price": None,
+            "amount": pure_cash,
+            "avg_cost": None,
+            "is_pure_cash": True,
+        })
     total = sum(r["amount"] for r in rows)
-    # 风险资产归一化：排除 BOXX 等现金类标的
+    # 风险资产归一化：排除 BOXX 与纯现金。
     CASH_TICKERS = {"BOXX"}
     TARGET_PCT = {"QQQM": 60, "BRK.B": 25, "IAU": 15}
-    risk_total = sum(r["amount"] for r in rows if r["symbol"] not in CASH_TICKERS)
+    risk_total = sum(
+        r["amount"] for r in rows
+        if r["symbol"] not in CASH_TICKERS and not r.get("is_pure_cash", False)
+    )
     qqqm_effective_pct = 0
     for r in rows:
         r["pct"] = round(r["amount"] / total * 100, 1) if total else 0
-        r["is_cash"] = r["symbol"] in CASH_TICKERS
+        r["is_cash"] = r["symbol"] in CASH_TICKERS or r.get("is_pure_cash", False)
         if r["avg_cost"] and r["avg_cost"] > 0:
             r["gain_pct"] = round((r["price"] - r["avg_cost"]) / r["avg_cost"] * 100, 2)
         else:
@@ -3079,14 +3130,7 @@ def compute_reserve_pool(trades_list, cash_position_value=0, fund_records=None):
 
     fund_records = fund_records or []
 
-    net_inflow = 0.0
-    for r in fund_records:
-        amt = float(r.get("amount") or 0)
-        note = (r.get("note") or "").lower()
-        if "出金" in note and amt > 0:
-            net_inflow -= amt
-        else:
-            net_inflow += amt
+    net_inflow = sum(_signed_fund_amount(r) for r in fund_records)
 
     def _net_buy_for_type(target_type):
         net = 0.0

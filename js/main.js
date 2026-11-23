@@ -1086,9 +1086,10 @@
         const pctVal = row.pct != null ? Number(row.pct) : (total ? (row.amount / total * 100) : 0);
         const priceStr = row.price != null ? '$' + Number(row.price).toFixed(2) : '--';
         const avgStr = row.avg_cost != null && row.avg_cost > 0 ? '$' + Number(row.avg_cost).toFixed(2) : '--';
-        const gainPct = row.gain_pct != null ? row.gain_pct : 0;
+        const hasGain = !row.is_pure_cash && row.gain_pct != null;
+        const gainPct = hasGain ? row.gain_pct : 0;
         const gainStyle = gainPct > 0 ? 'color:#2d8a5e' : gainPct < 0 ? 'color:#D64545' : 'color:#8A9199';
-        const gainStr = gainPct > 0 ? '+' + gainPct.toFixed(2) + '%' : gainPct.toFixed(2) + '%';
+        const gainStr = hasGain ? (gainPct > 0 ? '+' + gainPct.toFixed(2) + '%' : gainPct.toFixed(2) + '%') : '--';
         const hide = window.__sensitiveHidden;
         // 偏离进度条：仅风险资产显示，现金类标的只显示总占比
         var pctCell;
@@ -1112,9 +1113,11 @@
             + (tgt > 0 ? '<span class="text-xs" style="color:'+barColor+';white-space:nowrap;">'+(dev>=0?'+':'')+dev.toFixed(1)+'</span>' : '')
             + '</div></td>';
         }
-        return '<tr class="cursor-pointer hover:bg-purple-50 transition" data-symbol="' + row.symbol + '" onclick="if(window.__loadAssetAnalysis)window.__loadAssetAnalysis(\'' + row.symbol + '\')">'
-          + '<td class="p-3 font-medium" style="color:var(--deep-purple);">' + row.symbol + (row.is_cash ? ' <span class="text-xs" style="color:var(--benchmark-gray);">现金</span>' : ' <i class="fas fa-chart-line text-xs" style="color:var(--benchmark-gray);"></i>') + '</td>'
-          + '<td class="p-3 text-right col-shares">' + (hide ? '***' : row.shares) + '</td>'
+        var isInteractive = !row.is_pure_cash;
+        var cashLabel = row.is_pure_cash ? ' <span class="text-xs" style="color:var(--benchmark-gray);">纯现金</span>' : (row.is_cash ? ' <span class="text-xs" style="color:var(--benchmark-gray);">现金管理</span>' : ' <i class="fas fa-chart-line text-xs" style="color:var(--benchmark-gray);"></i>');
+        return '<tr class="' + (isInteractive ? 'cursor-pointer hover:bg-purple-50 ' : '') + 'transition" data-symbol="' + row.symbol + '"' + (isInteractive ? ' onclick="if(window.__loadAssetAnalysis)window.__loadAssetAnalysis(\'' + row.symbol + '\')"' : '') + '>'
+          + '<td class="p-3 font-medium" style="color:var(--deep-purple);">' + row.symbol + cashLabel + '</td>'
+          + '<td class="p-3 text-right col-shares">' + (hide ? '***' : (row.shares != null ? row.shares : '--')) + '</td>'
           + '<td class="p-3 text-right col-avg text-slate-500">' + avgStr + '</td>'
           + '<td class="p-3 text-right">' + priceStr + '</td>'
           + '<td class="p-3 text-right col-amount">' + (hide ? '***' : (row.amount != null ? '$' + Number(row.amount).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : '')) + '</td>'

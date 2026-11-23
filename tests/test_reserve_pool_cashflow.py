@@ -33,6 +33,23 @@ def _make_trade(date, symbol, t_type, action, shares, price):
     }
 
 
+def test_pure_cash_position_includes_all_trade_cashflows_and_commissions():
+    """纯现金应包含 BOXX 在内的全部普通交易，且扣除实际佣金。"""
+    funds = [
+        _make_fund("2026-01-01", 10000, "入金 USD"),
+        _make_fund("2026-01-10", 500, "出金 USD"),
+    ]
+    trades = [
+        {**_make_trade("2026-01-02", "BOXX", "现金管理", "买入", 20, 100), "commission": 2},
+        {**_make_trade("2026-01-03", "QQQM", "定投", "买入", 10, 300), "commission": 3},
+        {**_make_trade("2026-01-04", "BOXX", "现金管理", "卖出", 5, 101), "commission": 1},
+        # 公司行为只改变持仓，不应产生现金流。
+        {**_make_trade("2026-01-05", "QQQM", "分红", "买入", 1, 0), "commission": 0},
+        _make_fund("2026-02-01", 999, "入金 USD"),  # 截止日之后，不计入。
+    ]
+    assert server.compute_pure_cash_position(trades, funds, "2026-01-31") == 4999.0
+
+
 # ---------------------------------------------------------------------------
 # 1. 仅入金、无任何交易：备弹池 = 全部净入金
 # ---------------------------------------------------------------------------
