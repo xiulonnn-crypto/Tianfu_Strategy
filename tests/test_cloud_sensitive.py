@@ -96,6 +96,18 @@ def test_sanitize_allocation_strips_pure_cash_amount():
     assert out["rows"][0]["pct"] == 40.0
 
 
+def test_compute_skips_pure_cash_asset_analysis():
+    """纯现金没有行情或归因端点，预计算只能遍历真实证券。"""
+    from compute import _asset_analysis_symbols
+
+    symbols = _asset_analysis_symbols({"rows": [
+        {"symbol": "QQQM"},
+        {"symbol": "现金", "is_pure_cash": True},
+        {"symbol": "BOXX", "is_cash": True},
+    ]})
+    assert symbols == ["QQQM", "BOXX"]
+
+
 def test_cloud_signals_keep_public_quote_but_hide_order_amount_and_shares():
     """下次定投须可核对公开行情；订单金额与股数仍不得进入云端文件。"""
     from compute import sanitize

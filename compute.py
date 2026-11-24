@@ -185,6 +185,17 @@ def save(name, data):
     print(f"  ✓ {name}")
 
 
+def _asset_analysis_symbols(allocation):
+    """返回需要生成归因文件的真实证券标的，排除纯现金占位行。"""
+    rows = allocation.get("rows") if isinstance(allocation, dict) else allocation
+    if not isinstance(rows, list):
+        return []
+    return [
+        row.get("symbol", "") for row in rows
+        if row.get("symbol") and not row.get("is_pure_cash", False)
+    ]
+
+
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     client = app.test_client()
@@ -255,12 +266,8 @@ def main():
 
         # 遍历持仓标的计算归因分析
         print("[5/8] 资产归因...")
-        rows = alloc_data.get("rows") if isinstance(alloc_data, dict) else alloc_data
-        if isinstance(rows, list):
-            for row in rows:
-                sym = row.get("symbol", "")
-                if sym:
-                    get_json(f"/api/asset-analysis/{sym}", f"asset-analysis-{sym}.json")
+        for sym in _asset_analysis_symbols(alloc_data):
+            get_json(f"/api/asset-analysis/{sym}", f"asset-analysis-{sym}.json")
     else:
         errors.append(f"/api/allocation → HTTP {resp.status_code}")
         print(f"  ✗ /api/allocation → {resp.status_code}")
